@@ -38,7 +38,7 @@ final class MicCapture: NSObject, AudioSource, AVCaptureAudioDataOutputSampleBuf
         guard let device = chosen ?? AVCaptureDevice.default(for: .audio) else { throw CaptureError("No microphone is connected") }
         try run(device)
         disconnectObserver = NotificationCenter.default.addObserver(
-            forName: AVCaptureDevice.wasDisconnectedNotification, object: nil, queue: nil
+            forName: .AVCaptureDeviceWasDisconnected, object: nil, queue: nil
         ) { [weak self] note in
             guard let self, let gone = note.object as? AVCaptureDevice, gone.localizedName == self.name,
                   let fallback = AVCaptureDevice.default(for: .audio), fallback.uniqueID != gone.uniqueID else { return }
