@@ -133,3 +133,8 @@ screen-share picker and no virtual audio device. (From a source install, `./trai
 **browser tab** running your meeting and tick **Share tab audio**. Chrome on macOS only shares audio from
 tabs (not the whole screen or desktop apps such as Zoom), so for the Zoom desktop app use the helper. With
 headphones you avoid your mic hearing the speakers; without them echo is suppressed as best it can.
+
+## License
+
+GNU Affero General Public License v3.0 (AGPL-3.0), copyright (C) 2026 Trailmix contributors; see [LICENSE](LICENSE). The app bundles a static ffmpeg build (GPL) and other open-source packages under
+their own licenses.
