@@ -1,0 +1,610 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Trailmix design tokens ─────────────────────────────────────────────
+   Near-white surfaces layered over a warm trail-dust background. Forest
+   green for primary actions, trail orange for recording, sun yellow for
+   "needs you". Sky and berry tell You and Them apart.                    */
+:root {
+  /* surfaces */
+  --bg: #f8f7f2;
+  --bg-top: #fcfbf8;
+  --surface: rgba(255, 255, 255, 0.72);
+  --surface-solid: #fffefa;
+  --surface-subtle: #f2f1ea;
+  --sidebar-bg: rgba(250, 250, 246, 0.8);
+  --scrim: rgba(22, 40, 30, 0.26);
+
+  /* text */
+  --text-primary: #1c2922;
+  --text-secondary: #667269;
+  --text-tertiary: #939b94; /* icons, placeholders and decoration only: too light for body text */
+
+  /* brand */
+  --forest: #236347;
+  --forest-hover: #194d37;
+  --forest-soft: #dce9de;
+  --forest-ink: #1b5039; /* text on forest-soft */
+  --trail-orange: #e86636;
+  --trail-orange-hover: #d85428;
+  --trail-orange-soft: #fbe1d4;
+  --trail-orange-ink: #a63f17;
+  --yellow: #f5b83a;
+  --yellow-soft: #fcefcf;
+  --yellow-ink: #7d5205;
+  --sky: #4f86a8;
+  --sky-soft: #e3eef4;
+  --sky-ink: #285b7a;
+  --berry: #9b5575;
+  --berry-soft: #f4e5ec;
+  --berry-ink: #7a3456;
+  --on-accent: #ffffff;
+
+  /* lines */
+  --border: rgba(39, 61, 49, 0.1);
+  --border-strong: rgba(39, 61, 49, 0.16);
+  --switch-off: rgba(39, 61, 49, 0.16);
+  --highlight: rgba(255, 255, 255, 0.75);
+  --art-edge: rgba(255, 255, 255, 0.6);
+  --art-hairline: rgba(39, 61, 49, 0.05);
+
+  /* type scale (Geist for the interface, Fraunces for titles) */
+  --fs-caption: 11px; /* chips, badges, key caps */
+  --fs-meta: 12px; /* timestamps, footnotes */
+  --fs-hint: 12.5px; /* hints and secondary lines */
+  --fs-ui: 13.5px; /* controls, navigation, small buttons */
+  --fs-label: 14px; /* row labels, buttons */
+  --fs-body: 15px; /* reading text */
+  --fs-heading: 16px; /* section headings */
+  --fs-lead: 17px; /* dialog titles */
+  --fs-wordmark: 21px;
+
+  /* radius */
+  --radius-xs: 5px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --radius-hero: 28px;
+
+  /* depth: green-tinted, never black */
+  --shadow-sm: 0 1px 2px rgba(22, 40, 30, 0.05);
+  --shadow-md: 0 8px 24px rgba(22, 40, 30, 0.07);
+  --shadow-lg: 0 18px 60px rgba(22, 40, 30, 0.09);
+  --shadow-panel: 0 1px 2px rgba(22, 40, 30, 0.04), 0 14px 40px rgba(30, 50, 38, 0.05);
+  --shadow-chrome: 8px 0 40px -12px rgba(22, 40, 30, 0.06);
+  --ring-focus: 0 0 0 3px color-mix(in srgb, var(--forest) 14%, transparent);
+
+  /* atmosphere */
+  --contour: rgba(35, 99, 71, 0.05);
+  --glow-green: rgba(35, 99, 71, 0.07);
+  --glow-warm: rgba(245, 184, 58, 0.13);
+  --glow-orange: rgba(232, 102, 54, 0.05);
+  --skeleton-a: #efede6;
+  --skeleton-b: #f8f7f2;
+  --tooltip-bg: rgba(28, 41, 34, 0.94);
+  --tooltip-fg: #f8f7f2;
+
+  /* motion */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  color-scheme: light;
+}
+
+/* Dusk: the same trail after sunset. Accents lighten, text on them goes dark. */
+:root[data-theme="dusk"] {
+  --bg: #0f1513;
+  --bg-top: #131b18;
+  --surface: rgba(28, 38, 33, 0.62);
+  --surface-solid: #18211d;
+  --surface-subtle: #141c19;
+  --sidebar-bg: rgba(17, 24, 21, 0.78);
+  --scrim: rgba(0, 0, 0, 0.5);
+
+  --text-primary: #e9ede8;
+  --text-secondary: #a1ada5;
+  --text-tertiary: #6e7a73;
+
+  --forest: #4fa27a;
+  --forest-hover: #62b58c;
+  --forest-soft: #1c3328;
+  --forest-ink: #93d4b0;
+  --trail-orange: #ee7445;
+  --trail-orange-hover: #f38859;
+  --trail-orange-soft: #3a2219;
+  --trail-orange-ink: #f5a886;
+  --yellow: #f2be4e;
+  --yellow-soft: #342b17;
+  --yellow-ink: #f2d08a;
+  --sky: #7fb2d3;
+  --sky-soft: #182a36;
+  --sky-ink: #a9cfe6;
+  --berry: #cb86a6;
+  --berry-soft: #321f29;
+  --berry-ink: #e3b1c8;
+  --on-accent: #0d1311;
+
+  --border: rgba(214, 235, 222, 0.08);
+  --border-strong: rgba(214, 235, 222, 0.14);
+  --switch-off: rgba(214, 235, 222, 0.16);
+  --highlight: rgba(255, 255, 255, 0.04);
+  --art-edge: rgba(255, 255, 255, 0.07);
+  --art-hairline: rgba(0, 0, 0, 0.2);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 18px 60px rgba(0, 0, 0, 0.45);
+  --shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.25), 0 14px 40px rgba(0, 0, 0, 0.22);
+  --shadow-chrome: 8px 0 40px -12px rgba(0, 0, 0, 0.4);
+
+  --contour: rgba(200, 230, 210, 0.045);
+  --glow-green: rgba(79, 162, 122, 0.1);
+  --glow-warm: rgba(242, 190, 78, 0.05);
+  --glow-orange: rgba(238, 116, 69, 0.05);
+  --skeleton-a: #172019;
+  --skeleton-b: #1f2a24;
+  --tooltip-bg: rgba(233, 237, 232, 0.96);
+  --tooltip-fg: #0f1513;
+
+  color-scheme: dark;
+}
+
+/* ── Base ───────────────────────────────────────────────────────────── */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  @apply font-sans text-ink antialiased;
+  background: var(--bg);
+  font-size: var(--fs-label);
+  text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--forest) 20%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--forest) 55%, transparent);
+  outline-offset: 2px;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-tertiary);
+  opacity: 1;
+}
+
+/* Narrow, quiet scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-primary) 16%, transparent) transparent;
+}
+
+/* ── Components ─────────────────────────────────────────────────────── */
+
+@layer components {
+  .font-display {
+    font-variation-settings: "opsz" 144, "SOFT" 30, "WONK" 0;
+  }
+
+  .hero-title {
+    @apply font-display font-semibold text-ink;
+    font-size: clamp(32px, 2.2rem + 1.2vw, 46px);
+    line-height: 1.06;
+    letter-spacing: -0.025em;
+  }
+  .page-title {
+    @apply font-display font-semibold text-ink;
+    font-size: clamp(26px, 1.4rem + 0.8vw, 32px);
+    line-height: 1.15;
+    letter-spacing: -0.022em;
+  }
+  .hero-sub {
+    @apply text-ink-soft;
+    font-size: clamp(15.5px, 0.9rem + 0.25vw, 17.5px);
+    line-height: 1.55;
+    max-width: 600px;
+    text-wrap: pretty;
+  }
+
+  /* Buttons: lift a pixel on hover, settle on press. */
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-2 whitespace-nowrap font-medium leading-none;
+    transition:
+      transform 160ms var(--ease-out),
+      box-shadow 160ms var(--ease-out),
+      background-color 160ms var(--ease-out),
+      border-color 160ms var(--ease-out),
+      color 160ms var(--ease-out),
+      filter 160ms var(--ease-out),
+      opacity 160ms var(--ease-out);
+  }
+  .btn:disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+  .btn-sm {
+    @apply h-8 gap-1.5 rounded-sm px-3 text-ui;
+  }
+  .btn-md {
+    @apply h-10 rounded-md px-4 text-label;
+  }
+  .btn-lg {
+    @apply h-11 rounded-md px-5 text-label;
+  }
+  .btn-hero {
+    @apply h-[52px] gap-2.5 rounded-lg px-[26px] text-body font-semibold;
+  }
+
+  .btn-primary {
+    color: var(--on-accent);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--forest) 90%, white), var(--forest));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.16),
+      0 1px 2px rgba(22, 40, 30, 0.16),
+      0 4px 12px -4px color-mix(in srgb, var(--forest) 50%, transparent);
+  }
+  .btn-primary:not(:disabled):hover {
+    background: linear-gradient(180deg, color-mix(in srgb, var(--forest-hover) 90%, white), var(--forest-hover));
+    transform: translateY(-1px);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.16),
+      0 1px 2px rgba(22, 40, 30, 0.16),
+      0 8px 18px -6px color-mix(in srgb, var(--forest) 55%, transparent);
+  }
+
+  .btn-record {
+    color: var(--on-accent);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--trail-orange) 88%, white), var(--trail-orange));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      inset 0 -1px 0 rgba(120, 40, 10, 0.12),
+      0 1px 2px rgba(150, 60, 20, 0.2),
+      0 6px 16px -6px color-mix(in srgb, var(--trail-orange) 70%, transparent);
+  }
+  .btn-record:not(:disabled):hover {
+    filter: brightness(1.05) saturate(1.04);
+    transform: translateY(-1.5px);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      inset 0 -1px 0 rgba(120, 40, 10, 0.12),
+      0 1px 2px rgba(150, 60, 20, 0.2),
+      0 12px 24px -8px color-mix(in srgb, var(--trail-orange) 75%, transparent);
+  }
+
+  .btn-sun {
+    color: #2a2108;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--yellow) 88%, white), var(--yellow));
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.3),
+      0 1px 2px rgba(120, 80, 10, 0.18);
+  }
+  .btn-sun:not(:disabled):hover {
+    transform: translateY(-1px);
+    filter: brightness(1.03);
+  }
+
+  .btn-soft {
+    @apply border border-line-strong bg-surface text-ink shadow-sm;
+  }
+  .btn-soft:not(:disabled):hover {
+    @apply bg-surface-subtle;
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-sm), 0 4px 12px -6px rgba(22, 40, 30, 0.14);
+  }
+
+  .btn-ghost {
+    @apply text-ink-soft;
+  }
+  .btn-ghost:not(:disabled):hover {
+    @apply bg-forest/[.06] text-ink;
+  }
+  .btn-danger-ghost {
+    @apply text-ink-soft;
+  }
+  .btn-danger-ghost:not(:disabled):hover {
+    @apply bg-trail-soft text-trail-deep;
+  }
+
+  .btn-primary:not(:disabled):active,
+  .btn-record:not(:disabled):active,
+  .btn-sun:not(:disabled):active,
+  .btn-soft:not(:disabled):active,
+  .btn-ghost:not(:disabled):active,
+  .btn-danger-ghost:not(:disabled):active {
+    transform: translateY(0) scale(0.98);
+    transition-duration: 80ms;
+  }
+
+  .icon-btn {
+    @apply relative inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-sm text-ink-soft;
+    transition:
+      background-color 160ms var(--ease-out),
+      color 160ms var(--ease-out),
+      transform 120ms var(--ease-out),
+      opacity 160ms var(--ease-out);
+  }
+  .icon-btn:hover {
+    @apply bg-forest/[.06] text-ink;
+  }
+  .icon-btn:active {
+    transform: scale(0.94);
+  }
+  /* A slightly bigger hit area than the visible button. */
+  .icon-btn::after {
+    content: "";
+    position: absolute;
+    inset: -2px;
+  }
+
+  /* Surfaces */
+  .glass {
+    @apply rounded-xl border border-line;
+    background: var(--surface);
+    -webkit-backdrop-filter: blur(20px) saturate(1.5);
+    backdrop-filter: blur(20px) saturate(1.5);
+    box-shadow:
+      var(--shadow-panel),
+      inset 0 1px 0 var(--highlight);
+  }
+  .panel {
+    @apply rounded-xl border border-line;
+    background: color-mix(in srgb, var(--surface-solid) 88%, transparent);
+    box-shadow:
+      var(--shadow-panel),
+      inset 0 1px 0 var(--highlight);
+  }
+  .inset-surface {
+    @apply rounded-lg bg-surface-subtle/70;
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+
+  .well {
+    @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-surface-subtle text-ink-soft;
+    box-shadow: inset 0 0 0 1px var(--border);
+  }
+  .well-forest {
+    @apply bg-forest-soft text-forest-deep;
+    box-shadow: none;
+  }
+
+  .field {
+    @apply rounded-sm border border-line-strong bg-surface px-3 py-[7px] text-ui leading-5 text-ink shadow-sm;
+    transition:
+      border-color 160ms var(--ease-out),
+      box-shadow 160ms var(--ease-out),
+      background-color 160ms var(--ease-out);
+  }
+  .field:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--text-primary) 24%, transparent);
+  }
+  .field:focus,
+  .field[aria-expanded="true"] {
+    outline: none;
+    border-color: color-mix(in srgb, var(--forest) 55%, transparent);
+    box-shadow: var(--ring-focus);
+  }
+  .field:disabled {
+    @apply cursor-not-allowed opacity-60;
+  }
+
+  .chip {
+    @apply inline-flex h-5 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 text-caption font-medium leading-none;
+  }
+
+  .eyebrow {
+    @apply text-meta font-medium text-ink-soft;
+  }
+
+  .kbd {
+    @apply inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-xs border border-line-strong bg-surface px-1 font-mono text-caption font-medium leading-none text-ink-soft;
+    box-shadow: 0 1px 0 var(--border-strong);
+  }
+
+  .skeleton {
+    @apply animate-shimmer rounded-sm;
+    background: linear-gradient(90deg, var(--skeleton-a) 25%, var(--skeleton-b) 50%, var(--skeleton-a) 75%);
+    background-size: 200% 100%;
+  }
+
+  /* The record button, which grows into the live recording control. */
+  .record-control {
+    @apply relative h-[52px] overflow-hidden rounded-lg border border-transparent;
+    transition:
+      width 460ms var(--ease-out),
+      background-color 320ms var(--ease-out),
+      border-color 320ms var(--ease-out),
+      box-shadow 320ms var(--ease-out),
+      transform 160ms var(--ease-out),
+      filter 160ms var(--ease-out),
+      opacity 160ms var(--ease-out);
+  }
+  .record-control::before {
+    content: "";
+    @apply pointer-events-none absolute inset-0 opacity-0;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 70%);
+    transition: opacity 320ms var(--ease-out);
+  }
+  .record-control.is-idle {
+    color: var(--on-accent);
+    background-color: var(--trail-orange);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      inset 0 -1px 0 rgba(120, 40, 10, 0.12),
+      0 1px 2px rgba(150, 60, 20, 0.2),
+      0 8px 20px -8px color-mix(in srgb, var(--trail-orange) 75%, transparent);
+  }
+  .record-control.is-idle::before {
+    @apply opacity-100;
+  }
+  .record-control.is-idle:not(.is-disabled):hover {
+    transform: translateY(-1.5px);
+    filter: brightness(1.05) saturate(1.04);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      inset 0 -1px 0 rgba(120, 40, 10, 0.12),
+      0 1px 2px rgba(150, 60, 20, 0.2),
+      0 14px 28px -10px color-mix(in srgb, var(--trail-orange) 80%, transparent);
+  }
+  .record-control.is-idle:not(.is-disabled):active {
+    transform: translateY(0) scale(0.985);
+    transition-duration: 80ms;
+  }
+  .record-control.is-idle:has(:focus-visible) {
+    outline: 2px solid color-mix(in srgb, var(--trail-orange) 60%, transparent);
+    outline-offset: 3px;
+  }
+  .record-control.is-disabled {
+    @apply opacity-55;
+    filter: saturate(0.7);
+  }
+  .record-control.is-live {
+    background-color: var(--surface);
+    border-color: var(--border-strong);
+    -webkit-backdrop-filter: blur(20px) saturate(1.5);
+    backdrop-filter: blur(20px) saturate(1.5);
+    box-shadow:
+      var(--shadow-md),
+      inset 0 1px 0 var(--highlight);
+  }
+
+  /* Window chrome: the sidebar and the narrow-window top bar float over the page as frosted glass. */
+  .chrome {
+    background: var(--sidebar-bg);
+    -webkit-backdrop-filter: blur(18px) saturate(1.5);
+    backdrop-filter: blur(18px) saturate(1.5);
+  }
+  .chrome-opaque {
+    background: color-mix(in srgb, var(--surface-solid) 96%, transparent);
+  }
+
+  /* Artwork frame: a hairline edge, generous radius, and a bottom that fades into the page. */
+  .art-frame {
+    @apply fade-bottom relative overflow-hidden rounded-hero border border-[color:var(--art-edge)];
+    box-shadow: inset 0 0 0 1px var(--art-hairline);
+  }
+
+  /* Artwork fades into the page instead of ending at a hard edge. */
+  .fade-bottom {
+    -webkit-mask-image: linear-gradient(to bottom, #000 68%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 68%, transparent 100%);
+  }
+  .fade-edges-y {
+    -webkit-mask-image: linear-gradient(to bottom, transparent, #000 10px, #000 calc(100% - 14px), transparent);
+    mask-image: linear-gradient(to bottom, transparent, #000 10px, #000 calc(100% - 14px), transparent);
+  }
+
+  .tooltip {
+    @apply max-w-[260px] animate-pop rounded-sm px-2 py-1 text-meta font-medium leading-snug shadow-md;
+    background: var(--tooltip-bg);
+    color: var(--tooltip-fg);
+  }
+
+  /* Audio scrubber */
+  .range {
+    @apply h-5 w-full cursor-pointer appearance-none bg-transparent;
+    --pct: 0%;
+  }
+  .range::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: linear-gradient(to right, var(--forest) var(--pct), var(--border-strong) var(--pct));
+  }
+  .range::-moz-range-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: linear-gradient(to right, var(--forest) var(--pct), var(--border-strong) var(--pct));
+  }
+  .range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 14px;
+    width: 14px;
+    margin-top: -5px;
+    border-radius: 9999px;
+    background: var(--surface-solid);
+    border: 1.5px solid var(--forest);
+    box-shadow: var(--shadow-sm);
+    transition: transform 140ms var(--ease-out);
+  }
+  .range::-moz-range-thumb {
+    height: 14px;
+    width: 14px;
+    border-radius: 9999px;
+    background: var(--surface-solid);
+    border: 1.5px solid var(--forest);
+  }
+  .range:hover::-webkit-slider-thumb {
+    transform: scale(1.15);
+  }
+}
+
+/* ── Summary markdown ───────────────────────────────────────────────── */
+.prose-summary {
+  @apply text-body leading-[1.7] text-ink;
+}
+.prose-summary h2 {
+  @apply mb-2 mt-9 flex items-center gap-2.5 text-heading font-semibold tracking-[-0.01em] text-ink;
+}
+.prose-summary h2:first-child {
+  @apply mt-0;
+}
+.prose-summary h3 {
+  @apply mb-1 mt-5 text-label font-semibold;
+}
+.prose-summary p {
+  @apply my-2.5;
+}
+.prose-summary ul,
+.prose-summary ol {
+  @apply my-2.5 space-y-1.5;
+}
+.prose-summary ul > li {
+  @apply relative pl-5;
+}
+.prose-summary ul > li::before {
+  content: "";
+  @apply absolute left-1.5 top-[0.72em] h-[5px] w-[5px] rounded-full bg-forest/50;
+}
+.prose-summary ol {
+  @apply list-decimal pl-5;
+}
+.prose-summary ul > li.task-list-item {
+  @apply pl-0;
+}
+.prose-summary ul > li.task-list-item::before {
+  display: none;
+}
+.prose-summary input[type="checkbox"] {
+  @apply mr-2 h-4 w-4 translate-y-[3px] accent-forest;
+}
+.prose-summary strong {
+  @apply font-semibold;
+}
+.prose-summary code {
+  @apply rounded-xs bg-surface-subtle px-1 font-mono text-ui;
+}
+.prose-summary a {
+  @apply text-forest underline decoration-forest/30 underline-offset-2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
