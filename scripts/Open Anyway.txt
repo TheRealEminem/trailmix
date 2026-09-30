@@ -1,0 +1,11 @@
+Trailmix
+
+1. Drag Trailmix to the Applications folder.
+2. Open it. macOS will say it "can't be verified", because this build isn't signed by an Apple developer yet.
+   To allow it once:
+     System Settings -> Privacy & Security -> scroll down -> "Trailmix was blocked" -> Open Anyway.
+   (Or in Terminal:  xattr -dr com.apple.quarantine /Applications/Trailmix.app )
+3. Allow Microphone access when asked. To record the other side of calls (Zoom, Teams, FaceTime),
+   also allow "System Audio Recording" when macOS asks.
+
+Trailmix lives in your menu bar. Everything stays on your Mac.

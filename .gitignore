@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.venv/
+__pycache__/
+backend/data/*
+!backend/data/.gitkeep
+*.tsbuildinfo
+
+# local launcher and menu bar helper (built by scripts/make-*.sh)
+Trailmix.app/
+Trailmix Helper.app/
+helper/.build/
+helper/.swiftpm/
+.env
+build/
+.DS_Store

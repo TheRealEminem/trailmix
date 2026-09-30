@@ -1,0 +1,25 @@
+# Self-hosted Trailmix. Copy .env.example to .env, fill it in, then: docker compose up -d
+# The port is bound to localhost on purpose: put Tailscale (recommended) or a reverse proxy with
+# HTTPS in front of it. Browsers only allow microphone capture over HTTPS (or on localhost).
+services:
+  trailmix:
+    build: .
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      TRAILMIX_ACCESS_TOKEN: ${TRAILMIX_ACCESS_TOKEN:?Set TRAILMIX_ACCESS_TOKEN in .env}
+      # Starting values for Settings; anything you change in the UI wins.
+      TRAILMIX_TRANSCRIBE_URL: ${TRAILMIX_TRANSCRIBE_URL:-}
+      TRAILMIX_TRANSCRIBE_API_KEY: ${TRAILMIX_TRANSCRIBE_API_KEY:-}
+      TRAILMIX_TRANSCRIBE_MODEL: ${TRAILMIX_TRANSCRIBE_MODEL:-large}
+      TRAILMIX_TRANSCRIBE_LIVE_MODEL: ${TRAILMIX_TRANSCRIBE_LIVE_MODEL:-live}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      TRAILMIX_AUDIO_RETENTION_DAYS: ${TRAILMIX_AUDIO_RETENTION_DAYS:-30}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - trailmix-data:/data
+    restart: unless-stopped
+
+volumes:
+  trailmix-data:

@@ -1,0 +1,12 @@
+# What goes inside Trailmix.app (scripts/build-app.sh): the server requirements plus MLX transcription.
+#
+# mlx-whisper itself is installed with --no-deps, because it lists torch (about 600 MB) and Trailmix never
+# uses the one module that needs it (mlx_whisper/torch_whisper.py). Its real dependencies are listed here.
+-r requirements-server.txt
+mlx>=0.11
+numba
+scipy
+tqdm
+more-itertools
+tiktoken
+huggingface_hub
