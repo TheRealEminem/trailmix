@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# Trailmix launcher. One process serves both the API and the web app on http://localhost:8765.
+#
+#   ./trailmix              start in the background (if needed) and open the app window
+#   ./trailmix stop         stop the background server
+#   ./trailmix restart      stop, rebuild if needed, start, open
+#   ./trailmix status       is it running?
+#   ./trailmix logs         follow the server log
+#   ./trailmix autostart on|off   start Trailmix's server when you log in to your Mac
+#   ./trailmix helper       build (if needed) and open Trailmix Helper, the menu bar recorder
+#   ./trailmix worker       run the Mac transcription worker for a server install (port 8770)
+#   ./trailmix dev          development mode: backend with reload + Vite on :5173 (foreground)
+#   ./trailmix app          (re)build Trailmix.app, the double-clickable launcher
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"   # Finder-launched apps get a bare PATH
+PORT="${TRAILMIX_PORT:-8765}"
+HOST="${TRAILMIX_HOST:-127.0.0.1}"
+URL="http://localhost:$PORT"
+VENV="$ROOT/backend/.venv"
+DATA="$ROOT/backend/data"
+LOGS="$DATA/logs"
+PIDFILE="$DATA/server.pid"
+AGENT="$HOME/Library/LaunchAgents/local.trailmix.server.plist"
+
+say() { printf '\033[1;32m›\033[0m %s\n' "$*"; }
+die() { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
+
+find_python() {
+  for p in python3.14 python3.13 python3.12 python3.11; do
+    command -v "$p" >/dev/null && { command -v "$p"; return; }
+  done
+  die "Trailmix needs Python 3.11 or newer (brew install python)."
+}
+
+ensure_backend() {
+  command -v ffmpeg >/dev/null || die "Trailmix needs ffmpeg (brew install ffmpeg)."
+  if [ ! -x "$VENV/bin/uvicorn" ]; then
+    say "Setting up the Python environment (first run only)…"
+    "$(find_python)" -m venv "$VENV"
+    "$VENV/bin/pip" install -q -r "$ROOT/backend/requirements.txt"
+  fi
+}
+
+ensure_frontend() {
+  local index="$ROOT/frontend/dist/index.html"
+  if [ -f "$index" ] && [ -z "$(find "$ROOT/frontend/src" "$ROOT/frontend/public" "$ROOT/frontend/index.html" -newer "$index" -print -quit)" ]; then
+    return
+  fi
+  command -v npm >/dev/null || die "Building the app needs Node.js (brew install node)."
+  say "Building the app…"
+  (cd "$ROOT/frontend" && { [ -d node_modules ] || npm install --silent; } && npm run -s build >/dev/null)
+}
+
+our_pid() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null && cat "$PIDFILE"; }
+api_up() { curl -fs -o /dev/null --max-time 2 "$URL/api/auth"; }
+ui_up() { curl -fsS --max-time 2 "$URL/" 2>/dev/null | grep -q '<div id="root">'; }
+
+start() {
+  if api_up; then
+    ui_up && return
+    [ -n "$(our_pid || true)" ] || die "A Trailmix server started from a terminal is already using port $PORT, without the app built in. Stop it (Ctrl+C in that terminal) and try again."
+    stop
+  fi
+  ensure_backend
+  ensure_frontend
+  mkdir -p "$LOGS"
+  say "Starting Trailmix…"
+  # Separate statements, so $! is uvicorn itself rather than a wrapping subshell.
+  (
+    cd "$ROOT/backend" || exit 1
+    nohup "$VENV/bin/uvicorn" main:app --host "$HOST" --port "$PORT" >>"$LOGS/server.log" 2>&1 &
+    echo $! >"$PIDFILE"
+  )
+  for _ in $(seq 1 80); do
+    ui_up && return
+    kill -0 "$(cat "$PIDFILE")" 2>/dev/null || break
+    sleep 0.25
+  done
+  tail -n 15 "$LOGS/server.log" >&2 || true
+  die "Trailmix didn't start. Full log: $LOGS/server.log"
+}
+
+stop() {
+  local pid
+  pid="$(our_pid || true)"
+  if [ -n "$pid" ]; then
+    kill "$pid" && say "Stopped Trailmix."
+    for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
+  elif api_up; then
+    die "Trailmix on port $PORT wasn't started by this launcher (a terminal, or autostart). Stop it there, or run: ./trailmix autostart off"
+  else
+    say "Trailmix isn't running."
+  fi
+  rm -f "$PIDFILE"
+}
+
+open_window() {
+  [ -n "${TRAILMIX_NO_OPEN:-}" ] && { say "Trailmix is running at $URL"; return; }
+  # Chrome's app mode gives Trailmix its own window, no tabs or address bar, and supports tab-audio capture.
+  if [ -d "/Applications/Google Chrome.app" ] || [ -d "$HOME/Applications/Google Chrome.app" ]; then
+    open -na "Google Chrome" --args --app="$URL" --window-size=1280,860
+  else
+    open "$URL"
+  fi
+}
+
+autostart() {
+  case "${1:-}" in
+    on)
+      ensure_backend
+      ensure_frontend
+      mkdir -p "$LOGS" "$(dirname "$AGENT")"
+      cat >"$AGENT" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>local.trailmix.server</string>
+  <key>ProgramArguments</key><array>
+    <string>$VENV/bin/uvicorn</string><string>main:app</string>
+    <string>--host</string><string>$HOST</string><string>--port</string><string>$PORT</string>
+  </array>
+  <key>WorkingDirectory</key><string>$ROOT/backend</string>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>StandardOutPath</key><string>$LOGS/server.log</string>
+  <key>StandardErrorPath</key><string>$LOGS/server.log</string>
+</dict></plist>
+PLIST
+      stop >/dev/null 2>&1 || true
+      launchctl bootout "gui/$(id -u)" "$AGENT" 2>/dev/null || true
+      launchctl bootstrap "gui/$(id -u)" "$AGENT"
+      say "Trailmix now starts when you log in. Open the app with ./trailmix or Trailmix.app."
+      ;;
+    off)
+      launchctl bootout "gui/$(id -u)" "$AGENT" 2>/dev/null || true
+      rm -f "$AGENT"
+      say "Autostart is off."
+      ;;
+    *) die "Usage: ./trailmix autostart on|off" ;;
+  esac
+}
+
+case "${1:-open}" in
+  open | start | "")
+    start
+    open_window
+    ;;
+  stop) stop ;;
+  restart)
+    stop
+    start
+    open_window
+    ;;
+  status)
+    if api_up; then say "Trailmix is running at $URL"; else say "Trailmix is not running."; fi
+    ;;
+  logs) tail -n 50 -f "$LOGS/server.log" ;;
+  autostart) autostart "${2:-}" ;;
+  worker)
+    ensure_backend
+    say "Mac transcription worker on port ${TRAILMIX_WORKER_PORT:-8770} (Ctrl+C to stop)"
+    [ -n "${TRAILMIX_WORKER_TOKEN:-}" ] || say "Tip: set TRAILMIX_WORKER_TOKEN so only your server can use it."
+    cd "$ROOT/backend" && exec "$VENV/bin/uvicorn" mac_worker:app --host "${TRAILMIX_WORKER_HOST:-0.0.0.0}" --port "${TRAILMIX_WORKER_PORT:-8770}"
+    ;;
+  dev)
+    ensure_backend
+    (cd "$ROOT/frontend" && [ -d node_modules ] || npm install)
+    trap 'kill 0' EXIT
+    (cd "$ROOT/backend" && "$VENV/bin/uvicorn" main:app --port "$PORT" --reload) &
+    (cd "$ROOT/frontend" && npm run dev) &
+    wait
+    ;;
+  app) "$ROOT/scripts/make-mac-app.sh" ;;
+  helper)
+    HELPER_APP="$ROOT/Trailmix Helper.app"
+    if [ ! -x "$HELPER_APP/Contents/MacOS/TrailmixHelper" ] \
+      || [ -n "$(find "$ROOT/helper/Sources" "$ROOT/helper/Package.swift" -newer "$HELPER_APP/Contents/MacOS/TrailmixHelper" -print -quit)" ]; then
+      say "Building Trailmix Helper…"
+      "$ROOT/scripts/make-helper-app.sh"
+    fi
+    open "$HELPER_APP"
+    say "Trailmix Helper is in your menu bar."
+    ;;
+  *) die "Unknown command: $1 (try: start, stop, restart, status, logs, autostart, helper, worker, dev, app)" ;;
+esac

@@ -1,0 +1,3 @@
+# Mac install: the server requirements plus MLX transcription on Apple Silicon.
+-r requirements-server.txt
+mlx-whisper>=0.4
