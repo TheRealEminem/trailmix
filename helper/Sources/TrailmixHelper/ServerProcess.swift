@@ -61,9 +61,9 @@ final class BundledServer {
         server.environment = environment
         server.standardOutput = log
         server.standardError = log
-        server.terminationHandler = { [weak self] finished in
+        server.terminationHandler = { finished in
             try? log.close()
-            Task { @MainActor in self?.ended(finished, port: port) }
+            Task { @MainActor in BundledServer.shared.ended(finished, port: port) }
         }
         log.write(Data("\n— Trailmix server starting \(Date()) —\n".utf8))
         try server.run()
@@ -80,7 +80,7 @@ final class BundledServer {
         if server.isRunning { kill(server.processIdentifier, SIGKILL) }
     }
 
-    private func ended(_ finished: Process, port: Int) {
+    fileprivate func ended(_ finished: Process, port: Int) {
         guard process === finished else { return }
         process = nil
         guard !stopping else { return }
