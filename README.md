@@ -15,7 +15,7 @@ Local-first meeting recorder, transcriber, and summarizer.
 
 ## Install (Mac)
 
-1. Download **Trailmix-x.y.z-arm64.dmg** from the project's Releases page. It needs an Apple silicon Mac
+1. Download **Trailmix-x.y.z-arm64.dmg** from the [latest release](https://github.com/TheRealEminem/trailmix/releases/latest). It needs an Apple silicon Mac
    (M1 or newer) on macOS 14.2 or later.
 2. Open it and drag **Trailmix** to **Applications**, then open Trailmix.
 3. **First open only:** this build isn't signed by an Apple developer yet, so macOS blocks it. Go to
