@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   mac:
-    runs-on: macos-14   # Apple silicon
+    runs-on: macos-15   # Apple silicon, Xcode 16
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

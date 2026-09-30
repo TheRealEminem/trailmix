@@ -89,7 +89,8 @@ final class HelperModel: ObservableObject {
     func begin() {
         registerHotKeys()
         timers.append(Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.poll() }
+            guard let self else { return }
+            Task { @MainActor in await self.poll() }
         })
         timers.append(Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
