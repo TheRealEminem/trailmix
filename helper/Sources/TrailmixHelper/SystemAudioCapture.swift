@@ -51,15 +51,16 @@ enum CA {
     }
 
     /// The device whose clock drives the capture. The tap works with any clock (drift compensation keeps
-    /// it in step), so prefer one without a microphone: running a Bluetooth headset's input would switch
-    /// it into its low-quality call mode. That's the default output unless it's such a headset, in which
-    /// case the built-in speakers.
+    /// it in step), so prefer one without a microphone (running a Bluetooth headset's input would switch
+    /// it into its low-quality call mode) and with a steady rate: the built-in speakers, else the default output.
     static func clockDeviceUID() throws -> String {
         let fallback: AudioObjectID = value(system, kAudioHardwarePropertyDefaultOutputDevice, default: AudioObjectID(kAudioObjectUnknown))
-        var candidates = [fallback]
-        candidates += objects(system, kAudioHardwarePropertyDevices).filter {
+        // Built-in speakers first: their rate never changes. A Bluetooth headset's drops (48 → 24 kHz) when a
+        // call starts using its mic, and a clock that changes rate mid-call is asking for trouble.
+        var candidates = objects(system, kAudioHardwarePropertyDevices).filter {
             value($0, kAudioDevicePropertyTransportType, default: UInt32(0)) == kAudioDeviceTransportTypeBuiltIn
         }
+        candidates.append(fallback)
         for device in candidates where device != kAudioObjectUnknown && streamCount(device, kAudioObjectPropertyScopeOutput) > 0
             && streamCount(device, kAudioObjectPropertyScopeInput) == 0 {
             if let uid = string(device, kAudioDevicePropertyDeviceUID) { return uid }
@@ -68,6 +69,19 @@ enum CA {
             throw CaptureError("There's no audio output device to listen to")
         }
         return uid
+    }
+
+    /// The format a device's last input stream really delivers to an IO proc, at the device's current rate.
+    static func inputStreamFormat(_ device: AudioObjectID) -> AudioStreamBasicDescription? {
+        var address = address(kAudioDevicePropertyStreams, scope: kAudioObjectPropertyScopeInput)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr, size > 0 else { return nil }
+        var streams = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &streams) == noErr, let last = streams.last else { return nil }
+        var format = value(last, kAudioStreamPropertyVirtualFormat, default: AudioStreamBasicDescription())
+        let rate = value(device, kAudioDevicePropertyNominalSampleRate, default: Float64(0))
+        if rate > 0 { format.mSampleRate = rate }
+        return format.mSampleRate > 0 && format.mChannelsPerFrame > 0 ? format : nil
     }
 
     static func check(_ status: OSStatus, _ what: String) throws {
@@ -159,11 +173,20 @@ final class SystemAudioCapture: AudioSource {
     private var tapped: [AudioObjectID] = []
     private var tapBuffers: UnsafeMutableAudioBufferListPointer?
     private var outputListener: AudioObjectPropertyListenerBlock?
+    private var formatWatches: [(object: AudioObjectID, address: AudioObjectPropertyAddress, block: AudioObjectPropertyListenerBlock)] = []
+    private var pendingRestart: DispatchWorkItem?
     private var refresh: DispatchSourceTimer?
+    private var rateCheck: DispatchSourceTimer?
+    /// Set when the audio arriving doesn't match the rate Core Audio claims (see `checkRate`).
+    private var measuredRate: Double?
+    private let counter = FrameCounter()
 
     init(target: Target) {
         self.target = target
     }
+
+    /// TRAILMIX_AUDIO_DEBUG=1 prints the formats and buffer layout Core Audio hands us (see --capture-test).
+    static let debug = ProcessInfo.processInfo.environment["TRAILMIX_AUDIO_DEBUG"] != nil
 
     func start() throws {
         try control.sync {
@@ -178,6 +201,8 @@ final class SystemAudioCapture: AudioSource {
 
     func stop() {
         control.sync {
+            pendingRestart?.cancel()
+            pendingRestart = nil
             refresh?.cancel()
             refresh = nil
             if let listener = outputListener {
@@ -227,30 +252,107 @@ final class SystemAudioCapture: AudioSource {
         try CA.check(AudioHardwareCreateAggregateDevice(settings as CFDictionary, &device), "set up the meeting-audio device")
         deviceID = device
 
-        var format = CA.value(tapID, kAudioTapPropertyFormat, default: AudioStreamBasicDescription())
-        guard let tapFormat = AVAudioFormat(streamDescription: &format), let converter = WireConverter(from: tapFormat) else {
+        // Read the format the aggregate device actually delivers, not the tap's own: the tap can say 48 kHz
+        // while the device runs at another rate, and believing it made the other side of a call play at
+        // double speed (half the samples, padded out with silence).
+        let tapASBD = CA.value(tapID, kAudioTapPropertyFormat, default: AudioStreamBasicDescription())
+        var format = CA.inputStreamFormat(device) ?? tapASBD
+        if let measuredRate {
+            format.mSampleRate = measuredRate
+        } else if Self.debug, let fake = Double(ProcessInfo.processInfo.environment["TRAILMIX_AUDIO_FAKE_RATE"] ?? "") {
+            format.mSampleRate = fake  // tests: pretend Core Audio misreported the rate
+        }
+        guard let streamFormat = AVAudioFormat(streamDescription: &format), let converter = WireConverter(from: streamFormat) else {
             throw CaptureError("Couldn't read the format of other apps' audio")
         }
         self.converter = converter
+        if Self.debug {
+            debugLog("clock: \(clock)")
+            debugLog("tap format: \(tapASBD.mSampleRate) Hz, \(tapASBD.mChannelsPerFrame) ch, \(tapASBD.mBytesPerFrame) bytes/frame")
+            debugLog("reading: \(streamFormat.sampleRate) Hz, \(streamFormat.channelCount) ch, interleaved \(streamFormat.isInterleaved)\(measuredRate == nil ? "" : " (measured rate)")")
+        }
         // If the clock device brings input streams of its own, they come first; the tap's are the last ones.
-        let wanted = tapFormat.isInterleaved ? 1 : Int(tapFormat.channelCount)
+        let wanted = streamFormat.isInterleaved ? 1 : Int(streamFormat.channelCount)
         let subset = AudioBufferList.allocate(maximumBuffers: wanted)
         tapBuffers = subset
+        let counter = counter
+        counter.reset(rate: streamFormat.sampleRate)
         try CA.check(AudioDeviceCreateIOProcIDWithBlock(&procID, device, io) { [weak self] _, input, _, _, _ in
             let all = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
+            if Self.debug, counter.callbacks < 3 {
+                debugLog("callback: \(all.count) buffers: " + all.map { "\($0.mNumberChannels) ch × \($0.mDataByteSize) bytes" }.joined(separator: ", "))
+            }
             var list = input
             if all.count > wanted {
                 for i in 0..<wanted { subset[i] = all[all.count - wanted + i] }
                 list = UnsafePointer(subset.unsafePointer)
             }
-            guard let self, let buffer = AVAudioPCMBuffer(pcmFormat: tapFormat, bufferListNoCopy: list, deallocator: nil) else { return }
+            guard let self, let buffer = AVAudioPCMBuffer(pcmFormat: streamFormat, bufferListNoCopy: list, deallocator: nil) else { return }
+            counter.add(Int(buffer.frameLength))
             let samples = converter.convert(buffer)
             if !samples.isEmpty { self.onAudio?(samples) }
         }, "start listening to other apps")
         try CA.check(AudioDeviceStart(device, procID), "start listening to other apps")
+        watchFormat()
+        checkRate()
+    }
+
+    /// A headset switching modes, or the tap's format changing, changes what arrives: rebuild for the new format.
+    private func watchFormat() {
+        let watched: [(AudioObjectID, AudioObjectPropertySelector, AudioObjectPropertyScope)] = [
+            (deviceID, kAudioDevicePropertyNominalSampleRate, kAudioObjectPropertyScopeGlobal),
+            (deviceID, kAudioDevicePropertyStreamConfiguration, kAudioObjectPropertyScopeInput),
+            (tapID, kAudioTapPropertyFormat, kAudioObjectPropertyScopeGlobal),
+        ]
+        for (object, selector, scope) in watched {
+            var address = CA.address(selector, scope: scope)
+            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.restartSoon("the audio format changed") }
+            if AudioObjectAddPropertyListenerBlock(object, &address, control, block) == noErr {
+                formatWatches.append((object, address, block))
+            }
+        }
+    }
+
+    /// Belt and braces: if the audio arriving doesn't match the rate we were told (10% off), trust the
+    /// clock and restart at the measured rate. Checked a few seconds in, then every 10 s.
+    private func checkRate() {
+        rateCheck?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: control)
+        timer.schedule(deadline: .now() + 4, repeating: 10)
+        timer.setEventHandler { [weak self] in
+            guard let self, let measure = self.counter.measure(), measure.seconds >= 3 else { return }
+            let rate = measure.rate
+            let measured = FrameCounter.standardRates.min { abs($0 - rate) < abs($1 - rate) }!
+            if abs(rate / self.counter.expectedRate - 1) > 0.1, abs(measured / rate - 1) < 0.05 {
+                if Self.debug { debugLog("audio arrives at \(Int(rate)) Hz, not \(Int(self.counter.expectedRate)): restarting at \(Int(measured))") }
+                self.measuredRate = measured
+                self.restartSoon("the audio rate was off")
+            }
+        }
+        timer.resume()
+        rateCheck = timer
+    }
+
+    private func restartSoon(_ why: String) {
+        pendingRestart?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.tapID != kAudioObjectUnknown else { return }
+            if Self.debug { debugLog("restarting: \(why)") }
+            self.stopDevice()
+            try? self.startDevice()
+        }
+        pendingRestart = work
+        control.asyncAfter(deadline: .now() + 0.3, execute: work)  // several changes often arrive together
     }
 
     private func stopDevice() {
+        rateCheck?.cancel()
+        rateCheck = nil
+        for watch in formatWatches {
+            var address = watch.address
+            AudioObjectRemovePropertyListenerBlock(watch.object, &address, control, watch.block)
+        }
+        formatWatches = []
         if deviceID != kAudioObjectUnknown {
             if let procID {
                 AudioDeviceStop(deviceID, procID)
@@ -293,5 +395,41 @@ final class SystemAudioCapture: AudioSource {
         }
         timer.resume()
         refresh = timer
+    }
+}
+
+func debugLog(_ message: String) {
+    FileHandle.standardError.write(Data("[audio] \(message)\n".utf8))
+}
+
+/// Counts frames as they arrive, to compare the real rate with the one Core Audio reports.
+final class FrameCounter {
+    static let standardRates: [Double] = [8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 88200, 96000]
+    private let lock = NSLock()
+    private var frames = 0
+    private var since: Double?
+    private(set) var callbacks = 0
+    private(set) var expectedRate = 48000.0
+
+    func reset(rate: Double) {
+        lock.lock(); defer { lock.unlock() }
+        frames = 0
+        since = nil
+        callbacks = 0
+        expectedRate = rate
+    }
+
+    func add(_ count: Int) {
+        lock.lock(); defer { lock.unlock() }
+        callbacks += 1
+        if since == nil { since = CACurrentMediaTime() } else { frames += count }  // time from the first buffer
+    }
+
+    /// Frames per second since the first buffer, and over how long.
+    func measure() -> (rate: Double, seconds: Double)? {
+        lock.lock(); defer { lock.unlock() }
+        guard let since else { return nil }
+        let seconds = CACurrentMediaTime() - since
+        return seconds > 0 ? (Double(frames) / seconds, seconds) : nil
     }
 }
