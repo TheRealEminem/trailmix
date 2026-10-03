@@ -77,6 +77,42 @@ enum SelfTest {
         print(failures == 0 ? "All checks passed." : "\(failures) check(s) failed.")
     }
 
+    /// Records other apps' audio for a few seconds and reports what arrived: the formats and buffer layout
+    /// (TRAILMIX_AUDIO_DEBUG is turned on), and how many wire samples per second came out, which must be
+    /// 16000. Without System Audio Recording permission the audio is silent, but the layout is still real.
+    ///   TrailmixHelper --capture-test 6 /tmp/them.wav
+    static func captureTest(_ args: [String]) {
+        let rest = Array(args.drop { $0 != "--capture-test" }.dropFirst())
+        let seconds = Double(rest.first ?? "") ?? 6
+        setenv("TRAILMIX_AUDIO_DEBUG", "1", 1)
+        let capture = SystemAudioCapture(target: .allApps)
+        let lock = NSLock()
+        var samples: [Int16] = []
+        capture.onAudio = { chunk in lock.lock(); samples += chunk; lock.unlock() }
+        do { try capture.start() } catch {
+            print("couldn't start: \(error.localizedDescription)")
+            exit(1)
+        }
+        Thread.sleep(forTimeInterval: seconds)
+        capture.stop()
+        lock.lock()
+        let got = samples
+        lock.unlock()
+        let peak = got.map { abs(Int($0)) }.max() ?? 0
+        print(String(format: "%d samples in %.1f s = %.0f per second (should be 16000); peak %d", got.count, seconds, Double(got.count) / seconds, peak))
+        if rest.count > 1 {
+            var wav = Data("RIFF".utf8)
+            func le<T: FixedWidthInteger>(_ v: T) { withUnsafeBytes(of: v.littleEndian) { wav.append(contentsOf: $0) } }
+            le(UInt32(36 + got.count * 2)); wav += Data("WAVEfmt ".utf8)
+            le(UInt32(16)); le(UInt16(1)); le(UInt16(1)); le(UInt32(16000)); le(UInt32(32000)); le(UInt16(2)); le(UInt16(16))
+            wav += Data("data".utf8); le(UInt32(got.count * 2))
+            got.withUnsafeBytes { wav.append(contentsOf: $0) }
+            try? wav.write(to: URL(fileURLWithPath: rest[1]))
+            print("saved \(rest[1])")
+        }
+        exit(0)
+    }
+
     /// What the meeting-audio menu would offer right now. Needs no permission.
     static func listAudio() {
         print("Microphones:")
