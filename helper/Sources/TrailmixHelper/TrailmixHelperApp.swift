@@ -9,6 +9,7 @@ enum Entry {
         if args.contains("--self-test") { return SelfTest.run(args) }
         if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count { return Snapshot.render(into: args[i + 1]) }
         if args.contains("--list-audio") { return SelfTest.listAudio() }
+        if args.contains("--capture-test") { return SelfTest.captureTest(args) }
         TrailmixHelperApp.main()
     }
 }
