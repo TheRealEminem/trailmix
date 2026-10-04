@@ -49,6 +49,6 @@ def check(required_gb: float, what: str) -> str | None:
     if available >= needed:
         return None
     return (
-        f"Only {available:.1f} GB of RAM is free. {what} needs about {required_gb:.1f} GB "
-        f"plus {HEADROOM_GB:.0f} GB headroom. Close some apps, or proceed anyway."
+        f"Waiting for memory: {available:.1f} GB is free and {what.lower()} needs about {required_gb + HEADROOM_GB:.1f} GB. "
+        "It starts by itself when there's room. Close some apps, or proceed anyway."
     )

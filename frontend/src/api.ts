@@ -252,6 +252,7 @@ export const api = {
     request<Bookmark[]>(`/meetings/${id}/bookmarks`, json("PUT", { bookmarks })),
   confirm: (id: number) => request<{ ok: true }>(`/meetings/${id}/confirm`, json("POST")),
   retry: (id: number) => request<{ ok: true }>(`/meetings/${id}/retry`, json("POST")),
+  retranscribe: (id: number) => request<{ ok: true }>(`/meetings/${id}/retranscribe`, json("POST")),
   summarize: (id: number, provider: Provider, template?: string) =>
     request<{ ok: true }>(`/meetings/${id}/summarize`, json("POST", { provider, template })),
   askMeeting: (id: number, question: string) => request<QA>(`/meetings/${id}/ask`, json("POST", { question })),

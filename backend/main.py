@@ -516,9 +516,10 @@ def confirm(meeting_id: int):
         db.update_meeting(meeting_id, status="queued", wait_reason=None)
         pipeline.enqueue(meeting_id, go=frozenset({"transcribe"}))
     elif meeting["status"] == "waiting_confirm":
-        stage = frozenset({"summarize" if meeting["transcribed"] else "transcribe"})
-        db.update_meeting(meeting_id, status="queued", wait_reason=None)
-        pipeline.enqueue(meeting_id, go=stage, force=stage)
+        if not pipeline.proceed_now(meeting_id):  # no job is waiting (e.g. from an older version): start one
+            stage = frozenset({"summarize" if meeting["transcribed"] else "transcribe"})
+            db.update_meeting(meeting_id, status="queued", wait_reason=None)
+            pipeline.enqueue(meeting_id, go=stage, force=stage)
     else:
         raise HTTPException(409, "Nothing is waiting for confirmation")
     return {"ok": True}
@@ -532,6 +533,21 @@ def retry(meeting_id: int):
         raise HTTPException(409, "Only failed meetings can be retried")
     db.update_meeting(meeting_id, status="queued", wait_reason=None, error=None)
     pipeline.enqueue(meeting_id, go=frozenset({"transcribe"}))
+    return {"ok": True}
+
+
+@app.post("/api/meetings/{meeting_id}/retranscribe", status_code=202)
+def retranscribe(meeting_id: int):
+    """Transcribe again from the saved audio (say, after an update that transcribes better), then summarize.
+    Speaker names, flags and tasks you ticked off are kept; the summary is rewritten."""
+    meeting = _get_or_404(meeting_id)
+    if meeting["status"] not in ("done", "error", "ready_summarize"):
+        raise HTTPException(409, "This meeting is still being processed")
+    if meeting["audio_deleted"] or not store.audio_bytes(meeting):
+        raise HTTPException(409, "The audio for this meeting has been deleted, so it can't be transcribed again")
+    db.update_meeting(meeting_id, status="queued", wait_reason=None, error=None, transcribed=0, summary=None,
+                      summary_error=None)
+    pipeline.enqueue(meeting_id, go=frozenset({"transcribe", "summarize"}))
     return {"ok": True}
 
 
