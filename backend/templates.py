@@ -121,10 +121,11 @@ TRANSCRIPT (PART {part} OF {parts}):
 {chunk}
 
 ---
-Write notes on this part of the meeting. For every topic discussed, starting with its timestamp: the
-specifics (who said what, names, numbers, dates, tools, places) and where it landed. Then list any
-decisions, action items (who, what, by when) and open questions from this part. Bullets only. Only use what
-is in the transcript.
+Summarize this part of the meeting in your own words. Do not copy lines from the transcript. For each
+topic discussed: one bullet starting with its timestamp, then two or three sub-bullets with the specifics
+that matter (names, numbers, dates, tools, places) and where it landed. Then list any decisions, action
+items (who, what, by when) and open questions from this part. At most about 25 bullets in all. Only use
+what is in the transcript.
 """
 
 
@@ -152,7 +153,8 @@ def final_prompt(template_id: str, custom: str, material: str, from_notes: bool,
 Write the notes for this meeting from {source}.{combine} {_shape(template_id, custom)}
 
 {ACTION_RULE}
-{_length(minutes)} Only use information from {source}. Do not invent names, dates, or facts.{flagged}
+{_length(minutes)} Summarize in your own words; never copy transcript lines. Only use information from
+{source}. Do not invent names, dates, or facts.{flagged}
 Start your reply directly with the first heading.
 """
 
