@@ -473,7 +473,7 @@ const STATUS_CHIP: Partial<Record<MeetingStatus, { label: string; cls: string; d
   queued: { label: "Queued", cls: "bg-surface-subtle text-ink-soft", dot: "bg-ink-faint" },
   ready_transcribe: { label: "Needs you", cls: "bg-sun-soft text-sun-deep", dot: "bg-sun" },
   ready_summarize: { label: "Needs you", cls: "bg-sun-soft text-sun-deep", dot: "bg-sun" },
-  waiting_confirm: { label: "Low memory", cls: "bg-sun-soft text-sun-deep", dot: "bg-sun" },
+  waiting_confirm: { label: "Needs memory", cls: "bg-sun-soft text-sun-deep", dot: "bg-sun" },
   transcribing: { label: "Transcribing", cls: "bg-sky-soft text-sky-deep", dot: "bg-sky", live: true },
   summarizing: { label: "Summarizing", cls: "bg-sky-soft text-sky-deep", dot: "bg-sky", live: true },
   error: { label: "Failed", cls: "bg-trail-soft text-trail-deep", dot: "bg-trail" },

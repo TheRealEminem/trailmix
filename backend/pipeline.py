@@ -48,7 +48,7 @@ def enqueue(meeting_id: int, go: frozenset[str] = NONE, force: frozenset[str] = 
 
 def recover_unfinished() -> None:
     """After a crash or restart: pick every interrupted meeting back up where it left off."""
-    for m in db.meetings_with_status("recording", "queued", "transcribing", "summarizing"):
+    for m in db.meetings_with_status("recording", "queued", "transcribing", "summarizing", "waiting_confirm"):
         if m["status"] == "recording":  # server died mid-recording; the .pcm on disk is intact
             folder = store.track_dir(m)
             db.update_meeting(m["id"], duration_sec=store.duration_of_pcm(folder) if folder and folder.exists() else 0,
@@ -74,15 +74,42 @@ def _wait_for_recording_to_end(meeting_id: int) -> None:
         db.update_meeting(meeting_id, wait_reason=None)
 
 
-def _gate(meeting_id: int, override: bool, required_gb: float, what: str) -> bool:
-    """True if we may proceed. Otherwise parks the meeting as 'waiting_confirm'."""
-    if override:
+# Meetings whose low-memory wait you cut short with "Proceed anyway" (checked by the waiting job).
+_proceed: set[int] = set()
+RAM_POLL_S = 10
+
+
+def proceed_now(meeting_id: int) -> bool:
+    """'Proceed anyway' for a meeting whose job is waiting for memory. False if no job is waiting."""
+    if meeting_id in _waiting:
+        _proceed.add(meeting_id)
         return True
-    reason = resources.check(required_gb, what)
-    if reason is None:
-        return True
-    db.update_meeting(meeting_id, status="waiting_confirm", wait_reason=reason)
     return False
+
+
+_waiting: set[int] = set()
+
+
+def _gate(meeting_id: int, override: bool, required_gb: float, what: str) -> None:
+    """Waits until there's enough free memory for a heavy model (checking every few seconds), or until you
+    say to go ahead anyway. Meanwhile the meeting shows why it's waiting."""
+    if override:
+        return
+    _waiting.add(meeting_id)
+    try:
+        while meeting_id not in _proceed:
+            reason = resources.check(required_gb, what)
+            if reason is None:
+                break
+            db.update_meeting(meeting_id, status="waiting_confirm", wait_reason=reason)
+            for _ in range(RAM_POLL_S):
+                if meeting_id in _proceed:
+                    break
+                time.sleep(1)
+    finally:
+        _waiting.discard(meeting_id)
+        _proceed.discard(meeting_id)
+    _wait_for_recording_to_end(meeting_id)  # a recording may have started while it waited
 
 
 def _export(meeting_id: int, cfg: dict) -> None:
@@ -116,8 +143,7 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
             if not mlx_engine.available():
                 raise RuntimeError("Local transcription needs a Mac with MLX; set a remote endpoint in Settings → Transcription")
             _wait_for_recording_to_end(meeting_id)
-            if not _gate(meeting_id, "transcribe" in force, mlx_engine.FINAL_MODEL_RAM_GB, "The transcription model"):
-                return
+            _gate(meeting_id, "transcribe" in force, mlx_engine.FINAL_MODEL_RAM_GB, "The transcription model")
         db.update_meeting(meeting_id, status="transcribing", wait_reason=None)
         segments, labeled, duration = _transcribe_local(m) if local else _transcribe_remote(m, cfg)
         _save_transcript(m, segments, labeled, duration)
@@ -135,8 +161,7 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
         first = llm_engine.chain(choice, cfg)[0]
         if llm_engine.is_local(first, cfg):
             _wait_for_recording_to_end(meeting_id)
-            if not _gate(meeting_id, "summarize" in force, llm_engine.ollama_ram_needed_gb(cfg), "The summarization model"):
-                return
+            _gate(meeting_id, "summarize" in force, llm_engine.ollama_ram_needed_gb(cfg), "The summarization model")
         db.update_meeting(meeting_id, status="summarizing", wait_reason=None, summary_error=None)
         try:
             minutes = (m["duration_sec"] or 0) / 60

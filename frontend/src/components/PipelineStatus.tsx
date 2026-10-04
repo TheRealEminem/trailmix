@@ -82,7 +82,7 @@ export default function PipelineStatus({ meeting: m, health, onConfirm, onRetry,
 
   const sub = (s: StepState, i: number) => {
     if (s === "done") return i === 0 ? "" : "Done";
-    if (s === "waiting") return m.status === "waiting_confirm" ? "Low memory" : "Your call";
+    if (s === "waiting") return m.status === "waiting_confirm" ? "Waiting for memory" : "Your call";
     if (s === "error") return "Hit a snag";
     if (s === "active") {
       if (m.status === "queued") return m.wait_reason ? "After recording" : "Queued";
@@ -146,7 +146,7 @@ export default function PipelineStatus({ meeting: m, health, onConfirm, onRetry,
         )}
 
         {m.status === "waiting_confirm" && (
-          <ActionRow icon={<AlertIcon size={18} />} tone="sun" title="Running low on memory" body={m.wait_reason ?? ""}>
+          <ActionRow icon={<AlertIcon size={18} />} tone="sun" title="Waiting for memory" body={m.wait_reason ?? ""}>
             <button onClick={onConfirm} className="btn btn-md btn-sun">
               Proceed anyway
             </button>
