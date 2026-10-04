@@ -74,6 +74,21 @@ enum SelfTest {
         _ = try? await URLSession.shared.data(for: stop)
         expect(await waitUntil(10) { model.phase == .idle }, "stopped from outside")
         expect(model.error == nil, "no error shown (\(model.error ?? ""))")
+
+        print("5. The Record button in the Trailmix window starts a recording here")
+        await model.checkIn()
+        let base = model.serverOverride!
+        let status = try? JSONSerialization.jsonObject(with: (try? await URLSession.shared.data(from: base.appendingPathComponent("api/recorder")))?.0 ?? Data()) as? [String: Any]
+        expect(status?["available"] as? Bool == true, "the window sees the recorder (\(status?["mic"] as? String ?? "?"), \(status?["source"] as? String ?? "?"))")
+        var press = URLRequest(url: base.appendingPathComponent("api/recorder/start"))
+        press.httpMethod = "POST"
+        let answer = try? await URLSession.shared.data(for: press)
+        expect((answer?.1 as? HTTPURLResponse)?.statusCode == 202, "Record pressed in the window")
+        await model.checkIn()
+        expect(await waitUntil(20) { model.phase == .recording }, "recording started from the window")
+        try? await Task.sleep(for: .seconds(2))
+        model.toggle()
+        expect(await waitUntil(15) { model.phase == .idle }, "stopped cleanly")
         print(failures == 0 ? "All checks passed." : "\(failures) check(s) failed.")
     }
 

@@ -109,6 +109,13 @@ final class ServerClient {
         _ = try await call("meetings/\(id)/stop", method: "POST")
     }
 
+    /// Tells the server this recorder is here and what it would record; returns the commands waiting for it
+    /// (the web app's Record button sends "start").
+    func checkIn(_ info: [String: Any]) async throws -> [String] {
+        let data = try await call("recorder/check-in", method: "POST", json: info)
+        return ((try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["commands"] as? [String]) ?? []
+    }
+
     /// The audio WebSocket for a meeting, already connecting.
     func openStream(id: Int, draft: Bool) -> URLSessionWebSocketTask {
         var components = URLComponents(url: base, resolvingAgainstBaseURL: false)!
