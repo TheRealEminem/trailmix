@@ -40,7 +40,6 @@ import transcribe_remote
 log = logging.getLogger("trailmix")
 SWEEP_INTERVAL_S = 6 * 3600
 UI_DIR = Path(os.getenv("TRAILMIX_UI_DIR", Path(__file__).resolve().parent.parent / "frontend" / "dist"))
-MAX_CONTEXT_CHARS = 120_000  # transcripts longer than this are trimmed for Q&A
 
 
 async def _sweep_loop():
@@ -188,14 +187,15 @@ def _local_llm_paused(cfg: dict) -> None:
                                  "or pick a cloud provider in Settings.")
 
 
-def _meeting_context(m: dict, cfg: dict) -> str:
+def _meeting_context(m: dict, cfg: dict, question: str) -> str:
+    """The meeting's notes and transcript, cut to what the model can take: for a long meeting and a small
+    local model, the parts of the transcript that match the question."""
     when = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00")).astimezone().strftime("%A %B %-d, %Y")
-    transcript = meeting_text.transcript_text(m, cfg)
-    if len(transcript) > MAX_CONTEXT_CHARS:
-        transcript = transcript[:MAX_CONTEXT_CHARS] + "\n[transcript trimmed]"
     parts = [f"MEETING: {m['title']} ({when})"]
     if m.get("summary"):
         parts.append(f"NOTES:\n{m['summary']}")
+    room = llm_engine.chain_context_chars(cfg) - sum(len(p) for p in parts) - len(question) - 500
+    transcript = meeting_text.excerpt(meeting_text.transcript_text(m, cfg), question, max(room, 2000))
     parts.append(f"TRANSCRIPT:\n{transcript}")
     return "\n\n".join(parts)
 
@@ -563,7 +563,7 @@ def ask_meeting(meeting_id: int, body: Question):
     cfg = settings.get_all()
     _local_llm_paused(cfg)
     try:
-        answer, used = llm_engine.ask(question, _meeting_context(meeting, cfg), cfg)
+        answer, used = llm_engine.ask(question, _meeting_context(meeting, cfg, question), cfg)
     except llm_engine.LLMError as e:
         raise HTTPException(502, str(e))
     entry = {"q": question, "a": answer, "provider": used, "at": datetime.now(timezone.utc).isoformat()}
@@ -591,12 +591,12 @@ def ask_everything(body: Question):
     meetings = [m for m in meetings if m.get("transcript")]
     if not meetings:
         raise HTTPException(409, "There are no transcribed meetings to search yet")
-    budget = MAX_CONTEXT_CHARS // len(meetings)
+    budget = (llm_engine.chain_context_chars(cfg) - len(question) - 500) // len(meetings)
     blocks = []
     for m in meetings:
         when = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00")).astimezone().strftime("%b %-d, %Y")
         body_text = m["summary"] or meeting_text.transcript_text(m, cfg)
-        blocks.append(f"[M{m['id']}] {m['title']} ({when})\n{body_text[:budget]}")
+        blocks.append(f"[M{m['id']}] {m['title']} ({when})\n{meeting_text.excerpt(body_text, question, budget)}")
     context = "MEETINGS (each tagged like [M12]):\n\n" + "\n\n---\n\n".join(blocks)
     try:
         answer, used = llm_engine.ask(question, context, cfg, cite_meetings=True)

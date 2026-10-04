@@ -13,6 +13,7 @@ WORKDIR /app/backend
 COPY backend/requirements-server.txt ./
 RUN pip install --no-cache-dir -r requirements-server.txt
 COPY backend/*.py ./
+COPY backend/assets ./assets
 COPY --from=web /web/dist /app/frontend/dist
 
 ENV TRAILMIX_DATA_DIR=/data \

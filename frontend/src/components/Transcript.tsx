@@ -56,7 +56,7 @@ export default function Transcript({ meeting: m, health, pending, onBookmarks, o
   const [length, setLength] = useState(m.duration_sec);
   const [speed, setSpeed] = useState(1);
   const [audioError, setAudioError] = useState(false);
-  const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const rowRefs = useRef<(HTMLElement | null)[]>([]);
 
   const segments: Segment[] = m.segments ?? [];
   const names = m.speaker_names;
@@ -81,11 +81,12 @@ export default function Transcript({ meeting: m, health, pending, onBookmarks, o
     else a.pause();
   };
 
-  const markAt = (s: Segment) => {
-    const existing = m.bookmarks.find((b) => b.t >= s.start - 0.5 && b.t <= s.end + 0.5);
-    onBookmarks(existing ? m.bookmarks.filter((b) => b !== existing) : [...m.bookmarks, { t: s.start, note: "" }]);
+  const within = (b: Bookmark, start: number, end: number) => b.t >= start - 0.5 && b.t <= end + 0.5;
+  const markTurn = (start: number, end: number) => {
+    const inside = m.bookmarks.filter((b) => within(b, start, end));
+    onBookmarks(inside.length ? m.bookmarks.filter((b) => !inside.includes(b)) : [...m.bookmarks, { t: start, note: "" }]);
   };
-  const isMarked = (s: Segment) => m.bookmarks.some((b) => b.t >= s.start - 0.5 && b.t <= s.end + 0.5);
+  const isMarked = (s: Segment) => m.bookmarks.some((b) => within(b, s.start, s.end));
 
   if (!m.transcript) {
     return (
@@ -101,12 +102,16 @@ export default function Transcript({ meeting: m, health, pending, onBookmarks, o
     );
   }
 
-  // Consecutive lines from the same speaker share one label.
-  const turns: { speaker: string | null; lines: { s: Segment; i: number }[] }[] = [];
+  // Lines become turns: the same speaker, without a pause longer than 2 s, up to about a minute per paragraph.
+  const turns: { speaker: string | null; start: number; end: number; lines: { s: Segment; i: number }[] }[] = [];
   segments.forEach((s, i) => {
     const last = turns[turns.length - 1];
-    if (last && last.speaker === s.speaker) last.lines.push({ s, i });
-    else turns.push({ speaker: s.speaker, lines: [{ s, i }] });
+    if (last && last.speaker === s.speaker && s.start - last.end <= 2 && s.end - last.start <= 60) {
+      last.lines.push({ s, i });
+      last.end = Math.max(last.end, s.end);
+    } else {
+      turns.push({ speaker: s.speaker, start: s.start, end: s.end, lines: [{ s, i }] });
+    }
   });
 
   return (
@@ -235,58 +240,60 @@ export default function Transcript({ meeting: m, health, pending, onBookmarks, o
           {turns.length === 0 ? (
             <pre className="whitespace-pre-wrap font-sans text-body leading-[1.7]">{m.transcript}</pre>
           ) : (
-            <div className="space-y-5">
-              {turns.map((turn, ti) => (
-                <div key={ti} className={turn.speaker ? "grid grid-cols-1 gap-y-1 sm:grid-cols-[5.5rem_1fr] sm:gap-x-3" : ""}>
-                  {turn.speaker && (
-                    <div className="sm:pt-[7px]">
-                      <SpeakerChip speaker={turn.speaker} name={names[turn.speaker]} />
+            <div className="space-y-3">
+              {turns.map((turn, ti) => {
+                const marked = m.bookmarks.some((b) => within(b, turn.start, turn.end));
+                const live = turn.lines.some(({ i }) => i === current);
+                return (
+                  <div key={ti} className={turn.speaker ? "grid grid-cols-1 gap-y-1 sm:grid-cols-[5.5rem_1fr] sm:gap-x-3" : ""}>
+                    {turn.speaker && (
+                      <div className="sm:pt-[7px]">
+                        <SpeakerChip speaker={turn.speaker} name={names[turn.speaker]} />
+                      </div>
+                    )}
+                    <div
+                      className={`group -mx-2 flex gap-2.5 rounded-md px-2 py-1 transition-colors duration-150 ${
+                        live ? "bg-sun-soft/40" : ""
+                      }`}
+                    >
+                      <button
+                        onClick={() => hasAudio && playFrom(turn.start)}
+                        disabled={!hasAudio}
+                        className="w-11 shrink-0 self-start pt-[5px] text-right font-mono text-meta tabular-nums text-ink-soft transition-colors enabled:hover:text-forest"
+                        aria-label={hasAudio ? `Play from ${formatDuration(turn.start)}` : undefined}
+                      >
+                        {formatDuration(turn.start)}
+                      </button>
+                      <p className="min-w-0 flex-1 text-body leading-[1.7]">
+                        {turn.lines.map(({ s, i }) => (
+                          <span
+                            key={i}
+                            ref={(el) => {
+                              rowRefs.current[i] = el;
+                            }}
+                            onClick={() => hasAudio && playFrom(s.start)}
+                            className={`-mx-0.5 rounded-sm px-0.5 transition-colors duration-150 ${
+                              i === current ? "bg-sun-soft" : hasAudio ? "cursor-pointer hover:bg-forest/[.06]" : ""
+                            } ${isMarked(s) ? "underline decoration-sun decoration-2 underline-offset-4" : ""}`}
+                          >
+                            {s.text}{" "}
+                          </span>
+                        ))}
+                      </p>
+                      <button
+                        onClick={() => markTurn(turn.start, turn.end)}
+                        className={`icon-btn h-7 w-7 self-start transition-opacity focus-visible:opacity-100 ${
+                          marked ? "text-sun-deep opacity-100" : "text-ink-faint opacity-0 hover:!text-sun-deep group-hover:opacity-100 [@media(pointer:coarse)]:opacity-50"
+                        }`}
+                        aria-label={marked ? "Remove flag" : "Flag this moment"}
+                        data-tip={marked ? "Remove flag" : "Flag this moment"}
+                      >
+                        <FlagIcon size={16} fill={marked ? "currentColor" : "none"} />
+                      </button>
                     </div>
-                  )}
-                  <div className="space-y-px">
-                    {turn.lines.map(({ s, i }) => {
-                      const active = i === current;
-                      const marked = isMarked(s);
-                      return (
-                        <div
-                          key={i}
-                          ref={(el) => {
-                            rowRefs.current[i] = el;
-                          }}
-                          className={`group -mx-2 flex gap-2.5 rounded-md px-2 py-1 transition-colors duration-150 ${
-                            active ? "bg-sun-soft/80" : hasAudio ? "hover:bg-forest/[.04]" : ""
-                          }`}
-                        >
-                          <button
-                            onClick={() => hasAudio && playFrom(s.start)}
-                            disabled={!hasAudio}
-                            className="w-11 shrink-0 self-start pt-[5px] text-right font-mono text-meta tabular-nums text-ink-soft transition-colors enabled:hover:text-forest"
-                            aria-label={hasAudio ? `Play from ${formatDuration(s.start)}` : undefined}
-                          >
-                            {formatDuration(s.start)}
-                          </button>
-                          <p
-                            onClick={() => hasAudio && playFrom(s.start)}
-                            className={`min-w-0 flex-1 text-body leading-[1.65] ${hasAudio ? "cursor-pointer" : ""}`}
-                          >
-                            {s.text}
-                          </p>
-                          <button
-                            onClick={() => markAt(s)}
-                            className={`icon-btn h-7 w-7 self-start transition-opacity focus-visible:opacity-100 ${
-                              marked ? "text-sun-deep opacity-100" : "text-ink-faint opacity-0 hover:!text-sun-deep group-hover:opacity-100 [@media(pointer:coarse)]:opacity-50"
-                            }`}
-                            aria-label={marked ? "Remove flag" : "Flag this moment"}
-                            data-tip={marked ? "Remove flag" : "Flag this moment"}
-                          >
-                            <FlagIcon size={16} fill={marked ? "currentColor" : "none"} />
-                          </button>
-                        </div>
-                      );
-                    })}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </>

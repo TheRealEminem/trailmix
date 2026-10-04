@@ -16,7 +16,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="${TRAILMIX_VERSION:-$(tr -d '[:space:]' <"$ROOT/VERSION")}"
 PORT="${TRAILMIX_PORT:-8765}"
-OUT="$ROOT/dist"
+OUT="${TRAILMIX_OUT:-$ROOT/dist}"  # where the app (and disk image) go
 APP="$OUT/Trailmix.app"
 RES="$APP/Contents/Resources"
 CACHE="$ROOT/build/cache"
@@ -111,7 +111,7 @@ find "$RES/python" -name __pycache__ -type d -prune -exec rm -rf {} +
 
 # ── Trailmix itself ────────────────────────────────────────────────────
 mkdir -p "$RES/backend"
-rsync -a --include='*.py' --exclude='*' "$ROOT/backend/" "$RES/backend/"
+rsync -a --include='*.py' --include='assets/' --include='assets/**' --exclude='*' "$ROOT/backend/" "$RES/backend/"
 rsync -a --delete "$ROOT/frontend/dist/" "$RES/ui/"
 cp "$ROOT/VERSION" "$RES/VERSION"
 
@@ -133,7 +133,7 @@ ENTITLEMENTS=()
 "${SIGN[@]}" ${ENTITLEMENTS[@]+"${ENTITLEMENTS[@]}"} "$APP" >/dev/null 2>&1 || die "Couldn't sign the app"
 codesign --verify --strict "$APP" 2>&1 | head -n 3
 
-du -sh "$APP" | awk '{print "› Built dist/Trailmix.app (" $1 ")"}'
+du -sh "$APP" | awk -v app="$APP" '{print "› Built " app " (" $1 ")"}'
 
 # ── Disk image ─────────────────────────────────────────────────────────
 if [ "${1:-}" = "--dmg" ]; then
@@ -146,5 +146,5 @@ if [ "${1:-}" = "--dmg" ]; then
   cp "$ROOT/scripts/Open Anyway.txt" "$STAGE/Read me first.txt" 2>/dev/null || true
   rm -f "$DMG"
   hdiutil create -quiet -volname "Trailmix" -srcfolder "$STAGE" -format ULFO -fs HFS+ "$DMG"
-  du -sh "$DMG" | awk '{print "› Built dist/" "'"$(basename "$DMG")"'" " (" $1 ")"}'
+  du -sh "$DMG" | awk -v dmg="$DMG" '{print "› Built " dmg " (" $1 ")"}'
 fi

@@ -36,7 +36,12 @@ def run(audio: np.ndarray, model: str) -> list[dict]:
         text = seg["text"].strip()
         if not text or (seg.get("no_speech_prob", 0) > 0.6 and seg.get("avg_logprob", 0) < -1.0):
             continue
-        segments.append({"start": float(seg["start"]), "end": float(seg["end"]), "text": text})
+        segments.append({
+            "start": float(seg["start"]), "end": float(seg["end"]), "text": text,
+            # Kept for cleanup.drop_hallucinations, which removes them before saving.
+            "avg_logprob": float(seg.get("avg_logprob", 0)), "no_speech_prob": float(seg.get("no_speech_prob", 0)),
+            "compression_ratio": float(seg.get("compression_ratio", 0)),
+        })
     return segments
 
 
