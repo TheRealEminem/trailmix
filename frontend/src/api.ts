@@ -211,6 +211,14 @@ export interface NativeRecorder {
   mic_allowed?: boolean;
 }
 
+export interface OllamaStatus {
+  reachable: boolean;
+  models: string[];
+  using: string;
+  recommended: string;
+  pull: { model: string; active: boolean; progress: number | null; status: string; error: string | null } | null;
+}
+
 export interface SpeechModel {
   kind: "live" | "final";
   repo: string;
@@ -259,6 +267,8 @@ export const api = {
   },
   live: () => request<LiveRecording[]>("/live"),
   nativeRecorder: () => request<NativeRecorder>("/recorder"),
+  ollama: () => request<OllamaStatus>("/ollama"),
+  pullOllamaModel: (model = "") => request<OllamaStatus>("/ollama/pull", json("POST", { model })),
   startNativeRecorder: () => request<{ ok: true }>("/recorder/start", json("POST")),
   markLive: (id: number, note = "") => request<Bookmark>(`/meetings/${id}/mark`, json("POST", { note })),
   stopLive: (id: number) => request<{ ok: true }>(`/meetings/${id}/stop`, json("POST")),
