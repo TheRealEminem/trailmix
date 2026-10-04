@@ -201,6 +201,16 @@ const json = (method: string, body?: unknown): RequestInit => ({
   body: body === undefined ? undefined : JSON.stringify(body),
 });
 
+/** Trailmix's menu bar recorder, when it's running and checking in with this server. */
+export interface NativeRecorder {
+  available: boolean;
+  mic?: string;
+  source?: string;
+  machine?: string;
+  version?: string;
+  mic_allowed?: boolean;
+}
+
 export interface SpeechModel {
   kind: "live" | "final";
   repo: string;
@@ -242,6 +252,8 @@ export const api = {
     return `${proto}://${location.host}/api/meetings/${id}/stream?draft=${draft ? 1 : 0}&client=web`;
   },
   live: () => request<LiveRecording[]>("/live"),
+  nativeRecorder: () => request<NativeRecorder>("/recorder"),
+  startNativeRecorder: () => request<{ ok: true }>("/recorder/start", json("POST")),
   markLive: (id: number, note = "") => request<Bookmark>(`/meetings/${id}/mark`, json("POST", { note })),
   stopLive: (id: number) => request<{ ok: true }>(`/meetings/${id}/stop`, json("POST")),
   audioUrl: (id: number) => `/api/meetings/${id}/audio`,
