@@ -211,6 +211,7 @@ class RecorderCheckIn(BaseModel):
     machine: str = ""
     version: str = ""
     mic_allowed: bool = True
+    sound_check: dict | None = None
 
 
 @app.post("/api/recorder/check-in")
@@ -309,6 +310,16 @@ def ollama_pull(body: PullRequest):
     if not ollama_setup.start_pull(cfg, model):
         raise HTTPException(409, "A model is already downloading")
     return ollama_setup.status(cfg)
+
+
+@app.post("/api/recorder/sound-check", status_code=202)
+def recorder_sound_check():
+    """Ask the menu bar recorder to check the mic and other apps' audio (plays a short chime)."""
+    if live.active_count():
+        raise HTTPException(409, "Not while recording")
+    if not recorder.request("sound-check"):
+        raise HTTPException(409, "The menu bar recorder isn't running")
+    return {"ok": True}
 
 
 @app.get("/api/models")

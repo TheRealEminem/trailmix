@@ -19,7 +19,7 @@ def check_in(info: dict) -> list[str]:
     """Called by the menu bar app. Returns (and clears) the commands waiting for it."""
     global _info, _seen_at
     with _lock:
-        _info = {k: info.get(k) for k in ("mic", "source", "machine", "version", "mic_allowed")}
+        _info = {k: info.get(k) for k in ("mic", "source", "machine", "version", "mic_allowed", "sound_check")}
         _seen_at = time.monotonic()
         out, _commands[:] = list(_commands), []
     return out
