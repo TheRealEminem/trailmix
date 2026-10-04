@@ -210,6 +210,15 @@ export interface NativeRecorder {
   machine?: string;
   version?: string;
   mic_allowed?: boolean;
+  sound_check?: SoundCheckResult | null;
+}
+
+export interface SoundCheckResult {
+  running?: boolean;
+  at?: number;
+  mic?: "ok" | "quiet" | "denied" | "error";
+  system?: "ok" | "silent" | "error";
+  detail?: string;
 }
 
 export interface GranolaNote {
@@ -292,6 +301,7 @@ export const api = {
   importText: (text: string, title: string, date: string) => request<{ id: number }>("/import/text", json("POST", { text, title, date })),
   pullOllamaModel: (model = "") => request<OllamaStatus>("/ollama/pull", json("POST", { model })),
   startNativeRecorder: () => request<{ ok: true }>("/recorder/start", json("POST")),
+  soundCheck: () => request<{ ok: true }>("/recorder/sound-check", json("POST")),
   markLive: (id: number, note = "") => request<Bookmark>(`/meetings/${id}/mark`, json("POST", { note })),
   stopLive: (id: number) => request<{ ok: true }>(`/meetings/${id}/stop`, json("POST")),
   audioUrl: (id: number) => `/api/meetings/${id}/audio`,
