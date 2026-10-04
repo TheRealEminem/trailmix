@@ -14,6 +14,13 @@ import templates
 OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "0")  # "0" = unload right after the last call
 TIMEOUT = httpx.Timeout(600, connect=8)
 MAX_TOKENS = 16000
+OLLAMA_NUM_CTX = 16384  # a bigger window costs RAM a 16 GB Mac doesn't have to spare
+# How much text (in tokens) each provider can take in one request. Unknown OpenAI-compatible servers are
+# often small local models, so they get the conservative figure.
+CONTEXT_TOKENS = {"ollama": OLLAMA_NUM_CTX, "custom": 16384, "deepseek": 60000}
+DEFAULT_CONTEXT_TOKENS = 120000
+CHARS_PER_TOKEN = 3.0      # meeting transcripts run ~3.1 characters per token; err on the safe side
+RESERVED_TOKENS = 4500     # the reply, the instructions and the meeting description
 
 PROVIDERS = {
     "ollama": {"label": "Ollama", "kind": "local"},
@@ -70,9 +77,41 @@ def model_for(pid: str, cfg: dict) -> str:
     if pid == "ollama":
         if cfg["ollama_model"]:
             return cfg["ollama_model"]
-        tags = _ollama_tags(cfg)
-        return tags[0]["name"] if tags else ""
+        return preferred_ollama_model(_ollama_tags(cfg))
     return cfg[f"{pid}_model"]
+
+
+# Families that follow a fixed note format well, best first. Used when no Ollama model is picked in Settings.
+_PREFERRED_FAMILIES = ("qwen3", "qwen2.5", "gemma3", "llama3.1", "llama3.2", "mistral", "phi4", "llama3")
+
+
+def preferred_ollama_model(tags: list[dict]) -> str:
+    """The installed model most likely to write good notes: a known instruction-following family, and within
+    it the biggest size up to ~14B (bigger rarely fits next to everything else in RAM)."""
+    def params(m: dict) -> float:
+        text = (m.get("details") or {}).get("parameter_size", "")
+        found = re.match(r"([\d.]+)\s*([BM])", text, re.I)
+        return float(found.group(1)) / (1000 if found.group(2).upper() == "M" else 1) if found else 0.0
+
+    def rank(m: dict) -> tuple:
+        name = m["name"].lower()
+        family = next((i for i, f in enumerate(_PREFERRED_FAMILIES) if name.startswith(f)), len(_PREFERRED_FAMILIES))
+        size = params(m)
+        return (family, size > 15, -size)
+
+    usable = [m for m in tags if "embed" not in m["name"].lower()]
+    return min(usable, key=rank)["name"] if usable else ""
+
+
+def context_chars(pid: str, cfg: dict) -> int:
+    """How much transcript (in characters) fits in one request to this provider, leaving room for the rest."""
+    tokens = CONTEXT_TOKENS.get(pid, DEFAULT_CONTEXT_TOKENS)
+    return int((tokens - RESERVED_TOKENS) * CHARS_PER_TOKEN)
+
+
+def chain_context_chars(cfg: dict, choice: str = "auto") -> int:
+    """The smallest budget among the providers that may answer, so a fallback isn't overfilled either."""
+    return min(context_chars(pid, cfg) for pid in chain(choice, cfg))
 
 
 def chain(choice: str, cfg: dict) -> list[str]:
@@ -98,7 +137,8 @@ def _ollama_tags(cfg: dict) -> list[dict]:
 
 def ollama_model_size_gb(cfg: dict) -> float | None:
     tags = _ollama_tags(cfg)
-    chosen = next((m for m in tags if m["name"] == cfg["ollama_model"]), tags[0] if tags else None)
+    name = model_for("ollama", cfg)
+    chosen = next((m for m in tags if m["name"] == name), None)
     return chosen["size"] / 1024**3 if chosen else None
 
 
@@ -116,7 +156,7 @@ def _ollama(cfg: dict, prompt: str, system: str | None, keep_alive: str) -> str:
         "prompt": prompt,
         "stream": False,
         "keep_alive": keep_alive,
-        "options": {"num_ctx": 16384, "temperature": 0.2},
+        "options": {"num_ctx": OLLAMA_NUM_CTX, "temperature": 0.2},
     }
     if system:
         body["system"] = system
@@ -290,16 +330,111 @@ def clean_title(raw: str) -> str | None:
     return title[:80] or None
 
 
+def split_lines(text: str, limit: int) -> list[str]:
+    """Splits text into pieces of at most `limit` characters, only between lines."""
+    pieces, current, size = [], [], 0
+    for line in text.splitlines():
+        line = line[:limit]
+        if current and size + len(line) + 1 > limit:
+            pieces.append("\n".join(current))
+            current, size = [], 0
+        current.append(line)
+        size += len(line) + 1
+    if current:
+        pieces.append("\n".join(current))
+    return pieces
+
+
+_PREAMBLE_MAX = 800
+_CLOSER = re.compile(r"^\s*(let me know|i hope|feel free|if you (need|want|have|would)|please note|note:|overall,? (this|the) (meeting|conversation))", re.I)
+
+
+def tidy(text: str) -> str:
+    """Strips what models wrap notes in: code fences, "Here are the notes…" preambles, "Let me know…" closers."""
+    lines = [ln for ln in text.strip().splitlines() if not re.match(r"^\s*```(?:markdown|md)?\s*$", ln, re.I)]
+    first = next((i for i, ln in enumerate(lines) if re.match(r"^#{1,4}\s", ln)), None)
+    if first and len("\n".join(lines[:first])) <= _PREAMBLE_MAX:
+        lines = lines[first:]
+    while lines and (not lines[-1].strip() or _CLOSER.match(lines[-1])):
+        lines.pop()
+    return "\n".join(_drop_stray_none(lines)).strip()
+
+
+_NONE_BULLET = re.compile(r"^\s*[-*+]\s*(?:\[ \]\s*)?none\.?\s*$", re.I)
+
+
+def _drop_stray_none(lines: list[str]) -> list[str]:
+    """A "- None" placeholder in a section that also has real bullets (small models add both)."""
+    out, section = [], []
+
+    def flush():
+        real = [ln for ln in section if re.match(r"^\s*[-*+]\s", ln) and not _NONE_BULLET.match(ln)]
+        out.extend(ln for ln in section if not (real and _NONE_BULLET.match(ln)))
+        section.clear()
+
+    for ln in lines:
+        if re.match(r"^#{1,4}\s", ln):
+            flush()
+        section.append(ln)
+    flush()
+    return out
+
+
+_ACTION_HEADING = re.compile(r"^#{1,4}\s*action items\b", re.I | re.M)
+_TIMESTAMP = re.compile(r"^\[(\d+(?::\d\d)+)\]", re.M)
+
+
+def _span(part: str) -> str:
+    """'NOTES ON [00:00] TO [22:41]' from a piece of transcript (or plain 'NOTES' for notes on notes)."""
+    stamps = _TIMESTAMP.findall(part)
+    return f"NOTES ON [{stamps[0]}] TO [{stamps[-1]}]" if stamps else "NOTES"
+
+
+def unload(pid: str, cfg: dict) -> None:
+    """Lets a local Ollama model go right away instead of when its keep-alive runs out."""
+    if pid != "ollama" or OLLAMA_KEEP_ALIVE != "0" or not cfg.get("ollama_url"):
+        return
+    try:
+        httpx.post(f"{cfg['ollama_url']}/api/generate", json={"model": model_for("ollama", cfg), "keep_alive": 0}, timeout=10)
+    except httpx.HTTPError:
+        pass
+
+
 def summarize(transcript: str, cfg: dict, choice: str, template: str, moments: list[str],
-              want_title: bool) -> tuple[str, str, str | None]:
-    """Returns (summary, provider_used, title). The title is best-effort and never fails the summary."""
+              want_title: bool, about: str = "", minutes: float = 30, on_progress=None) -> tuple[str, str, str | None]:
+    """Returns (summary, provider_used, title). The title is best-effort and never fails the summary.
+
+    A transcript too long for the provider's context is summarized in parts first (notes on each part),
+    and the notes are then written up; nothing is ever silently cut off."""
     if not transcript.strip():
         raise LLMError("Transcript is empty (no speech detected)")
-    prompt = templates.build_prompt(template, cfg["custom_template"], transcript, moments)
 
     def run(pid: str):
-        # Keep a local Ollama model loaded between the summary and title calls, then let it unload.
-        summary = generate(pid, cfg, prompt, keep_alive="5m" if want_title else OLLAMA_KEEP_ALIVE)
+        budget = context_chars(pid, cfg)
+        hold = "5m"  # keep a local model loaded between the calls of one summary, then let it unload
+        material, from_notes = transcript, False
+        for _ in range(3):  # notes on notes for very long meetings; each round is much shorter than the last
+            if len(material) <= budget:
+                break
+            parts = split_lines(material, budget)
+            notes = []
+            for i, part in enumerate(parts, 1):
+                if on_progress:
+                    on_progress(f"Summarizing part {i} of {len(parts)}")
+                system, prompt = templates.notes_prompt(part, i, len(parts), about)
+                notes.append(f"{_span(part)}:\n" + tidy(generate(pid, cfg, prompt, system=system, keep_alive=hold)))
+            material, from_notes = "\n\n".join(notes), True
+        material = material[:budget]  # only reached if the notes somehow didn't shrink
+        if on_progress and from_notes:
+            on_progress("Writing up the notes")
+        system, prompt = templates.final_prompt(template, cfg["custom_template"], material, from_notes, moments, about, minutes)
+        summary = tidy(generate(pid, cfg, prompt, system=system, keep_alive=hold))
+        if not _ACTION_HEADING.search(summary):  # small models sometimes forget the one section we rely on
+            system, prompt = templates.actions_prompt(material, from_notes, about)
+            actions = tidy(generate(pid, cfg, prompt, system=system, keep_alive=hold))
+            summary += "\n\n" + (actions if _ACTION_HEADING.search(actions) else "## Action Items\n- None")
+        if not want_title:
+            unload(pid, cfg)
         title = None
         if want_title:
             try:
