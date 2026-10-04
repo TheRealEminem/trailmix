@@ -7,6 +7,7 @@ import type {
   SpeechModels,
 } from "../api";
 import { CheckIcon, CloseIcon } from "./icons";
+import SoundCheck, { soundCheckPassed } from "./SoundCheck";
 
 const DISMISSED_KEY = "trailmix.setupDismissed";
 // Instruction-following families that write good notes (see llm_engine.preferred_ollama_model).
@@ -111,7 +112,7 @@ export default function SetupCard({
   if (dismissed || name === null || !health) return null;
 
   const nameDone = name.trim() !== "";
-  const micDone = !native || native.mic_allowed !== false;
+  const micDone = !native || soundCheckPassed(native);
   const speechDone =
     !speech || !speech.local || speech.models.every((m) => m.installed);
   const usingOllama = health.summary.id === "ollama";
@@ -195,17 +196,13 @@ export default function SetupCard({
         {native && (
           <Step
             done={micDone}
-            title={micDone ? "Microphone allowed" : "Allow the microphone"}
+            title={
+              micDone
+                ? "Sound check passed: both sides of your calls get recorded"
+                : "Run a sound check"
+            }
           >
-            Trailmix needs it to record your side.{" "}
-            <a
-              className="font-medium text-forest underline underline-offset-2"
-              href="x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
-            >
-              Open Privacy & Security → Microphone
-            </a>{" "}
-            and turn on Trailmix. When you record a call, also allow System
-            Audio Recording when macOS asks.
+            <SoundCheck native={native} />
           </Step>
         )}
         <Step

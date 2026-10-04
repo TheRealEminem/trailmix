@@ -139,7 +139,20 @@ final class HelperModel: ObservableObject {
         if commands.contains("start"), phase == .idle, other == nil {
             start()
         }
+        if commands.contains("sound-check"), phase == .idle, !soundChecking {
+            soundChecking = true
+            soundCheck = ["running": true]
+            Task {
+                let result = await SoundCheck.run(micID: prefs.micID)
+                soundCheck = result
+                soundChecking = false
+            }
+        }
     }
+
+    private var soundChecking = false
+    /// The last sound check's result, reported with each check-in so the window can show it.
+    private var soundCheck: [String: Any]?
 
     private var recorderInfo: [String: Any] {
         if micNameCache?.id != prefs.micID {
@@ -157,6 +170,7 @@ final class HelperModel: ObservableObject {
             "mic": mic, "source": source, "machine": Host.current().localizedName ?? "",
             "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
             "mic_allowed": AVCaptureDevice.authorizationStatus(for: .audio) != .denied,
+            "sound_check": soundCheck ?? NSNull(),
         ]
     }
 

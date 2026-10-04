@@ -20,6 +20,7 @@ import {
 import { TrailScene } from "./illustrations";
 import LevelMeters from "./LevelMeter";
 import MicPicker from "./MicPicker";
+import SoundCheck from "./SoundCheck";
 import { ControlRow, Pulse, SpeakerChip, Spinner, SwitchRow } from "./ui";
 
 interface Props {
@@ -409,6 +410,15 @@ export default function Recorder(p: Props) {
                   {p.native.machine ? ` on ${p.native.machine}` : ""}. Change
                   these in its menu.
                 </p>
+                <details className="group py-3">
+                  <summary className="cursor-pointer list-none text-label font-medium text-ink [&::-webkit-details-marker]:hidden">
+                    Test your audio{" "}
+                    <span className="font-normal text-ink-soft group-open:hidden">· plays a chime and checks both sides are heard</span>
+                  </summary>
+                  <div className="mt-2">
+                    <SoundCheck native={p.native} />
+                  </div>
+                </details>
               </div>
             ) : (
               <div className="divide-y divide-line px-5 sm:px-6">
