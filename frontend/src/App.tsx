@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AUTH_EVENT, api } from "./api";
+import { AUTH_EVENT, api, inApp, quitApp } from "./api";
 import type { Bookmark, DraftLine, Health, LiveRecording, Meeting, MeetingListItem, NativeRecorder, Provider, Task } from "./api";
 import { startRecording } from "./capture";
 import type { ActiveRecording } from "./capture";
@@ -465,11 +465,14 @@ export default function App() {
   const handleQuit = async () => {
     const ok = await confirm({
       title: "Quit Trailmix?",
-      body: "The background server stops. Meetings that are mid-way through processing pick up where they left off next time.",
+      body: inApp
+        ? "The window, the menu bar recorder and the background server all stop. Meetings that are mid-way through processing pick up where they left off next time."
+        : "The background server stops. Meetings that are mid-way through processing pick up where they left off next time.",
       confirmLabel: "Quit",
       tone: "danger",
     });
     if (!ok) return;
+    if (inApp) return quitApp(); // the app stops its server on the way out
     try {
       await api.shutdown();
       setQuit(true);

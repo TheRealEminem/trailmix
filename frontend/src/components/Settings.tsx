@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { api } from "../api";
+import { api, inApp } from "../api";
 import type { Health, ProviderId, Settings as SettingsT } from "../api";
 import { tildePath } from "../format";
 import type { ThemePref } from "../theme";
@@ -648,7 +648,7 @@ export default function Settings({ health, theme, onTheme, onChanged, onQuit, on
             </button>
           </Row>
         ) : (
-          <Row label="Quit Trailmix" hint="Stops the background server. Open Trailmix.app to start it again.">
+          <Row label="Quit Trailmix" hint={inApp ? "Closes Trailmix, including the menu bar recorder." : "Stops the background server. Open Trailmix.app to start it again."}>
             <button className="btn btn-sm btn-soft hover:!text-trail-deep" onClick={onQuit}>
               <PowerIcon size={16} /> Quit
             </button>
