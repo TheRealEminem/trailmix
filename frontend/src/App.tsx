@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AUTH_EVENT, api, inApp, quitApp } from "./api";
-import type { Bookmark, DraftLine, Health, LiveRecording, Meeting, MeetingListItem, NativeRecorder, Provider, Task } from "./api";
+import type {
+  Bookmark,
+  DraftLine,
+  Health,
+  LiveRecording,
+  Meeting,
+  MeetingListItem,
+  NativeRecorder,
+  Provider,
+  Task,
+} from "./api";
 import { startRecording } from "./capture";
 import type { ActiveRecording } from "./capture";
 import { formatDuration, tildePath } from "./format";
@@ -14,10 +24,18 @@ import { savedMicId } from "./components/MicPicker";
 import Recorder from "./components/Recorder";
 import Settings from "./components/Settings";
 import ModelsBanner from "./components/ModelsBanner";
+import SetupCard from "./components/SetupCard";
 import Sidebar from "./components/Sidebar";
 import type { View } from "./components/Sidebar";
 import TasksView from "./components/TasksView";
-import { PageHeader, Pulse, Skeleton, Toast, TooltipLayer, useConfirm } from "./components/ui";
+import {
+  PageHeader,
+  Pulse,
+  Skeleton,
+  Toast,
+  TooltipLayer,
+  useConfirm,
+} from "./components/ui";
 import type { ToastState } from "./components/ui";
 import { useTheme } from "./theme";
 
@@ -29,7 +47,10 @@ const REST = ["done", "error", "ready_transcribe", "ready_summarize"]; // waitin
 const isActive = (status: string) => !REST.includes(status);
 
 /** A boolean UI preference remembered in this browser. */
-function usePref(key: string, initial: boolean): [boolean, (v: boolean) => void] {
+function usePref(
+  key: string,
+  initial: boolean,
+): [boolean, (v: boolean) => void] {
   const [value, setValue] = useState(() => {
     try {
       const v = localStorage.getItem(key);
@@ -55,7 +76,9 @@ function usePref(key: string, initial: boolean): [boolean, (v: boolean) => void]
 /** True when the sidebar sits beside the content rather than in a drawer. */
 function useWide() {
   const query = "(min-width: 1024px)";
-  const [wide, setWide] = useState(() => window.matchMedia?.(query).matches ?? true);
+  const [wide, setWide] = useState(
+    () => window.matchMedia?.(query).matches ?? true,
+  );
   useEffect(() => {
     const mq = window.matchMedia?.(query);
     if (!mq) return;
@@ -68,7 +91,9 @@ function useWide() {
 
 export default function App() {
   const theme = useTheme();
-  const [authState, setAuthState] = useState<"checking" | "ok" | "needed">("checking");
+  const [authState, setAuthState] = useState<"checking" | "ok" | "needed">(
+    "checking",
+  );
   const [quit, setQuit] = useState(false);
   const [meetings, setMeetings] = useState<MeetingListItem[]>([]);
   const [listLoaded, setListLoaded] = useState(false);
@@ -85,7 +110,10 @@ export default function App() {
   const [confirm, confirmDialog] = useConfirm();
 
   const [micDeviceId, setMicDeviceId] = useState(savedMicId);
-  const [includeMeetingAudio, setIncludeMeetingAudio] = usePref("trailmix.meetingAudio", true);
+  const [includeMeetingAudio, setIncludeMeetingAudio] = usePref(
+    "trailmix.meetingAudio",
+    true,
+  );
   const [liveDraft, setLiveDraft] = usePref("trailmix.liveDraft", true);
   const [rec, setRec] = useState<ActiveRecording | null>(null);
   const [starting, setStarting] = useState(false);
@@ -104,7 +132,10 @@ export default function App() {
   const remoteAt = useRef(0); // when `remote` was fetched, so its timer can tick between polls
   const onRecorderScreenRef = useRef(true);
 
-  const fail = useCallback((text: string) => setToast({ tone: "error", text }), []);
+  const fail = useCallback(
+    (text: string) => setToast({ tone: "error", text }),
+    [],
+  );
   const closeToast = useCallback(() => setToast(null), []);
 
   // Hosted installs need a sign-in; local ones answer "ok" straight away.
@@ -141,7 +172,14 @@ export default function App() {
     [fail],
   );
 
-  const refreshHealth = useCallback(() => api.health().then(setHealth).catch(() => undefined), []);
+  const refreshHealth = useCallback(
+    () =>
+      api
+        .health()
+        .then(setHealth)
+        .catch(() => undefined),
+    [],
+  );
   const refreshTasks = useCallback(
     () =>
       api
@@ -201,11 +239,15 @@ export default function App() {
 
   useEffect(() => {
     if (rec) {
-      const t = setInterval(() => setElapsed((Date.now() - rec.startedAt) / 1000), 250);
+      const t = setInterval(
+        () => setElapsed((Date.now() - rec.startedAt) / 1000),
+        250,
+      );
       return () => clearInterval(t);
     }
     if (remote) {
-      const tick = () => setElapsed(remote.duration + (Date.now() - remoteAt.current) / 1000);
+      const tick = () =>
+        setElapsed(remote.duration + (Date.now() - remoteAt.current) / 1000);
       tick();
       const t = setInterval(tick, 250);
       return () => clearInterval(t);
@@ -233,7 +275,8 @@ export default function App() {
       try {
         const all = await api.live();
         if (!alive) return;
-        const other = all.find((l) => l.id !== recRef.current?.meetingId) ?? null;
+        const other =
+          all.find((l) => l.id !== recRef.current?.meetingId) ?? null;
         remoteAt.current = Date.now();
         remoteRef.current = other;
         setRemote(other);
@@ -317,7 +360,9 @@ export default function App() {
           }
           await new Promise((r) => setTimeout(r, 400));
         }
-        fail("The menu bar recorder didn't start. Open its menu (the Trailmix icon at the top of the screen) to see why.");
+        fail(
+          "The menu bar recorder didn't start. Open its menu (the Trailmix icon at the top of the screen) to see why.",
+        );
       } catch (e) {
         fail(`Couldn't start recording: ${(e as Error).message}`);
       } finally {
@@ -336,13 +381,18 @@ export default function App() {
         onDropped: () => {
           const current = recRef.current;
           if (!current) return;
-          fail("Lost the connection to the backend. The audio recorded so far is being processed.");
+          fail(
+            "Lost the connection to the backend. The audio recorded so far is being processed.",
+          );
           void finishRecording(current.meetingId);
         },
         onStoppedElsewhere: () => {
           const current = recRef.current;
           if (!current) return;
-          setToast({ tone: "success", text: "Recording stopped from the menu bar helper." });
+          setToast({
+            tone: "success",
+            text: "Recording stopped from the menu bar helper.",
+          });
           void current.stop().then(() => finishRecording(current.meetingId));
         },
       });
@@ -387,7 +437,13 @@ export default function App() {
     if (!other) return;
     api
       .markLive(other.id)
-      .then((b) => setRemote((cur) => (cur && cur.id === other.id ? { ...cur, bookmarks: [...cur.bookmarks, b] } : cur)))
+      .then((b) =>
+        setRemote((cur) =>
+          cur && cur.id === other.id
+            ? { ...cur, bookmarks: [...cur.bookmarks, b] }
+            : cur,
+        ),
+      )
       .catch((e: Error) => fail(e.message));
   }, [fail]);
 
@@ -450,14 +506,19 @@ export default function App() {
       const { paths } = await api.exportNow(meeting.id);
       setToast({
         tone: "success",
-        text: paths.length ? `Saved to ${paths.map(tildePath).join(" and ")}` : "Nothing to export with the current settings.",
+        text: paths.length
+          ? `Saved to ${paths.map(tildePath).join(" and ")}`
+          : "Nothing to export with the current settings.",
       });
     }, meeting.id);
   };
 
   const handleToggleTask = async (t: Task, done: boolean) => {
     if (!meeting) return;
-    setMeeting({ ...meeting, tasks: meeting.tasks.map((x) => (x.id === t.id ? { ...x, done } : x)) }); // instant tick
+    setMeeting({
+      ...meeting,
+      tasks: meeting.tasks.map((x) => (x.id === t.id ? { ...x, done } : x)),
+    }); // instant tick
     await guarded(() => api.setTaskDone(t.id, done), meeting.id);
     void refreshTasks();
   };
@@ -491,13 +552,15 @@ export default function App() {
           </div>
           <h1 className="page-title mt-6">See you on the trail</h1>
           <p className="mt-2 text-body leading-relaxed text-ink-soft">
-            Trailmix has stopped. You can close this window; open Trailmix.app to start it again.
+            Trailmix has stopped. You can close this window; open Trailmix.app
+            to start it again.
           </p>
         </div>
       </div>
     );
   }
-  if (authState === "needed") return <Login dusk={theme.dusk} onDone={() => setAuthState("ok")} />;
+  if (authState === "needed")
+    return <Login dusk={theme.dusk} onDone={() => setAuthState("ok")} />;
   if (authState === "checking") {
     return (
       <div className="flex h-full items-center justify-center">
@@ -529,7 +592,9 @@ export default function App() {
       {/* Beside the content on wide windows, a drawer on narrow ones. */}
       <div
         className={`fixed inset-y-0 left-0 z-40 transition-[transform,visibility] duration-300 ease-out lg:static lg:z-10 lg:translate-x-0 ${
-          drawer ? "translate-x-0 shadow-lg" : "max-lg:invisible -translate-x-full"
+          drawer
+            ? "translate-x-0 shadow-lg"
+            : "max-lg:invisible -translate-x-full"
         }`}
       >
         <Sidebar
@@ -552,29 +617,47 @@ export default function App() {
         />
       </div>
       {drawer && !wide && (
-        <div className="fixed inset-0 z-30 animate-fade-in bg-[var(--scrim)] backdrop-blur-[2px]" onClick={() => setDrawer(false)} aria-hidden="true" />
+        <div
+          className="fixed inset-0 z-30 animate-fade-in bg-[var(--scrim)] backdrop-blur-[2px]"
+          onClick={() => setDrawer(false)}
+          aria-hidden="true"
+        />
       )}
 
       <main className="relative z-10 min-w-0 flex-1 overflow-y-auto">
         {/* Narrow windows: a slim bar with the menu and a way back to recording. */}
-        <div
-          className="chrome sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-line px-3 lg:hidden"
-        >
-          <button className="icon-btn h-10 w-10" onClick={() => setDrawer(true)} aria-label="Open menu" aria-expanded={drawer}>
+        <div className="chrome sticky top-0 z-20 flex h-14 items-center gap-2 border-b border-line px-3 lg:hidden">
+          <button
+            className="icon-btn h-10 w-10"
+            onClick={() => setDrawer(true)}
+            aria-label="Open menu"
+            aria-expanded={drawer}
+          >
             <MenuIcon size={20} />
           </button>
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <Logo size={26} />
-            <span className="font-display text-lead font-semibold tracking-[-0.02em]">Trailmix</span>
+            <span className="font-display text-lead font-semibold tracking-[-0.02em]">
+              Trailmix
+            </span>
           </div>
           {liveId !== null ? (
-            <button onClick={goRecorder} className="btn btn-sm h-9 rounded-full bg-trail-soft px-3 text-trail-deep">
+            <button
+              onClick={goRecorder}
+              className="btn btn-sm h-9 rounded-full bg-trail-soft px-3 text-trail-deep"
+            >
               <Pulse />
-              <span className="font-mono tabular-nums">{formatDuration(elapsed)}</span>
+              <span className="font-mono tabular-nums">
+                {formatDuration(elapsed)}
+              </span>
             </button>
           ) : (
             !showRecorder && (
-              <button onClick={goRecorder} className="btn btn-sm btn-primary h-9" aria-label="New recording">
+              <button
+                onClick={goRecorder}
+                className="btn btn-sm btn-primary h-9"
+                aria-label="New recording"
+              >
                 <MicIcon size={16} />
                 Record
               </button>
@@ -591,44 +674,67 @@ export default function App() {
               onTheme={theme.setPref}
               onChanged={() => void refreshHealth()}
               onQuit={() => void handleQuit()}
-              onSignOut={() => void api.logout().then(() => setAuthState("needed"))}
+              onSignOut={() =>
+                void api.logout().then(() => setAuthState("needed"))
+              }
             />
           ) : view === "tasks" ? (
-            <TasksView onOpenMeeting={openMeeting} onChanged={() => void refreshTasks()} onError={fail} />
+            <TasksView
+              onOpenMeeting={openMeeting}
+              onChanged={() => void refreshTasks()}
+              onError={fail}
+            />
           ) : view === "ask" ? (
             <div>
               <PageHeader
                 title="Ask your meetings"
                 subtitle="Questions across everything you've recorded. Answers link back to the meetings they came from."
               />
-              <div className="panel animate-enter p-5 sm:p-7" style={{ animationDelay: "60ms" }}>
-                <AskPanel health={health} onOpenMeeting={openMeeting} onError={fail} />
+              <div
+                className="panel animate-enter p-5 sm:p-7"
+                style={{ animationDelay: "60ms" }}
+              >
+                <AskPanel
+                  health={health}
+                  onOpenMeeting={openMeeting}
+                  onError={fail}
+                />
               </div>
             </div>
           ) : showRecorder ? (
-            <Recorder
-              rec={rec}
-              remote={rec ? null : remote}
-              native={native}
-              elapsed={elapsed}
-              starting={starting}
-              stopping={stopping || remoteStopping}
-              micDeviceId={micDeviceId}
-              onMicChange={setMicDeviceId}
-              includeMeetingAudio={includeMeetingAudio}
-              onIncludeMeetingAudio={setIncludeMeetingAudio}
-              liveDraft={liveDraft}
-              onLiveDraft={setLiveDraft}
-              notice={notice}
-              drafts={drafts}
-              health={health}
-              backendDown={backendDown}
-              bookmarks={marks}
-              dusk={theme.dusk}
-              onStart={handleStart}
-              onStop={handleStop}
-              onMark={handleMark}
-            />
+            <>
+              {!rec && !remote && (
+                <SetupCard
+                  health={health}
+                  native={native}
+                  onOpenSettings={() => goView("settings")}
+                  onChanged={() => void refreshHealth()}
+                />
+              )}
+              <Recorder
+                rec={rec}
+                remote={rec ? null : remote}
+                native={native}
+                elapsed={elapsed}
+                starting={starting}
+                stopping={stopping || remoteStopping}
+                micDeviceId={micDeviceId}
+                onMicChange={setMicDeviceId}
+                includeMeetingAudio={includeMeetingAudio}
+                onIncludeMeetingAudio={setIncludeMeetingAudio}
+                liveDraft={liveDraft}
+                onLiveDraft={setLiveDraft}
+                notice={notice}
+                drafts={drafts}
+                health={health}
+                backendDown={backendDown}
+                bookmarks={marks}
+                dusk={theme.dusk}
+                onStart={handleStart}
+                onStop={handleStop}
+                onMark={handleMark}
+              />
+            </>
           ) : meeting && meeting.id === selectedId ? (
             <MeetingView
               meeting={meeting}
@@ -640,11 +746,24 @@ export default function App() {
               onDeleteAudio={() => void handleDeleteAudio()}
               onRetranscribe={() => void handleRetranscribe()}
               onExport={() => void handleExport()}
-              onConfirm={() => void guarded(() => api.confirm(meeting.id), meeting.id)}
-              onRetry={() => void guarded(() => api.retry(meeting.id), meeting.id)}
-              onSummarize={(p: Provider, template?: string) => void guarded(() => api.summarize(meeting.id, p, template), meeting.id)}
-              onBookmarks={(b) => void guarded(() => api.setBookmarks(meeting.id, b), meeting.id)}
-              onSpeakers={(n) => void guarded(() => api.setSpeakers(meeting.id, n), meeting.id)}
+              onConfirm={() =>
+                void guarded(() => api.confirm(meeting.id), meeting.id)
+              }
+              onRetry={() =>
+                void guarded(() => api.retry(meeting.id), meeting.id)
+              }
+              onSummarize={(p: Provider, template?: string) =>
+                void guarded(
+                  () => api.summarize(meeting.id, p, template),
+                  meeting.id,
+                )
+              }
+              onBookmarks={(b) =>
+                void guarded(() => api.setBookmarks(meeting.id, b), meeting.id)
+              }
+              onSpeakers={(n) =>
+                void guarded(() => api.setSpeakers(meeting.id, n), meeting.id)
+              }
               onToggleTask={(t, d) => void handleToggleTask(t, d)}
               onError={fail}
             />

@@ -31,6 +31,7 @@ import llm_engine
 import meeting_text
 import mlx_engine
 import models
+import ollama_setup
 import pipeline
 import recorder
 import resources
@@ -231,6 +232,27 @@ def recorder_start():
     if not recorder.request("start"):
         raise HTTPException(409, "The menu bar recorder isn't running")
     return {"ok": True}
+
+
+class PullRequest(BaseModel):
+    model: str = ""
+
+
+@app.get("/api/ollama")
+def ollama_status():
+    """Is Ollama there, what's installed, what we'd recommend for this Mac, and any download in progress."""
+    return ollama_setup.status(settings.get_all())
+
+
+@app.post("/api/ollama/pull", status_code=202)
+def ollama_pull(body: PullRequest):
+    cfg = settings.get_all()
+    model = body.model.strip() or ollama_setup.recommended()
+    if not ollama_setup.status(cfg)["reachable"]:
+        raise HTTPException(409, "Ollama isn't running. Install it from ollama.com, open it, and try again.")
+    if not ollama_setup.start_pull(cfg, model):
+        raise HTTPException(409, "A model is already downloading")
+    return ollama_setup.status(cfg)
 
 
 @app.get("/api/models")
