@@ -25,7 +25,7 @@ const POLL_MS = 2000;
 const LIVE_POLL_MS = 2000;
 const HEALTH_RETRY_MS = 5000;
 // Statuses where the backend is working (or about to); the rest are resting states that need no polling.
-const REST = ["done", "error", "ready_transcribe", "ready_summarize", "waiting_confirm"];
+const REST = ["done", "error", "ready_transcribe", "ready_summarize"]; // waiting_confirm continues by itself
 const isActive = (status: string) => !REST.includes(status);
 
 /** A boolean UI preference remembered in this browser. */
@@ -404,6 +404,16 @@ export default function App() {
     if (ok) await guarded(() => api.deleteAudio(meeting.id), meeting.id);
   };
 
+  const handleRetranscribe = async () => {
+    if (!meeting) return;
+    const ok = await confirm({
+      title: "Transcribe this meeting again?",
+      body: "Trailmix transcribes the saved audio again with the current settings and writes a new summary. Speaker names, flagged moments and ticked-off tasks are kept.",
+      confirmLabel: "Transcribe again",
+    });
+    if (ok) await guarded(() => api.retranscribe(meeting.id), meeting.id);
+  };
+
   const handleExport = async () => {
     if (!meeting) return;
     await guarded(async () => {
@@ -594,6 +604,7 @@ export default function App() {
               onRename={(t) => void handleRename(t)}
               onDelete={() => void handleDelete(meeting.id, meeting.title)}
               onDeleteAudio={() => void handleDeleteAudio()}
+              onRetranscribe={() => void handleRetranscribe()}
               onExport={() => void handleExport()}
               onConfirm={() => void guarded(() => api.confirm(meeting.id), meeting.id)}
               onRetry={() => void guarded(() => api.retry(meeting.id), meeting.id)}

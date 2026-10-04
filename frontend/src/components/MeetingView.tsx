@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import type { Bookmark, Health, Meeting, Provider, Task } from "../api";
 import { formatBytes, formatDuration, formatLongDate, formatTime, tildePath } from "../format";
 import AskPanel from "./AskPanel";
-import { CalendarIcon, ChatIcon, ClockIcon, ExportIcon, LinesIcon, PencilIcon, SparkleIcon, TrashIcon, UsersIcon, WaveIcon } from "./icons";
+import { CalendarIcon, ChatIcon, ClockIcon, ExportIcon, LinesIcon, PencilIcon, RefreshIcon, SparkleIcon, TrashIcon, UsersIcon, WaveIcon } from "./icons";
 import { ContourBadge } from "./illustrations";
 import PipelineStatus from "./PipelineStatus";
 import Summary from "./Summary";
@@ -20,6 +20,7 @@ interface Props {
   onRename: (title: string) => void;
   onDelete: () => void;
   onDeleteAudio: () => void;
+  onRetranscribe: () => void;
   onExport: () => void;
   onConfirm: () => void;
   onRetry: () => void;
@@ -201,10 +202,18 @@ export default function MeetingView({ meeting: m, health, tab, onTab, ...on }: P
             action={
               !audioGone &&
               (m.transcript || m.status === "error") && (
-                <button onClick={on.onDeleteAudio} className="btn btn-sm btn-danger-ghost">
-                  <TrashIcon size={16} />
-                  Delete audio
-                </button>
+                <div className="flex flex-wrap justify-end gap-1.5">
+                  {["done", "error", "ready_summarize"].includes(m.status) && (
+                    <button onClick={on.onRetranscribe} className="btn btn-sm btn-soft" data-tip="Transcribe the audio again and write a new summary">
+                      <RefreshIcon size={16} />
+                      Transcribe again
+                    </button>
+                  )}
+                  <button onClick={on.onDeleteAudio} className="btn btn-sm btn-danger-ghost">
+                    <TrashIcon size={16} />
+                    Delete audio
+                  </button>
+                </div>
               )
             }
           />
