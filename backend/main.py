@@ -32,6 +32,7 @@ import meeting_text
 import mlx_engine
 import models
 import pipeline
+import recorder
 import resources
 import settings
 import templates
@@ -201,6 +202,36 @@ def _meeting_context(m: dict, cfg: dict, question: str) -> str:
 
 
 # ── Auth & app ─────────────────────────────────────────────────────────
+
+class RecorderCheckIn(BaseModel):
+    mic: str = ""
+    source: str = ""
+    machine: str = ""
+    version: str = ""
+    mic_allowed: bool = True
+
+
+@app.post("/api/recorder/check-in")
+def recorder_check_in(body: RecorderCheckIn):
+    """The menu bar app, about once a second: what it would record, and any commands for it."""
+    return {"commands": recorder.check_in(body.model_dump())}
+
+
+@app.get("/api/recorder")
+def recorder_status():
+    """Whether a native recorder is available, and what it would record."""
+    return recorder.status()
+
+
+@app.post("/api/recorder/start", status_code=202)
+def recorder_start():
+    """Ask the native recorder to start recording (the web app's Record button, when one is available)."""
+    if live.active_count():
+        raise HTTPException(409, "Trailmix is already recording")
+    if not recorder.request("start"):
+        raise HTTPException(409, "The menu bar recorder isn't running")
+    return {"ok": True}
+
 
 @app.get("/api/models")
 def speech_models():

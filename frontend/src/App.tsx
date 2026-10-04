@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AUTH_EVENT, api } from "./api";
-import type { Bookmark, DraftLine, Health, LiveRecording, Meeting, MeetingListItem, Provider, Task } from "./api";
+import type { Bookmark, DraftLine, Health, LiveRecording, Meeting, MeetingListItem, NativeRecorder, Provider, Task } from "./api";
 import { startRecording } from "./capture";
 import type { ActiveRecording } from "./capture";
 import { formatDuration, tildePath } from "./format";
@@ -97,6 +97,8 @@ export default function App() {
   const recRef = useRef<ActiveRecording | null>(null);
   // A recording another app is capturing (normally the menu bar helper). Followed by polling /api/live.
   const [remote, setRemote] = useState<LiveRecording | null>(null);
+  // The menu bar recorder, if it's running: then Record records through it (both sides of any call, no picker).
+  const [native, setNative] = useState<NativeRecorder | null>(null);
   const [remoteStopping, setRemoteStopping] = useState(false);
   const remoteRef = useRef<LiveRecording | null>(null);
   const remoteAt = useRef(0); // when `remote` was fetched, so its timer can tick between polls
@@ -224,6 +226,10 @@ export default function App() {
     let alive = true;
     let lastId: number | null = null;
     const tick = async () => {
+      api
+        .nativeRecorder()
+        .then((n) => alive && setNative(n.available ? n : null))
+        .catch(() => alive && setNative(null));
       try {
         const all = await api.live();
         if (!alive) return;
@@ -295,6 +301,30 @@ export default function App() {
     setMarks([]);
     setElapsed(0);
     setStarting(true);
+    if (native) {
+      // The menu bar recorder picks this up within a second; the live poll then shows the recording here.
+      try {
+        await api.startNativeRecorder();
+        const deadline = Date.now() + 15000;
+        while (Date.now() < deadline) {
+          const live = (await api.live())[0];
+          if (live) {
+            remoteAt.current = Date.now();
+            remoteRef.current = live;
+            setRemote(live);
+            void refreshList();
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 400));
+        }
+        fail("The menu bar recorder didn't start. Open its menu (the Trailmix icon at the top of the screen) to see why.");
+      } catch (e) {
+        fail(`Couldn't start recording: ${(e as Error).message}`);
+      } finally {
+        setStarting(false);
+      }
+      return;
+    }
     try {
       const r = await startRecording({
         micDeviceId,
@@ -576,6 +606,7 @@ export default function App() {
             <Recorder
               rec={rec}
               remote={rec ? null : remote}
+              native={native}
               elapsed={elapsed}
               starting={starting}
               stopping={stopping || remoteStopping}

@@ -93,6 +93,10 @@ final class HelperModel: ObservableObject {
             Task { @MainActor in await self.poll() }
         })
         timers.append(Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in await self.checkIn() }
+        })
+        timers.append(Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.elapsed != nil else { return }
                 self.now = Date()
@@ -120,6 +124,46 @@ final class HelperModel: ObservableObject {
     private func client() throws -> ServerClient {
         guard let url = serverOverride ?? prefs.serverURL else { throw ServerError.rejected("The server address in Settings isn't valid") }
         return ServerClient(base: url, token: serverOverride == nil ? prefs.token : "")
+    }
+
+    private var checkingIn = false
+    private var micNameCache: (id: String, name: String)?
+
+    /// Lets the server know this recorder is here (so the Trailmix window's Record button records through it),
+    /// and carries out what the window asked for.
+    func checkIn() async {
+        guard !checkingIn, connection != .offline, let client = try? client() else { return }
+        checkingIn = true
+        defer { checkingIn = false }
+        guard let commands = try? await client.checkIn(recorderInfo) else { return }
+        if commands.contains("start"), phase == .idle, other == nil {
+            start()
+        }
+    }
+
+    private var recorderInfo: [String: Any] {
+        if micNameCache?.id != prefs.micID {
+            let chosen = prefs.micID.isEmpty ? nil : Microphone.all().first { $0.id == prefs.micID }?.name
+            micNameCache = (prefs.micID, chosen ?? "")
+        }
+        let mic = micNameCache?.name.isEmpty == false ? micNameCache!.name : "System default (\(Microphone.defaultName))"
+        let source: String
+        switch prefs.source {
+        case .allApps: source = "All apps' audio"
+        case .none: source = "Your mic only (in person)"
+        case .app(let id): source = Self.appName(id)
+        }
+        return [
+            "mic": mic, "source": source, "machine": Host.current().localizedName ?? "",
+            "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
+            "mic_allowed": AVCaptureDevice.authorizationStatus(for: .audio) != .denied,
+        ]
+    }
+
+    private static func appName(_ bundleID: String) -> String {
+        if bundleID == AudioApp.calls { return "FaceTime & iPhone calls" }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return bundleID }
+        return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
     }
 
     /// Keeps the connection status current and notices recordings started in the Trailmix window.
