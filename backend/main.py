@@ -26,6 +26,7 @@ import audio_store as store
 import auth
 import database as db
 import exporter
+import importer
 import live
 import llm_engine
 import meeting_text
@@ -232,6 +233,61 @@ def recorder_start():
     if not recorder.request("start"):
         raise HTTPException(409, "The menu bar recorder isn't running")
     return {"ok": True}
+
+
+class GranolaImport(BaseModel):
+    note_ids: list[str]
+    keep_summary: bool = True
+
+
+class TextImport(BaseModel):
+    text: str
+    title: str = ""
+    date: str = ""  # ISO date or date-time; empty = now
+
+
+def _granola_key() -> str:
+    key = settings.get_all()["granola_api_key"]
+    if not key:
+        raise HTTPException(400, "Add your Granola API key first")
+    return key
+
+
+@app.get("/api/import/granola/notes")
+def granola_notes():
+    """Your Granola meetings (needs a Granola API key in Settings), marking the ones already imported."""
+    try:
+        return {"notes": importer.granola_notes(_granola_key())}
+    except importer.ImportError_ as e:
+        raise HTTPException(502, str(e))
+
+
+@app.post("/api/import/granola", status_code=202)
+def granola_import(body: GranolaImport):
+    if not body.note_ids:
+        raise HTTPException(422, "Pick at least one meeting")
+    if not importer.start_granola_import(_granola_key(), body.note_ids, body.keep_summary):
+        raise HTTPException(409, "An import is already running")
+    return importer.job_status()
+
+
+@app.get("/api/import/granola")
+def granola_import_status():
+    return importer.job_status()
+
+
+@app.post("/api/import/text", status_code=201)
+def import_text(body: TextImport):
+    """A transcript pasted or dropped in as text (Granola's Copy transcript, or any "Name: …" transcript)."""
+    cfg = settings.get_all()
+    segments = importer.parse_text(body.text, {cfg.get("your_name", "")})
+    if not segments:
+        raise HTTPException(422, "There's no transcript text to import")
+    when = importer._parse_time(body.date) if body.date else None
+    if when and when.tzinfo is None:
+        when = when.astimezone()  # a plain date means local time
+    meeting_id = importer.save_imported(body.title.strip(), when or datetime.now(timezone.utc), segments, "paste", None, None)
+    return {"id": meeting_id}
 
 
 class PullRequest(BaseModel):

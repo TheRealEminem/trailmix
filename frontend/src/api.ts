@@ -97,6 +97,7 @@ export interface Settings {
   export_separate_files: boolean;
   /** Only in responses: "…1234" for a stored key, null for none. */
   secret_hints?: Record<string, string | null>;
+  granola_api_key?: string;
 }
 
 export interface Meeting extends MeetingListItem {
@@ -211,6 +212,23 @@ export interface NativeRecorder {
   mic_allowed?: boolean;
 }
 
+export interface GranolaNote {
+  id: string;
+  title: string;
+  created_at: string;
+  imported: boolean;
+  meeting_id: number | null;
+}
+
+export interface ImportJob {
+  active?: boolean;
+  total?: number;
+  done?: number;
+  imported?: number;
+  skipped?: number;
+  errors?: string[];
+}
+
 export interface OllamaStatus {
   reachable: boolean;
   models: string[];
@@ -268,6 +286,10 @@ export const api = {
   live: () => request<LiveRecording[]>("/live"),
   nativeRecorder: () => request<NativeRecorder>("/recorder"),
   ollama: () => request<OllamaStatus>("/ollama"),
+  granolaNotes: () => request<{ notes: GranolaNote[] }>("/import/granola/notes"),
+  importGranola: (note_ids: string[], keep_summary: boolean) => request<ImportJob>("/import/granola", json("POST", { note_ids, keep_summary })),
+  granolaImportStatus: () => request<ImportJob>("/import/granola"),
+  importText: (text: string, title: string, date: string) => request<{ id: number }>("/import/text", json("POST", { text, title, date })),
   pullOllamaModel: (model = "") => request<OllamaStatus>("/ollama/pull", json("POST", { model })),
   startNativeRecorder: () => request<{ ok: true }>("/recorder/start", json("POST")),
   markLive: (id: number, note = "") => request<Bookmark>(`/meetings/${id}/mark`, json("POST", { note })),

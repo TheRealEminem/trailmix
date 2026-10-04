@@ -18,6 +18,7 @@ import {
   MicIcon,
   MoonIcon,
   PencilIcon,
+  DownloadIcon,
   PowerIcon,
   SparkleIcon,
   SunIcon,
@@ -638,6 +639,16 @@ export default function Settings({ health, theme, onTheme, onChanged, onQuit, on
             </div>
           </div>
         )}
+      </Section>
+
+      <Section icon={<DownloadIcon size={16} />} title="Import" blurb="Bring in meetings recorded with other apps (see Import in the sidebar)." delay={260}>
+        <Row label="Granola API key" hint="From Granola → Settings → Connectors → API keys (Business or Enterprise plan).">
+          <SecretField
+            label="Granola API key"
+            hint={s.secret_hints?.granola_api_key}
+            onSave={(v) => save({ granola_api_key: v } as Partial<SettingsT>)}
+          />
+        </Row>
       </Section>
 
       <Section icon={<PowerIcon size={16} />} title="App" blurb="Trailmix keeps running in the background until you quit it." delay={280}>

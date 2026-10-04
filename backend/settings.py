@@ -43,6 +43,8 @@ DEFAULTS = {
     "transcribe_api_key": "",
     "transcribe_model": "whisper-1",
     "transcribe_live_model": "",        # empty = same as transcribe_model
+    # Import
+    "granola_api_key": "",              # grn_… from Granola → Settings → Connectors → API keys (Business plan)
     # Export
     "auto_export": False,
     "export_dir": str(Path.home() / "Documents" / "Trailmix"),

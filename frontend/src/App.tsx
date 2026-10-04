@@ -23,6 +23,7 @@ import type { Tab } from "./components/MeetingView";
 import { savedMicId } from "./components/MicPicker";
 import Recorder from "./components/Recorder";
 import Settings from "./components/Settings";
+import ImportPanel from "./components/ImportPanel";
 import ModelsBanner from "./components/ModelsBanner";
 import SetupCard from "./components/SetupCard";
 import Sidebar from "./components/Sidebar";
@@ -302,12 +303,15 @@ export default function App() {
     };
   }, [authState, refreshList, openMeeting]);
 
-  // Links like /#meeting-12 (the menu bar helper uses them) open that meeting.
+  // Links like /#meeting-12 (the menu bar helper uses them) open that meeting; #import, #settings, #tasks
+  // and #ask open those pages.
   useEffect(() => {
     const follow = () => {
       const m = location.hash.match(/^#meeting-(\d+)$/);
-      if (!m) return;
-      openMeeting(Number(m[1]));
+      const page = location.hash.slice(1);
+      if (m) openMeeting(Number(m[1]));
+      else if (["import", "settings", "tasks", "ask"].includes(page)) setView(page as View);
+      else return;
       history.replaceState(null, "", location.pathname + location.search);
     };
     follow();
@@ -684,6 +688,8 @@ export default function App() {
               onChanged={() => void refreshTasks()}
               onError={fail}
             />
+          ) : view === "import" ? (
+            <ImportPanel onImported={() => void refreshList()} onOpenMeeting={openMeeting} onError={fail} />
           ) : view === "ask" ? (
             <div>
               <PageHeader
