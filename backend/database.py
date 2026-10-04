@@ -64,6 +64,8 @@ _ADDED_COLUMNS = {
     "bookmarks_json": "TEXT",                        # [{t, note}] moments flagged while recording or after
     "speaker_names_json": "TEXT",                    # {"You": "Mark", "Them": "Dana"}
     "qa_json": "TEXT",                               # [{q, a, provider, at}] questions asked of this meeting
+    "source": "TEXT",                                # where an imported meeting came from ("granola", "paste")
+    "external_id": "TEXT",                           # its id there, so it isn't imported twice
 }
 
 _FTS_FIELDS = ("title", "transcript", "summary")
@@ -122,6 +124,25 @@ def create_meeting(title: str, title_auto: bool) -> int:
         conn.execute("UPDATE meetings SET audio_dir = ? WHERE id = ?", (str(audio_dir), meeting_id))
         _reindex(conn, meeting_id)
     return meeting_id
+
+
+def create_imported_meeting(title: str, created_at: str, source: str, external_id: str | None) -> int:
+    """A meeting that arrives with its transcript (no audio, nothing recorded here)."""
+    with connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO meetings (title, created_at, status, source, external_id, audio_deleted) VALUES (?, ?, 'queued', ?, ?, 1)",
+            (title, created_at, source, external_id),
+        )
+        meeting_id = cur.lastrowid
+        _reindex(conn, meeting_id)
+    return meeting_id
+
+
+def imported_ids(source: str) -> dict[str, int]:
+    """external id -> meeting id, for meetings already imported from `source`."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id, external_id FROM meetings WHERE source = ? AND external_id IS NOT NULL", (source,))
+        return {r["external_id"]: r["id"] for r in rows}
 
 
 def list_meetings() -> list[dict]:

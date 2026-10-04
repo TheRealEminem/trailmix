@@ -3,12 +3,12 @@ import type { ReactNode } from "react";
 import { api } from "../api";
 import type { MeetingListItem, SearchHit } from "../api";
 import { dayGroup, formatDuration, formatTime } from "../format";
-import { ChatIcon, CheckSquareIcon, CloseIcon, MicIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons";
+import { ChatIcon, CheckSquareIcon, CloseIcon, DownloadIcon, MicIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons";
 import { Logo } from "./illustrations";
 import SystemStatus from "./SystemStatus";
 import { Pulse, Skeleton, Spinner, StatusChip } from "./ui";
 
-export type View = "main" | "settings" | "tasks" | "ask";
+export type View = "main" | "settings" | "tasks" | "ask" | "import";
 
 interface Props {
   meetings: MeetingListItem[];
@@ -208,6 +208,7 @@ export default function Sidebar({ meetings, loaded, selectedId, recording, elaps
       <nav className="mt-3 space-y-0.5 px-3" aria-label="Views">
         <NavItem active={view === "tasks"} onClick={() => onView("tasks")} icon={<CheckSquareIcon size={16} />} label="Tasks" badge={openTasks} />
         <NavItem active={view === "ask"} onClick={() => onView("ask")} icon={<ChatIcon size={16} />} label="Ask your meetings" />
+        <NavItem active={view === "import"} onClick={() => onView("import")} icon={<DownloadIcon size={16} />} label="Import" />
       </nav>
 
       <nav className="fade-edges-y mt-3 flex-1 overflow-y-auto px-3 pb-4 pt-1" aria-label="Meetings">
