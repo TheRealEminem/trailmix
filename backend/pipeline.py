@@ -16,12 +16,12 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from difflib import SequenceMatcher
 from pathlib import Path
 
 import numpy as np
 
 import audio_store as store
+import cleanup
 import database as db
 import exporter
 import live
@@ -139,10 +139,14 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
                 return
         db.update_meeting(meeting_id, status="summarizing", wait_reason=None, summary_error=None)
         try:
+            minutes = (m["duration_sec"] or 0) / 60
             summary, used, title = llm_engine.summarize(
                 meeting_text.transcript_text(m, cfg), cfg, choice,
                 m["requested_template"] or cfg["summary_template"], meeting_text.moments(m, cfg),
                 want_title=bool(cfg["auto_title"] and m["title_auto"]),
+                about=f"This meeting lasted {minutes:.0f} minutes. {meeting_text.speakers_note(m, cfg)}",
+                minutes=minutes,
+                on_progress=lambda what: db.update_meeting(meeting_id, wait_reason=what),
             )
             db.update_meeting(meeting_id, summary=summary, summary_provider=used)
             db.replace_tasks(meeting_id, meeting_text.action_items(summary))
@@ -221,11 +225,15 @@ def _label(per_track: dict, tracks: list[str]) -> list[dict]:
     if not tracks:
         raise RuntimeError("No audio was captured (both tracks are silent or missing)")
     labeled = "system" in tracks and "mic" in tracks  # me-vs-them only makes sense with two live tracks
+    clean = {name: cleanup.drop_hallucinations(segs) for name, segs in per_track.items()}
+    if labeled:  # your mic hears the speakers: drop their words coming back as yours
+        clean["mic"] = cleanup.remove_echo(clean.get("mic", []), clean.get("system", []))
     segments = []
-    for name, segs in per_track.items():
+    for name, segs in clean.items():
         speaker = {"mic": "You", "system": "Them"}[name] if labeled else None
-        segments += [{**s, "speaker": speaker, "track": name} for s in segs]
-    return _merge(segments)
+        segments += [{**s, "speaker": speaker} for s in segs]
+    segments.sort(key=lambda s: s["start"])
+    return cleanup.strip_metrics(segments)
 
 
 def _save_transcript(m: dict, segments: list[dict], labeled: bool, duration: float) -> None:
@@ -234,22 +242,6 @@ def _save_transcript(m: dict, segments: list[dict], labeled: bool, duration: flo
         m["id"], transcript=text, segments_json=json.dumps(segments), transcribed=1,
         has_system=int(labeled), duration_sec=duration, wait_reason=None,
     )
-
-
-def _merge(segments: list[dict]) -> list[dict]:
-    """Interleave both tracks by time, dropping mic text that is just the speakers leaking into the mic."""
-    system = [s for s in segments if s["track"] == "system"]
-
-    def is_echo(s: dict) -> bool:
-        return s["track"] == "mic" and any(
-            o["start"] < s["end"] and s["start"] < o["end"]
-            and SequenceMatcher(None, s["text"].lower(), o["text"].lower()).ratio() > 0.6
-            for o in system
-        )
-
-    kept = [s for s in segments if not is_echo(s)]
-    kept.sort(key=lambda s: s["start"])
-    return [{k: v for k, v in s.items() if k != "track"} for s in kept]
 
 
 def _fmt(t: float) -> str:
