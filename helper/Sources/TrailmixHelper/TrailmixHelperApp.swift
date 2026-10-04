@@ -10,6 +10,7 @@ enum Entry {
         if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count { return Snapshot.render(into: args[i + 1]) }
         if args.contains("--list-audio") { return SelfTest.listAudio() }
         if args.contains("--capture-test") { return SelfTest.captureTest(args) }
+        if args.contains("--window-test") { return SelfTest.windowTest(args) }
         TrailmixHelperApp.main()
     }
 }
@@ -36,6 +37,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         MainActor.assumeIsolated { if Bundled.isBundled { HelperModel.shared.openTrailmix() } }
         return true
+    }
+
+    /// Quitting mid-recording would cut the meeting short: ask first.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        MainActor.assumeIsolated {
+            let model = HelperModel.shared
+            guard model.phase != .idle || model.other != nil else { return .terminateNow }
+            let alert = NSAlert()
+            alert.messageText = "Trailmix is recording"
+            alert.informativeText = "Quitting now stops the recording. What's been recorded so far is kept and processed next time."
+            alert.addButton(withTitle: "Keep Recording")
+            alert.addButton(withTitle: "Quit Anyway")
+            return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

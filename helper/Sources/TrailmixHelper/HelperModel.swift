@@ -564,19 +564,13 @@ final class HelperModel: ObservableObject {
     }
 
     private func showWindow(_ base: URL, meeting: Int?) {
-        let url = meeting.map { base.absoluteString + "/#meeting-\($0)" } ?? base.absoluteString
+        let text = meeting.map { base.absoluteString + "/#meeting-\($0)" } ?? base.absoluteString
         if ProcessInfo.processInfo.environment["TRAILMIX_NO_OPEN"] != nil {  // tests: say it instead of opening a window
-            FileHandle.standardError.write(Data("Would open \(url)\n".utf8))
+            FileHandle.standardError.write(Data("Would open \(text)\n".utf8))
             return
         }
-        let open = Process()
-        open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        if NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.Chrome") != nil {
-            open.arguments = ["-na", "Google Chrome", "--args", "--app=\(url)"]
-        } else {
-            open.arguments = [url]
-        }
-        try? open.run()
+        guard let url = URL(string: text) else { return }
+        MainWindow.shared.show(url)
     }
 
     // MARK: Snapshots

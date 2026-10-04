@@ -227,6 +227,12 @@ export interface SpeechModels {
   models: SpeechModel[];
 }
 
+/** Running inside Trailmix.app's own window (rather than a browser): the app can be asked to quit. */
+type AppBridge = { postMessage: (message: string) => void };
+const bridge = (window as unknown as { webkit?: { messageHandlers?: { trailmix?: AppBridge } } }).webkit?.messageHandlers?.trailmix;
+export const inApp = !!bridge;
+export const quitApp = () => bridge?.postMessage("quit");
+
 export const api = {
   auth: () => request<{ required: boolean; ok: boolean }>("/auth"),
   login: (token: string) => request<{ ok: true }>("/login", json("POST", { token })),

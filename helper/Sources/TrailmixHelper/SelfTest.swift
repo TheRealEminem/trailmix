@@ -128,6 +128,26 @@ enum SelfTest {
         exit(0)
     }
 
+    /// Opens the Trailmix window off screen at a URL and saves what it shows: the in-app window, checked
+    /// without anyone clicking.  TrailmixHelper --window-test http://127.0.0.1:8765/#meeting-2 /tmp/window.png
+    static func windowTest(_ args: [String]) {
+        let rest = Array(args.drop { $0 != "--window-test" }.dropFirst())
+        guard rest.count >= 2, let url = URL(string: rest[0]) else {
+            print("usage: --window-test <url> <out.png> [seconds]")
+            exit(2)
+        }
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.accessory)
+        MainWindow.shared.offscreen = true
+        MainWindow.shared.show(url)
+        Task {
+            let ok = await MainWindow.shared.snapshot(to: rest[1], after: Double(rest.count > 2 ? rest[2] : "") ?? 4)
+            print(ok ? "saved \(rest[1])" : "couldn't take a snapshot")
+            exit(ok ? 0 : 1)
+        }
+        NSApp.run()
+    }
+
     /// What the meeting-audio menu would offer right now. Needs no permission.
     static func listAudio() {
         print("Microphones:")
