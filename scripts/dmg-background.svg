@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="840" viewBox="0 0 660 420">
+  <rect width="660" height="420" fill="#F8F7F2"/>
+  <path d="M0 330 C 140 290 260 300 380 320 S 560 350 660 320 L660 420 L0 420Z" fill="#DCE9DE"/>
+  <path d="M0 365 C 160 340 300 350 420 365 S 580 385 660 370 L660 420 L0 420Z" fill="#C8DECC"/>
+  <circle cx="590" cy="60" r="22" fill="#F5B83A" opacity="0.9"/>
+  <text x="330" y="48" text-anchor="middle" font-family="Georgia, serif" font-size="24" font-weight="600" fill="#1D2A24">Drag Trailmix into Applications</text>
+  <path d="M262 160 C 300 130 360 130 398 160" fill="none" stroke="#E86636" stroke-width="4" stroke-linecap="round"/>
+  <path d="M385 146 L400 162 L380 169" fill="none" stroke="#E86636" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="330" y="296" text-anchor="middle" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.5" fill="#3E4C45">The first time you open it, macOS asks you to confirm:</text>
+  <text x="330" y="315" text-anchor="middle" font-family="Helvetica Neue, Helvetica, sans-serif" font-size="12.5" font-weight="bold" fill="#1D2A24">System Settings → Privacy &amp; Security → Open Anyway</text>
+</svg>
