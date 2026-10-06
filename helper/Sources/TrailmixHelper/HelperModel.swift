@@ -139,6 +139,8 @@ final class HelperModel: ObservableObject {
         if commands.contains("start"), phase == .idle, other == nil {
             start()
         }
+        if commands.contains("update") { Updater.shared.install() }
+        if commands.contains("check-update") { Task { await Updater.shared.check() } }
         if commands.contains("open-at-login") { prefs.openAtLogin = true }
         if commands.contains("no-open-at-login") { prefs.openAtLogin = false }
         if commands.contains("sound-check"), phase == .idle, !soundChecking {
@@ -176,6 +178,7 @@ final class HelperModel: ObservableObject {
             "shortcut_record": prefs.toggleShortcut.display,
             "shortcut_mark": prefs.markShortcut.display,
             "open_at_login": prefs.openAtLogin,
+            "update": Updater.shared.report ?? NSNull(),
         ]
     }
 

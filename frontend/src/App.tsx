@@ -25,6 +25,7 @@ import Recorder from "./components/Recorder";
 import Settings from "./components/Settings";
 import ImportPanel from "./components/ImportPanel";
 import ModelsBanner from "./components/ModelsBanner";
+import UpdateBanner from "./components/UpdateBanner";
 import SetupCard from "./components/SetupCard";
 import Sidebar from "./components/Sidebar";
 import type { View } from "./components/Sidebar";
@@ -670,6 +671,7 @@ export default function App() {
         </div>
 
         <div className="relative mx-auto w-full max-w-[872px] px-5 pb-24 pt-7 sm:px-8 lg:px-10 lg:pt-12">
+          <UpdateBanner native={native} />
           <ModelsBanner />
           {view === "settings" ? (
             <Settings

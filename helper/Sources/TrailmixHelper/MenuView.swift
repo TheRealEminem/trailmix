@@ -225,6 +225,7 @@ struct MenuView: View {
 
     private var footer: some View {
         VStack(spacing: 0) {
+            UpdateRow(updater: Updater.shared)
             MenuRow(title: "Open Trailmix", icon: "macwindow") { model.openTrailmix() }
             if let id = model.lastMeetingID {
                 MenuRow(title: "Open last recording", icon: "doc.text") { model.openTrailmix(meeting: id) }
@@ -614,5 +615,28 @@ private struct RecordButtonStyle: ButtonStyle {
             .brightness(configuration.isPressed ? -0.04 : 0)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+/// "Update to 0.4.0" in the menu when a new version is out (and what's happening while it installs).
+struct UpdateRow: View {
+    @ObservedObject var updater: Updater
+
+    var body: some View {
+        switch updater.state {
+        case .idle:
+            EmptyView()
+        case .available(let version):
+            MenuRow(title: "Update to Trailmix \(version)", icon: "arrow.down.circle") { updater.install() }
+        case .downloading(let version, let progress):
+            MenuRow(title: "Downloading \(version)… \(progress.map { "\(Int($0 * 100))%" } ?? "")", icon: "arrow.down.circle") {}
+                .disabled(true)
+        case .installing(let version):
+            MenuRow(title: "Installing \(version)…", icon: "arrow.down.circle") {}
+                .disabled(true)
+        case .failed(let why):
+            MenuRow(title: "Update failed: \(why)", icon: "exclamationmark.triangle") { updater.install() }
+                .help("Click to try again")
+        }
     }
 }

@@ -16,6 +16,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="${TRAILMIX_VERSION:-$(tr -d '[:space:]' <"$ROOT/VERSION")}"
 PORT="${TRAILMIX_PORT:-8765}"
+# Where the app looks for updates (GitHub owner/repo): TRAILMIX_UPDATE_REPO, else this checkout's origin.
+UPDATE_REPO="${TRAILMIX_UPDATE_REPO:-$(git -C "$ROOT" remote get-url origin 2>/dev/null | sed -E 's#(\.git)?$##; s#^.*github\.com[:/]##')}"
 OUT="${TRAILMIX_OUT:-$ROOT/dist}"  # where the app (and disk image) go
 APP="$OUT/Trailmix.app"
 RES="$APP/Contents/Resources"
@@ -70,6 +72,7 @@ cat >"$APP/Contents/Info.plist" <<PLIST
   <key>NSMicrophoneUsageDescription</key><string>Trailmix records your side of the conversation.</string>
   <key>NSAudioCaptureUsageDescription</key><string>Trailmix records the other side of your calls from apps like Zoom, Teams and FaceTime.</string>
   <key>TrailmixServerURL</key><string>http://127.0.0.1:$PORT</string>
+  <key>TrailmixUpdateRepo</key><string>$UPDATE_REPO</string>
 </dict></plist>
 PLIST
 
@@ -146,5 +149,7 @@ if [ "${1:-}" = "--dmg" ]; then
   cp "$ROOT/scripts/Open Anyway.txt" "$STAGE/Read me first.txt" 2>/dev/null || true
   rm -f "$DMG"
   hdiutil create -quiet -volname "Trailmix" -srcfolder "$STAGE" -format ULFO -fs HFS+ "$DMG"
+  # The app's updater checks a download against this before installing it.
+  (cd "$OUT" && shasum -a 256 "$(basename "$DMG")" >"$(basename "$DMG").sha256")
   du -sh "$DMG" | awk -v dmg="$DMG" '{print "› Built " dmg " (" $1 ")"}'
 fi
