@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import signal
+import sys
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -298,6 +299,16 @@ class PullRequest(BaseModel):
 @app.get("/api/ollama")
 def ollama_status():
     """Is Ollama there, what's installed, what we'd recommend for this Mac, and any download in progress."""
+    return ollama_setup.status(settings.get_all())
+
+
+@app.post("/api/ollama/install", status_code=202)
+def ollama_install():
+    """Download, check and install Ollama (the Mac app), or open it if it's installed but not running."""
+    if sys.platform != "darwin":
+        raise HTTPException(409, "Installing Ollama from here only works on a Mac")
+    if not ollama_setup.start_install(settings.get_all()):
+        raise HTTPException(409, "Ollama is already being installed")
     return ollama_setup.status(settings.get_all())
 
 

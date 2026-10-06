@@ -239,6 +239,9 @@ export interface ImportJob {
 }
 
 export interface OllamaStatus {
+  can_install: boolean;
+  installed: boolean;
+  install: { active: boolean; progress: number | null; status: string; error: string | null } | null;
   reachable: boolean;
   models: string[];
   using: string;
@@ -299,6 +302,7 @@ export const api = {
   importGranola: (note_ids: string[], keep_summary: boolean) => request<ImportJob>("/import/granola", json("POST", { note_ids, keep_summary })),
   granolaImportStatus: () => request<ImportJob>("/import/granola"),
   importText: (text: string, title: string, date: string) => request<{ id: number }>("/import/text", json("POST", { text, title, date })),
+  installOllama: () => request<OllamaStatus>("/ollama/install", json("POST")),
   pullOllamaModel: (model = "") => request<OllamaStatus>("/ollama/pull", json("POST", { model })),
   startNativeRecorder: () => request<{ ok: true }>("/recorder/start", json("POST")),
   soundCheck: () => request<{ ok: true }>("/recorder/sound-check", json("POST")),
