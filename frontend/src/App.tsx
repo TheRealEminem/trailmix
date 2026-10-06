@@ -754,6 +754,7 @@ export default function App() {
               onDelete={() => void handleDelete(meeting.id, meeting.title)}
               onDeleteAudio={() => void handleDeleteAudio()}
               onRetranscribe={() => void handleRetranscribe()}
+              onKeepForever={(keep) => void guarded(() => api.keepForever(meeting.id, keep), meeting.id)}
               onExport={() => void handleExport()}
               onConfirm={() =>
                 void guarded(() => api.confirm(meeting.id), meeting.id)

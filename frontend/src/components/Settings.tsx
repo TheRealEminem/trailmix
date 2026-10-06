@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { api, inApp } from "../api";
-import type { Health, ProviderId, Settings as SettingsT } from "../api";
+import type {
+  ExportFormat,
+  ExportJob,
+  Health,
+  ProviderId,
+  Settings as SettingsT,
+} from "../api";
 import { tildePath } from "../format";
 import type { ThemePref } from "../theme";
 import {
@@ -23,7 +29,16 @@ import {
   SparkleIcon,
   SunIcon,
 } from "./icons";
-import { Collapse, ControlRow, PageHeader, Segmented, Select, Skeleton, Spinner, SwitchRow } from "./ui";
+import {
+  Collapse,
+  ControlRow,
+  PageHeader,
+  Segmented,
+  Select,
+  Skeleton,
+  Spinner,
+  SwitchRow,
+} from "./ui";
 
 interface Props {
   health: Health | null;
@@ -34,13 +49,30 @@ interface Props {
   onSignOut: () => void;
 }
 
-function Section({ icon, title, blurb, delay = 0, children }: { icon: ReactNode; title: string; blurb: string; delay?: number; children: ReactNode }) {
+function Section({
+  icon,
+  title,
+  blurb,
+  delay = 0,
+  children,
+}: {
+  icon: ReactNode;
+  title: string;
+  blurb: string;
+  delay?: number;
+  children: ReactNode;
+}) {
   return (
-    <section className="mb-10 animate-enter" style={{ animationDelay: `${delay}ms` } as CSSProperties}>
+    <section
+      className="mb-10 animate-enter"
+      style={{ animationDelay: `${delay}ms` } as CSSProperties}
+    >
       <div className="mb-3 flex items-start gap-3 px-1">
         <span className="well well-forest">{icon}</span>
         <div className="min-w-0">
-          <h2 className="text-heading font-semibold tracking-[-0.01em]">{title}</h2>
+          <h2 className="text-heading font-semibold tracking-[-0.01em]">
+            {title}
+          </h2>
           <p className="mt-0.5 text-ui leading-snug text-ink-soft">{blurb}</p>
         </div>
       </div>
@@ -49,7 +81,15 @@ function Section({ icon, title, blurb, delay = 0, children }: { icon: ReactNode;
   );
 }
 
-function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+function Row({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}) {
   return (
     <ControlRow label={label} hint={hint} wrap>
       {children}
@@ -101,7 +141,15 @@ function TextField({
 }
 
 /** API keys are write-only: we show a hint of the saved one, never the key itself. */
-function SecretField({ hint, onSave, label }: { hint: string | null | undefined; onSave: (v: string) => void; label: string }) {
+function SecretField({
+  hint,
+  onSave,
+  label,
+}: {
+  hint: string | null | undefined;
+  onSave: (v: string) => void;
+  label: string;
+}) {
   const [v, setV] = useState("");
   return (
     <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
@@ -111,7 +159,9 @@ function SecretField({ hint, onSave, label }: { hint: string | null | undefined;
         autoComplete="new-password"
         spellCheck={false}
         aria-label={label}
-        placeholder={hint ? `Saved (${hint}), paste to replace` : "Paste API key"}
+        placeholder={
+          hint ? `Saved (${hint}), paste to replace` : "Paste API key"
+        }
         onChange={(e) => setV(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && v.trim()) {
@@ -132,7 +182,10 @@ function SecretField({ hint, onSave, label }: { hint: string | null | undefined;
         Save
       </button>
       {hint && !v && (
-        <button className="btn btn-sm btn-danger-ghost" onClick={() => onSave("")}>
+        <button
+          className="btn btn-sm btn-danger-ghost"
+          onClick={() => onSave("")}
+        >
           Remove
         </button>
       )}
@@ -140,7 +193,11 @@ function SecretField({ hint, onSave, label }: { hint: string | null | undefined;
   );
 }
 
-function TestResult({ state }: { state: { ok: boolean; text: string } | "busy" | null }) {
+function TestResult({
+  state,
+}: {
+  state: { ok: boolean; text: string } | "busy" | null;
+}) {
   if (!state) return null;
   if (state === "busy")
     return (
@@ -149,20 +206,53 @@ function TestResult({ state }: { state: { ok: boolean; text: string } | "busy" |
       </p>
     );
   return (
-    <p className={`mt-2.5 flex animate-fade-in items-start gap-1.5 text-hint leading-snug ${state.ok ? "text-forest-deep" : "text-trail-deep"}`}>
-      {state.ok ? <CheckIcon size={16} className="shrink-0" /> : <AlertIcon size={16} className="shrink-0" />}
+    <p
+      className={`mt-2.5 flex animate-fade-in items-start gap-1.5 text-hint leading-snug ${state.ok ? "text-forest-deep" : "text-trail-deep"}`}
+    >
+      {state.ok ? (
+        <CheckIcon size={16} className="shrink-0" />
+      ) : (
+        <AlertIcon size={16} className="shrink-0" />
+      )}
       <span className="break-words">{state.text}</span>
     </p>
   );
 }
 
-const PROVIDER_META: Record<ProviderId, { label: string; blurb: string; keyUrl?: string }> = {
-  ollama: { label: "Ollama", blurb: "Runs models on this Mac or any machine running Ollama. Nothing leaves your network." },
-  anthropic: { label: "Claude (Anthropic)", blurb: "Claude models via the Anthropic API.", keyUrl: "console.anthropic.com" },
-  openai: { label: "OpenAI", blurb: "GPT models via the OpenAI API.", keyUrl: "platform.openai.com" },
-  gemini: { label: "Google Gemini", blurb: "Gemini models via Google AI Studio.", keyUrl: "aistudio.google.com" },
-  deepseek: { label: "DeepSeek", blurb: "DeepSeek models via the DeepSeek API.", keyUrl: "platform.deepseek.com" },
-  custom: { label: "OpenAI-compatible", blurb: "Anything that speaks the OpenAI chat API: OpenRouter, Groq, LM Studio, vLLM…" },
+const PROVIDER_META: Record<
+  ProviderId,
+  { label: string; blurb: string; keyUrl?: string }
+> = {
+  ollama: {
+    label: "Ollama",
+    blurb:
+      "Runs models on this Mac or any machine running Ollama. Nothing leaves your network.",
+  },
+  anthropic: {
+    label: "Claude (Anthropic)",
+    blurb: "Claude models via the Anthropic API.",
+    keyUrl: "console.anthropic.com",
+  },
+  openai: {
+    label: "OpenAI",
+    blurb: "GPT models via the OpenAI API.",
+    keyUrl: "platform.openai.com",
+  },
+  gemini: {
+    label: "Google Gemini",
+    blurb: "Gemini models via Google AI Studio.",
+    keyUrl: "aistudio.google.com",
+  },
+  deepseek: {
+    label: "DeepSeek",
+    blurb: "DeepSeek models via the DeepSeek API.",
+    keyUrl: "platform.deepseek.com",
+  },
+  custom: {
+    label: "OpenAI-compatible",
+    blurb:
+      "Anything that speaks the OpenAI chat API: OpenRouter, Groq, LM Studio, vLLM…",
+  },
 };
 
 function ProviderCard({
@@ -180,7 +270,9 @@ function ProviderCard({
 }) {
   const [open, setOpen] = useState(primary);
   const [models, setModels] = useState<string[]>([]);
-  const [result, setResult] = useState<{ ok: boolean; text: string } | "busy" | null>(null);
+  const [result, setResult] = useState<
+    { ok: boolean; text: string } | "busy" | null
+  >(null);
   const meta = PROVIDER_META[id];
   const hint = s.secret_hints?.[`${id}_api_key`];
   const modelKey = `${id}_model` as keyof SettingsT;
@@ -205,19 +297,40 @@ function ProviderCard({
         aria-expanded={open}
       >
         <span className="flex min-w-0 items-center gap-3.5">
-          <span className={`well ${local ? "well-forest" : "bg-sky-soft text-sky-deep"}`}>{local ? <LaptopIcon size={16} /> : <CloudIcon size={16} />}</span>
+          <span
+            className={`well ${local ? "well-forest" : "bg-sky-soft text-sky-deep"}`}
+          >
+            {local ? <LaptopIcon size={16} /> : <CloudIcon size={16} />}
+          </span>
           <span className="min-w-0">
             <span className="block text-label font-medium">{label}</span>
             <span className="block truncate text-hint text-ink-soft">
-              {local ? s.ollama_url : ready ? String(s[modelKey] || "no model picked") : "Not set up"}
+              {local
+                ? s.ollama_url
+                : ready
+                  ? String(s[modelKey] || "no model picked")
+                  : "Not set up"}
             </span>
           </span>
         </span>
         <span className="flex shrink-0 items-center gap-1.5">
-          {primary && <span className="chip bg-forest-soft text-forest-deep">Default</span>}
-          {fallback && <span className="chip bg-sun-soft text-sun-deep">Fallback</span>}
-          <span className={`chip hidden sm:inline-flex ${local ? "bg-forest-soft/60 text-forest-deep" : "bg-sky-soft text-sky-deep"}`}>{local ? "Local" : "Cloud"}</span>
-          <ChevronDownIcon size={16} className={`ml-1 text-ink-faint transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
+          {primary && (
+            <span className="chip bg-forest-soft text-forest-deep">
+              Default
+            </span>
+          )}
+          {fallback && (
+            <span className="chip bg-sun-soft text-sun-deep">Fallback</span>
+          )}
+          <span
+            className={`chip hidden sm:inline-flex ${local ? "bg-forest-soft/60 text-forest-deep" : "bg-sky-soft text-sky-deep"}`}
+          >
+            {local ? "Local" : "Cloud"}
+          </span>
+          <ChevronDownIcon
+            size={16}
+            className={`ml-1 text-ink-faint transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          />
         </span>
       </button>
 
@@ -228,7 +341,8 @@ function ProviderCard({
             {meta.keyUrl && (
               <>
                 {" "}
-                Get a key at <span className="font-mono text-ink">{meta.keyUrl}</span>.
+                Get a key at{" "}
+                <span className="font-mono text-ink">{meta.keyUrl}</span>.
               </>
             )}
           </p>
@@ -236,23 +350,59 @@ function ProviderCard({
             {id === "custom" && (
               <>
                 <Row label="Name">
-                  <TextField label="Name" value={s.custom_name} onSave={(v) => save({ custom_name: v })} className="w-full sm:w-56" />
+                  <TextField
+                    label="Name"
+                    value={s.custom_name}
+                    onSave={(v) => save({ custom_name: v })}
+                    className="w-full sm:w-56"
+                  />
                 </Row>
-                <Row label="Base URL" hint="Up to and including /v1, e.g. https://openrouter.ai/api/v1">
-                  <TextField label="Base URL" value={s.custom_base_url} onSave={(v) => save({ custom_base_url: v })} mono placeholder="https://…/v1" />
+                <Row
+                  label="Base URL"
+                  hint="Up to and including /v1, e.g. https://openrouter.ai/api/v1"
+                >
+                  <TextField
+                    label="Base URL"
+                    value={s.custom_base_url}
+                    onSave={(v) => save({ custom_base_url: v })}
+                    mono
+                    placeholder="https://…/v1"
+                  />
                 </Row>
               </>
             )}
             {local ? (
-              <Row label="Ollama URL" hint="Another machine works too, e.g. your Mac over Tailscale.">
-                <TextField label="Ollama URL" value={s.ollama_url} onSave={(v) => save({ ollama_url: v })} mono />
+              <Row
+                label="Ollama URL"
+                hint="Another machine works too, e.g. your Mac over Tailscale."
+              >
+                <TextField
+                  label="Ollama URL"
+                  value={s.ollama_url}
+                  onSave={(v) => save({ ollama_url: v })}
+                  mono
+                />
               </Row>
             ) : (
-              <Row label="API key" hint={id === "custom" ? "Optional for local servers." : undefined}>
-                <SecretField label={`${label} API key`} hint={hint} onSave={(v) => save({ [`${id}_api_key`]: v } as Partial<SettingsT>)} />
+              <Row
+                label="API key"
+                hint={
+                  id === "custom" ? "Optional for local servers." : undefined
+                }
+              >
+                <SecretField
+                  label={`${label} API key`}
+                  hint={hint}
+                  onSave={(v) =>
+                    save({ [`${id}_api_key`]: v } as Partial<SettingsT>)
+                  }
+                />
               </Row>
             )}
-            <Row label="Model" hint={local ? "Empty uses the first installed model." : undefined}>
+            <Row
+              label="Model"
+              hint={local ? "Empty uses the first installed model." : undefined}
+            >
               <div className="flex w-full items-center gap-2 sm:w-auto">
                 <TextField
                   label={`${label} model`}
@@ -283,7 +433,12 @@ function ProviderCard({
               </div>
             </Row>
             <div className="py-3.5">
-              <button className="btn btn-sm btn-soft" onClick={() => void run(async () => (await api.providerTest(id)).message)}>
+              <button
+                className="btn btn-sm btn-soft"
+                onClick={() =>
+                  void run(async () => (await api.providerTest(id)).message)
+                }
+              >
                 Test connection
               </button>
               <TestResult state={result} />
@@ -297,18 +452,52 @@ function ProviderCard({
 
 // The Mac worker's address depends on your network, so that preset leaves the URL for you to type.
 const TRANSCRIBE_PRESETS = [
-  { name: "Trailmix Mac worker", url: "", model: "large", live: "live", hint: "Your own Mac: run ./trailmix worker on it, then enter its address." },
-  { name: "OpenAI", url: "https://api.openai.com/v1", model: "whisper-1", live: "whisper-1", hint: "Cloud; billed per minute." },
-  { name: "Groq", url: "https://api.groq.com/openai/v1", model: "whisper-large-v3-turbo", live: "whisper-large-v3-turbo", hint: "Cloud; very fast." },
+  {
+    name: "Trailmix Mac worker",
+    url: "",
+    model: "large",
+    live: "live",
+    hint: "Your own Mac: run ./trailmix worker on it, then enter its address.",
+  },
+  {
+    name: "OpenAI",
+    url: "https://api.openai.com/v1",
+    model: "whisper-1",
+    live: "whisper-1",
+    hint: "Cloud; billed per minute.",
+  },
+  {
+    name: "Groq",
+    url: "https://api.groq.com/openai/v1",
+    model: "whisper-large-v3-turbo",
+    live: "whisper-large-v3-turbo",
+    hint: "Cloud; very fast.",
+  },
 ];
 
-const PROVIDER_IDS: ProviderId[] = ["ollama", "anthropic", "openai", "gemini", "deepseek", "custom"];
+const PROVIDER_IDS: ProviderId[] = [
+  "ollama",
+  "anthropic",
+  "openai",
+  "gemini",
+  "deepseek",
+  "custom",
+];
 
-export default function Settings({ health, theme, onTheme, onChanged, onQuit, onSignOut }: Props) {
+export default function Settings({
+  health,
+  theme,
+  onTheme,
+  onChanged,
+  onQuit,
+  onSignOut,
+}: Props) {
   const [s, setS] = useState<SettingsT | null>(null);
   const [dir, setDir] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [tResult, setTResult] = useState<{ ok: boolean; text: string } | "busy" | null>(null);
+  const [tResult, setTResult] = useState<
+    { ok: boolean; text: string } | "busy" | null
+  >(null);
   const [needsAddress, setNeedsAddress] = useState(false);
 
   useEffect(() => {
@@ -357,7 +546,12 @@ export default function Settings({ health, theme, onTheme, onChanged, onQuit, on
     }
   };
 
-  const header = <PageHeader title="Settings" subtitle="Pack your preferences once; they apply to every meeting after you stop recording." />;
+  const header = (
+    <PageHeader
+      title="Settings"
+      subtitle="Pack your preferences once; they apply to every meeting after you stop recording."
+    />
+  );
 
   if (!s) {
     return (
@@ -379,17 +573,29 @@ export default function Settings({ health, theme, onTheme, onChanged, onQuit, on
     );
   }
 
-  const exportOff = !s.auto_export;
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}-${pad(now.getMinutes())}`;
-  const example =
+  const docNames =
     s.export_separate_files && s.export_summary && s.export_transcript
-      ? `${stamp} Weekly sync - summary.${s.export_format}`
-      : `${stamp} Weekly sync.${s.export_format}`;
-  const providerLabel = (id: ProviderId) => (id === "custom" ? s.custom_name || PROVIDER_META.custom.label : PROVIDER_META[id].label);
-  const providerOptions = PROVIDER_IDS.map((p) => ({ value: p, label: providerLabel(p), hint: p === "ollama" ? "Local" : "Cloud" }));
-  const cloudInUse = [s.summary_provider, s.summary_fallback].some((p) => p !== "ollama" && p !== "none");
+      ? ["Weekly sync - Notes", "Weekly sync - Transcript"]
+      : ["Weekly sync"];
+  const exampleDocs =
+    s.export_summary || s.export_transcript
+      ? docNames.flatMap((n) => s.export_formats.map((f) => `${n}.${f}`))
+      : [];
+  const providerLabel = (id: ProviderId) =>
+    id === "custom"
+      ? s.custom_name || PROVIDER_META.custom.label
+      : PROVIDER_META[id].label;
+  const providerOptions = PROVIDER_IDS.map((p) => ({
+    value: p,
+    label: providerLabel(p),
+    hint: p === "ollama" ? "Local" : "Cloud",
+  }));
+  const cloudInUse = [s.summary_provider, s.summary_fallback].some(
+    (p) => p !== "ollama" && p !== "none",
+  );
 
   return (
     <div>
@@ -402,7 +608,12 @@ export default function Settings({ health, theme, onTheme, onChanged, onQuit, on
         </div>
       )}
 
-      <Section icon={<SunIcon size={16} />} title="Appearance & you" blurb="How Trailmix looks, and what it calls you." delay={40}>
+      <Section
+        icon={<SunIcon size={16} />}
+        title="Appearance & you"
+        blurb="How Trailmix looks, and what it calls you."
+        delay={40}
+      >
         <Row label="Theme" hint="Dusk is the same trail after sunset.">
           <Segmented
             label="Theme"
@@ -411,16 +622,34 @@ export default function Settings({ health, theme, onTheme, onChanged, onQuit, on
             options={[
               { id: "light", label: "Day", icon: <SunIcon size={16} /> },
               { id: "dusk", label: "Dusk", icon: <MoonIcon size={16} /> },
-              { id: "system", label: "Match Mac", icon: <LaptopIcon size={16} /> },
+              {
+                id: "system",
+                label: "Match Mac",
+                icon: <LaptopIcon size={16} />,
+              },
             ]}
           />
         </Row>
-        <Row label="Your name" hint="Used instead of “You” in transcripts, summaries and exports.">
-          <TextField label="Your name" value={s.your_name} onSave={(v) => save({ your_name: v })} placeholder="You" className="w-full sm:w-48" />
+        <Row
+          label="Your name"
+          hint="Used instead of “You” in transcripts, summaries and exports."
+        >
+          <TextField
+            label="Your name"
+            value={s.your_name}
+            onSave={(v) => save({ your_name: v })}
+            placeholder="You"
+            className="w-full sm:w-48"
+          />
         </Row>
       </Section>
 
-      <Section icon={<SparkleIcon size={16} />} title="Automatic mode" blurb="What happens on its own once a meeting ends." delay={80}>
+      <Section
+        icon={<SparkleIcon size={16} />}
+        title="Automatic mode"
+        blurb="What happens on its own once a meeting ends."
+        delay={80}
+      >
         <SwitchRow
           icon={<LinesIcon size={16} />}
           label="Auto-generate transcript"
@@ -442,43 +671,73 @@ export default function Settings({ health, theme, onTheme, onChanged, onQuit, on
           checked={s.auto_title}
           onChange={(v) => save({ auto_title: v })}
         />
-        <p className="py-3.5 text-hint text-ink-soft">Either way, if memory is running low Trailmix checks with you before loading a model on this Mac.</p>
+        <p className="py-3.5 text-hint text-ink-soft">
+          Either way, if memory is running low Trailmix checks with you before
+          loading a model on this Mac.
+        </p>
       </Section>
 
-      <Section icon={<LinesIcon size={16} />} title="Summaries & questions" blurb="Which AI writes your notes and answers your questions." delay={120}>
+      <Section
+        icon={<LinesIcon size={16} />}
+        title="Summaries & questions"
+        blurb="Which AI writes your notes and answers your questions."
+        delay={120}
+      >
         <Row label="Default provider">
-          <Select label="Default provider" value={s.summary_provider} onChange={(v) => save({ summary_provider: v as ProviderId })} className="w-full sm:w-56" options={providerOptions} />
+          <Select
+            label="Default provider"
+            value={s.summary_provider}
+            onChange={(v) => save({ summary_provider: v as ProviderId })}
+            className="w-full sm:w-56"
+            options={providerOptions}
+          />
         </Row>
-        <Row label="Fallback" hint="Tried if the default fails (offline, out of credit, and so on).">
+        <Row
+          label="Fallback"
+          hint="Tried if the default fails (offline, out of credit, and so on)."
+        >
           <Select
             label="Fallback provider"
             value={s.summary_fallback}
-            onChange={(v) => save({ summary_fallback: v as SettingsT["summary_fallback"] })}
+            onChange={(v) =>
+              save({ summary_fallback: v as SettingsT["summary_fallback"] })
+            }
             className="w-full sm:w-56"
             options={[{ value: "none", label: "None" }, ...providerOptions]}
           />
         </Row>
-        <Row label="Default template" hint="You can also pick one per meeting when you summarize.">
+        <Row
+          label="Default template"
+          hint="You can also pick one per meeting when you summarize."
+        >
           <Select
             label="Default template"
             value={s.summary_template}
             onChange={(v) => save({ summary_template: v })}
             className="w-full sm:w-56"
-            options={(health?.templates ?? []).map((t) => ({ value: t.id, label: t.name }))}
+            options={(health?.templates ?? []).map((t) => ({
+              value: t.id,
+              label: t.name,
+            }))}
           />
         </Row>
         <div className="py-3.5">
           <div className="text-label font-medium">Custom template</div>
           <div className="mt-0.5 text-hint leading-snug text-ink-soft">
-            Your own instructions for the “Custom” template, such as the sections you want. An Action Items list is always added at the end.
+            Your own instructions for the “Custom” template, such as the
+            sections you want. An Action Items list is always added at the end.
           </div>
-          <CustomTemplate value={s.custom_template} onSave={(v) => save({ custom_template: v })} />
+          <CustomTemplate
+            value={s.custom_template}
+            onSave={(v) => save({ custom_template: v })}
+          />
         </div>
         {cloudInUse && (
           <p className="flex items-start gap-2 py-3.5 text-hint leading-relaxed text-sun-deep">
             <CloudIcon size={16} className="mt-px shrink-0" />
-            With a cloud provider, the transcript is sent to that company to write the summary or answer a question. Recording and transcription are
-            unaffected.
+            With a cloud provider, the transcript is sent to that company to
+            write the summary or answer a question. Recording and transcription
+            are unaffected.
           </p>
         )}
       </Section>
@@ -490,12 +749,31 @@ export default function Settings({ health, theme, onTheme, onChanged, onQuit, on
         delay={160}
       >
         {PROVIDER_IDS.map((id) => (
-          <ProviderCard key={id} id={id} s={s} save={save} primary={s.summary_provider === id} fallback={s.summary_fallback === id} />
+          <ProviderCard
+            key={id}
+            id={id}
+            s={s}
+            save={save}
+            primary={s.summary_provider === id}
+            fallback={s.summary_fallback === id}
+          />
         ))}
       </Section>
 
-      <Section icon={<MicIcon size={16} />} title="Transcription" blurb="Where speech becomes text, for both the live draft and the final transcript." delay={200}>
-        <Row label="Engine" hint={health && !health.transcription.local_available ? "Local MLX isn't available on this machine." : undefined}>
+      <Section
+        icon={<MicIcon size={16} />}
+        title="Transcription"
+        blurb="Where speech becomes text, for both the live draft and the final transcript."
+        delay={200}
+      >
+        <Row
+          label="Engine"
+          hint={
+            health && !health.transcription.local_available
+              ? "Local MLX isn't available on this machine."
+              : undefined
+          }
+        >
           <Segmented
             label="Transcription engine"
             value={s.transcribe_engine}
@@ -517,11 +795,22 @@ export default function Settings({ health, theme, onTheme, onChanged, onQuit, on
                     className="btn btn-sm btn-soft rounded-full px-3.5"
                     data-tip={p.hint}
                     onClick={() => {
-                      if (p.url) return void saveTranscription({ transcribe_url: p.url, transcribe_model: p.model, transcribe_live_model: p.live });
-                      void save({ transcribe_url: "", transcribe_model: p.model, transcribe_live_model: p.live });
+                      if (p.url)
+                        return void saveTranscription({
+                          transcribe_url: p.url,
+                          transcribe_model: p.model,
+                          transcribe_live_model: p.live,
+                        });
+                      void save({
+                        transcribe_url: "",
+                        transcribe_model: p.model,
+                        transcribe_live_model: p.live,
+                      });
                       setTResult(null);
                       setNeedsAddress(true);
-                      setTimeout(() => document.getElementById("transcribe-url")?.focus());
+                      setTimeout(() =>
+                        document.getElementById("transcribe-url")?.focus(),
+                      );
                     }}
                   >
                     {p.name}
@@ -552,7 +841,9 @@ export default function Settings({ health, theme, onTheme, onChanged, onQuit, on
               <SecretField
                 label="Transcription API key"
                 hint={s.secret_hints?.transcribe_api_key}
-                onSave={(v) => void saveTranscription({ transcribe_api_key: v })}
+                onSave={(v) =>
+                  void saveTranscription({ transcribe_api_key: v })
+                }
               />
             </Row>
             <Row label="Model" hint="Used for the final transcript.">
@@ -564,7 +855,10 @@ export default function Settings({ health, theme, onTheme, onChanged, onQuit, on
                 className="w-full sm:w-56"
               />
             </Row>
-            <Row label="Live draft model" hint="Smaller and faster is fine. Empty uses the model above.">
+            <Row
+              label="Live draft model"
+              hint="Smaller and faster is fine. Empty uses the model above."
+            >
               <TextField
                 label="Live draft model"
                 value={s.transcribe_live_model}
@@ -576,73 +870,130 @@ export default function Settings({ health, theme, onTheme, onChanged, onQuit, on
           </>
         )}
         <div className="py-3.5">
-          <button className="btn btn-sm btn-soft" onClick={() => void testTranscription()}>
+          <button
+            className="btn btn-sm btn-soft"
+            onClick={() => void testTranscription()}
+          >
             Test transcription
           </button>
           <TestResult state={tResult} />
         </div>
       </Section>
 
-      <Section icon={<BackpackIcon size={16} />} title="Export" blurb="Save a copy of each finished meeting as a file you own." delay={240}>
+      <Section
+        icon={<BackpackIcon size={16} />}
+        title="Export"
+        blurb="A folder per meeting, in files you own: the notes, all the details, and the recording if you like."
+        delay={240}
+      >
         <SwitchRow
           icon={<ExportIcon size={16} />}
-          label="Auto-export finished meetings"
-          hint="Writes the file when the summary is done (plus a transcript-only copy if you summarize by hand)."
+          label="Export finished meetings automatically"
+          hint="Each meeting is saved to its folder when its notes are done, and kept up to date when you rename it or tick off tasks."
           checked={s.auto_export}
           onChange={(v) => save({ auto_export: v })}
         />
-        <div className={`py-3.5 transition-opacity ${exportOff ? "opacity-50" : ""}`}>
-          <label htmlFor="export-dir" className="flex items-center gap-2 text-label font-medium">
+        <div className="py-3.5">
+          <label
+            htmlFor="export-dir"
+            className="flex items-center gap-2 text-label font-medium"
+          >
             <FolderIcon size={16} className="text-ink-soft" />
             Export folder
           </label>
           <input
             id="export-dir"
             value={dir}
-            disabled={exportOff}
             spellCheck={false}
             onChange={(e) => setDir(e.target.value)}
-            onBlur={() => dir !== s.export_dir && void save({ export_dir: dir })}
+            onBlur={() =>
+              dir !== s.export_dir && void save({ export_dir: dir })
+            }
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
             className="field mt-2.5 w-full font-mono text-hint"
           />
-          <p className="mt-1.5 text-hint text-ink-soft">Created if it doesn't exist. Use a full path or start with ~.</p>
+          <p className="mt-1.5 text-hint text-ink-soft">
+            Created if it doesn't exist. Use a full path or start with ~.
+          </p>
         </div>
-        <ControlRow label="File type" disabled={exportOff}>
-          <Select
-            label="File type"
-            value={s.export_format}
-            disabled={exportOff}
-            onChange={(v) => save({ export_format: v as SettingsT["export_format"] })}
-            className="w-48"
-            options={[
-              { value: "md", label: "Markdown (.md)" },
-              { value: "txt", label: "Plain text (.txt)" },
-              { value: "json", label: "JSON (.json)" },
-            ]}
-          />
-        </ControlRow>
-        <SwitchRow label="Include summary" checked={s.export_summary} disabled={exportOff} onChange={(v) => save({ export_summary: v })} />
-        <SwitchRow label="Include transcript" checked={s.export_transcript} disabled={exportOff} onChange={(v) => save({ export_transcript: v })} />
+        <div className="py-3.5">
+          <div className="text-label font-medium">Documents</div>
+          <p className="mt-0.5 text-hint text-ink-soft">
+            The notes and transcript, in any of these. meeting.json, with every
+            detail, is always included so meetings can be imported back.
+          </p>
+          <div className="mt-2.5 flex flex-wrap gap-2">
+            {EXPORT_FORMATS.map((f) => {
+              const on = s.export_formats.includes(f.id);
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() =>
+                    save({
+                      export_formats: on
+                        ? s.export_formats.filter((x) => x !== f.id)
+                        : [...s.export_formats, f.id],
+                    })
+                  }
+                  className={`chip h-8 gap-1.5 px-3 text-label ${on ? "bg-forest text-white" : "bg-surface-subtle text-ink-soft ring-1 ring-line hover:text-ink"}`}
+                >
+                  {on && <CheckIcon size={14} />}
+                  {f.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <SwitchRow
-          label="Separate files"
-          hint="Off: one document, summary then transcript. On: two files side by side."
+          label="Include the notes"
+          checked={s.export_summary}
+          onChange={(v) => save({ export_summary: v })}
+        />
+        <SwitchRow
+          label="Include the transcript"
+          checked={s.export_transcript}
+          onChange={(v) => save({ export_transcript: v })}
+        />
+        <SwitchRow
+          label="Notes and transcript as separate documents"
           checked={s.export_separate_files}
-          disabled={exportOff || !s.export_summary || !s.export_transcript}
+          disabled={!s.export_summary || !s.export_transcript}
           onChange={(v) => save({ export_separate_files: v })}
         />
-        {!exportOff && (
-          <div className="py-3.5">
-            <div className="text-meta text-ink-soft">Next file</div>
-            <div className="mt-1.5 break-all rounded-sm bg-surface-subtle px-3 py-2 font-mono text-meta text-ink-soft">
-              {tildePath(s.export_dir)}/{example}
-            </div>
-          </div>
-        )}
+        <SwitchRow
+          label="Include the recording"
+          hint="Recording.ogg, plus each side on its own. On the same disk it's the same file as Trailmix's copy (a hard link), so it takes no extra space, and it stays when the 30-day clean-up removes Trailmix's own. Meetings set to Keep forever always include it."
+          checked={s.export_audio}
+          onChange={(v) => save({ export_audio: v })}
+        />
+        <div className="py-3.5">
+          <div className="text-meta text-ink-soft">Each meeting's folder</div>
+          <pre className="mt-1.5 overflow-x-auto rounded-sm bg-surface-subtle px-3 py-2 font-mono text-meta leading-relaxed text-ink-soft">
+            {[
+              `${tildePath(s.export_dir)}/${stamp} Weekly sync/`,
+              ...exampleDocs.map((d) => `    ${d}`),
+              "    meeting.json",
+              ...(s.export_audio
+                ? ["    Recording.ogg", "    Tracks/You.ogg, Them.ogg"]
+                : []),
+            ].join("\n")}
+          </pre>
+        </div>
+        <ExportAllRow includeAudio={s.export_audio} />
       </Section>
 
-      <Section icon={<DownloadIcon size={16} />} title="Import" blurb="Bring in meetings recorded with other apps (see Import in the sidebar)." delay={260}>
-        <Row label="Granola API key" hint="From Granola → Settings → Connectors → API keys (Business or Enterprise plan).">
+      <Section
+        icon={<DownloadIcon size={16} />}
+        title="Import"
+        blurb="Bring in meetings recorded with other apps (see Import in the sidebar)."
+        delay={260}
+      >
+        <Row
+          label="Granola API key"
+          hint="From Granola → Settings → Connectors → API keys (Business or Enterprise plan)."
+        >
           <SecretField
             label="Granola API key"
             hint={s.secret_hints?.granola_api_key}
@@ -651,16 +1002,34 @@ export default function Settings({ health, theme, onTheme, onChanged, onQuit, on
         </Row>
       </Section>
 
-      <Section icon={<PowerIcon size={16} />} title="App" blurb="Trailmix keeps running in the background until you quit it." delay={280}>
+      <Section
+        icon={<PowerIcon size={16} />}
+        title="App"
+        blurb="Trailmix keeps running in the background until you quit it."
+        delay={280}
+      >
         {health?.auth ? (
-          <Row label="Sign out" hint="You'll need the access token to get back in.">
+          <Row
+            label="Sign out"
+            hint="You'll need the access token to get back in."
+          >
             <button className="btn btn-sm btn-soft" onClick={onSignOut}>
               Sign out
             </button>
           </Row>
         ) : (
-          <Row label="Quit Trailmix" hint={inApp ? "Closes Trailmix, including the menu bar recorder." : "Stops the background server. Open Trailmix.app to start it again."}>
-            <button className="btn btn-sm btn-soft hover:!text-trail-deep" onClick={onQuit}>
+          <Row
+            label="Quit Trailmix"
+            hint={
+              inApp
+                ? "Closes Trailmix, including the menu bar recorder."
+                : "Stops the background server. Open Trailmix.app to start it again."
+            }
+          >
+            <button
+              className="btn btn-sm btn-soft hover:!text-trail-deep"
+              onClick={onQuit}
+            >
               <PowerIcon size={16} /> Quit
             </button>
           </Row>
@@ -670,7 +1039,13 @@ export default function Settings({ health, theme, onTheme, onChanged, onQuit, on
   );
 }
 
-function CustomTemplate({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+function CustomTemplate({
+  value,
+  onSave,
+}: {
+  value: string;
+  onSave: (v: string) => void;
+}) {
   const [v, setV] = useState(value);
   useEffect(() => {
     setV(value);
@@ -682,8 +1057,72 @@ function CustomTemplate({ value, onSave }: { value: string; onSave: (v: string) 
       onBlur={() => v !== value && onSave(v)}
       rows={4}
       aria-label="Custom template"
-      placeholder={"Write the notes in Markdown with these sections:\n## Context\n## What we learned\n## Risks"}
+      placeholder={
+        "Write the notes in Markdown with these sections:\n## Context\n## What we learned\n## Risks"
+      }
       className="field mt-2.5 w-full resize-y font-mono text-hint leading-relaxed"
     />
+  );
+}
+
+const EXPORT_FORMATS: { id: ExportFormat; label: string }[] = [
+  { id: "pdf", label: "PDF" },
+  { id: "docx", label: "Word (.docx)" },
+  { id: "odt", label: "OpenDocument (.odt)" },
+  { id: "md", label: "Markdown" },
+  { id: "txt", label: "Plain text" },
+];
+
+/** "Export all meetings now": every transcribed meeting to its folder, with progress. */
+function ExportAllRow({ includeAudio }: { includeAudio: boolean }) {
+  const [job, setJob] = useState<ExportJob | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    api
+      .exportAllStatus()
+      .then((j) => j.active && setJob(j))
+      .catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    if (!job?.active) return;
+    const t = setInterval(
+      () =>
+        api
+          .exportAllStatus()
+          .then(setJob)
+          .catch(() => undefined),
+      800,
+    );
+    return () => clearInterval(t);
+  }, [job?.active]);
+  const start = () => {
+    setError(null);
+    api
+      .exportAll(includeAudio)
+      .then(setJob)
+      .catch((e) => setError((e as Error).message));
+  };
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 py-3.5">
+      <div className="min-w-0">
+        <div className="text-label font-medium">Export all meetings now</div>
+        <div className="mt-0.5 text-hint text-ink-soft">
+          {job?.active
+            ? `Exporting ${job.done} of ${job.total}…`
+            : job && (job.total ?? 0) > 0
+              ? `Exported ${job.done} meeting${job.done === 1 ? "" : "s"}${job.errors?.length ? `, ${job.errors.length} failed: ${job.errors[0]}` : "."}`
+              : "Every meeting so far, with the settings above. Handy before reinstalling or moving to a new Mac."}
+        </div>
+        {error && <div className="mt-1 text-hint text-trail-deep">{error}</div>}
+      </div>
+      <button
+        className="btn btn-sm btn-soft"
+        onClick={start}
+        disabled={!!job?.active}
+      >
+        {job?.active ? <Spinner /> : <ExportIcon size={16} />}
+        Export all
+      </button>
+    </div>
   );
 }

@@ -1,14 +1,34 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { ReactNode } from "react";
+import { inApp, revealInFinder } from "../api";
 import type { Bookmark, Health, Meeting, Provider, Task } from "../api";
-import { formatBytes, formatDuration, formatLongDate, formatTime, tildePath } from "../format";
+import {
+  formatBytes,
+  formatDuration,
+  formatLongDate,
+  formatTime,
+  tildePath,
+} from "../format";
 import AskPanel from "./AskPanel";
-import { CalendarIcon, ChatIcon, ClockIcon, ExportIcon, LinesIcon, PencilIcon, RefreshIcon, SparkleIcon, TrashIcon, UsersIcon, WaveIcon } from "./icons";
+import {
+  CalendarIcon,
+  ChatIcon,
+  ClockIcon,
+  ExportIcon,
+  FolderIcon,
+  LinesIcon,
+  PencilIcon,
+  RefreshIcon,
+  SparkleIcon,
+  TrashIcon,
+  UsersIcon,
+  WaveIcon,
+} from "./icons";
 import { ContourBadge } from "./illustrations";
 import PipelineStatus from "./PipelineStatus";
 import Summary from "./Summary";
 import Transcript from "./Transcript";
-import { Segmented } from "./ui";
+import { Segmented, Switch } from "./ui";
 
 export type Tab = "summary" | "transcript" | "ask";
 
@@ -21,6 +41,7 @@ interface Props {
   onDelete: () => void;
   onDeleteAudio: () => void;
   onRetranscribe: () => void;
+  onKeepForever: (keep: boolean) => void;
   onExport: () => void;
   onConfirm: () => void;
   onRetry: () => void;
@@ -33,14 +54,26 @@ interface Props {
 
 const WORKING = ["recording", "queued", "transcribing", "summarizing"];
 
-function FileRow({ icon, title, detail, action }: { icon: ReactNode; title: string; detail: ReactNode; action?: ReactNode }) {
+function FileRow({
+  icon,
+  title,
+  detail,
+  action,
+}: {
+  icon: ReactNode;
+  title: string;
+  detail: ReactNode;
+  action?: ReactNode;
+}) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3.5">
       <div className="flex min-w-0 items-center gap-3.5">
         <span className="well">{icon}</span>
         <div className="min-w-0">
           <div className="text-label font-medium">{title}</div>
-          <div className="mt-0.5 break-words text-hint text-ink-soft">{detail}</div>
+          <div className="mt-0.5 break-words text-hint text-ink-soft">
+            {detail}
+          </div>
         </div>
       </div>
       {action}
@@ -49,7 +82,13 @@ function FileRow({ icon, title, detail, action }: { icon: ReactNode; title: stri
 }
 
 /** The meeting's title, edited in place. A textarea so long titles wrap instead of being cut off. */
-function TitleField({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+function TitleField({
+  value,
+  onSave,
+}: {
+  value: string;
+  onSave: (v: string) => void;
+}) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const fit = () => {
     const el = ref.current;
@@ -95,7 +134,13 @@ function TitleField({ value, onSave }: { value: string; onSave: (v: string) => v
   );
 }
 
-export default function MeetingView({ meeting: m, health, tab, onTab, ...on }: Props) {
+export default function MeetingView({
+  meeting: m,
+  health,
+  tab,
+  onTab,
+  ...on
+}: Props) {
   const audioGone = m.audio_deleted || m.audio_bytes === 0;
 
   return (
@@ -120,24 +165,41 @@ export default function MeetingView({ meeting: m, health, tab, onTab, ...on }: P
           <TitleField value={m.title} onSave={on.onRename} />
           <div className="mt-1 flex items-center gap-0.5">
             {m.transcript && (
-              <button onClick={on.onExport} className="icon-btn" aria-label="Export" data-tip="Export now">
+              <button
+                onClick={on.onExport}
+                className="icon-btn"
+                aria-label="Export"
+                data-tip="Export now"
+              >
                 <ExportIcon size={18} />
               </button>
             )}
-            <button onClick={on.onDelete} className="icon-btn hover:!bg-trail-soft hover:!text-trail-deep" aria-label="Delete meeting" data-tip="Delete meeting">
+            <button
+              onClick={on.onDelete}
+              className="icon-btn hover:!bg-trail-soft hover:!text-trail-deep"
+              aria-label="Delete meeting"
+              data-tip="Delete meeting"
+            >
               <TrashIcon size={18} />
             </button>
           </div>
         </div>
         {m.title_auto && m.summary && (
           <p className="mt-2 inline-flex items-center gap-1.5 text-hint text-ink-soft">
-            <SparkleIcon size={16} className="text-sun-deep" /> Named by Trailmix · click the title to rename
+            <SparkleIcon size={16} className="text-sun-deep" /> Named by
+            Trailmix · click the title to rename
           </p>
         )}
       </header>
 
       {m.status !== "done" && (
-        <PipelineStatus meeting={m} health={health} onConfirm={on.onConfirm} onRetry={on.onRetry} onSummarize={on.onSummarize} />
+        <PipelineStatus
+          meeting={m}
+          health={health}
+          onConfirm={on.onConfirm}
+          onRetry={on.onRetry}
+          onSummarize={on.onSummarize}
+        />
       )}
 
       <div className="mb-4 animate-enter" style={{ animationDelay: "60ms" }}>
@@ -147,42 +209,74 @@ export default function MeetingView({ meeting: m, health, tab, onTab, ...on }: P
           value={tab}
           onChange={onTab}
           options={[
-            { id: "summary", label: "Summary", icon: <SparkleIcon size={16} /> },
-            { id: "transcript", label: "Transcript", icon: <LinesIcon size={16} /> },
+            {
+              id: "summary",
+              label: "Summary",
+              icon: <SparkleIcon size={16} />,
+            },
+            {
+              id: "transcript",
+              label: "Transcript",
+              icon: <LinesIcon size={16} />,
+            },
             { id: "ask", label: "Ask", icon: <ChatIcon size={16} /> },
           ]}
         />
       </div>
 
-      <div role="tabpanel" className="panel animate-enter p-5 sm:p-8" style={{ animationDelay: "100ms" }}>
+      <div
+        role="tabpanel"
+        className="panel animate-enter p-5 sm:p-8"
+        style={{ animationDelay: "100ms" }}
+      >
         <div key={tab} className="animate-fade-in">
           {tab === "summary" && (
-            <Summary meeting={m} health={health} onResummarize={(p, t) => on.onSummarize(p, t || undefined)} onToggleTask={on.onToggleTask} />
+            <Summary
+              meeting={m}
+              health={health}
+              onResummarize={(p, t) => on.onSummarize(p, t || undefined)}
+              onToggleTask={on.onToggleTask}
+            />
           )}
           {tab === "transcript" && (
             <Transcript
               meeting={m}
               health={health}
-              pending={WORKING.includes(m.status) || m.status.startsWith("ready") || m.status === "waiting_confirm"}
+              pending={
+                WORKING.includes(m.status) ||
+                m.status.startsWith("ready") ||
+                m.status === "waiting_confirm"
+              }
               onBookmarks={on.onBookmarks}
               onSpeakers={on.onSpeakers}
             />
           )}
           {tab === "ask" &&
             (m.transcript ? (
-              <AskPanel meetingId={m.id} history={m.qa} health={health} onError={on.onError} />
+              <AskPanel
+                meetingId={m.id}
+                history={m.qa}
+                health={health}
+                onError={on.onError}
+              />
             ) : (
               <div className="py-8 text-center">
                 <ContourBadge>
                   <ChatIcon size={18} />
                 </ContourBadge>
-                <p className="mt-3 text-label text-ink-soft">You can ask questions once the transcript is ready.</p>
+                <p className="mt-3 text-label text-ink-soft">
+                  You can ask questions once the transcript is ready.
+                </p>
               </div>
             ))}
         </div>
       </div>
 
-      <section className="mt-10 animate-enter" style={{ animationDelay: "140ms" }} aria-labelledby="files-heading">
+      <section
+        className="mt-10 animate-enter"
+        style={{ animationDelay: "140ms" }}
+        aria-labelledby="files-heading"
+      >
         <h2 id="files-heading" className="eyebrow mb-2 px-1">
           Files
         </h2>
@@ -191,25 +285,51 @@ export default function MeetingView({ meeting: m, health, tab, onTab, ...on }: P
             icon={<WaveIcon size={16} />}
             title="Audio recording"
             detail={
-              audioGone
-                ? "Deleted. The transcript and summary are kept."
-                : `${formatBytes(m.audio_bytes)}${
-                    m.audio_expires_at
+              audioGone ? (
+                m.keep_audio && m.export_folder ? (
+                  "Trailmix's copy is gone; the one in your export folder is kept."
+                ) : (
+                  "Deleted. The transcript and summary are kept."
+                )
+              ) : (
+                <>
+                  {formatBytes(m.audio_bytes)}
+                  {m.keep_audio
+                    ? " · kept forever, also in your export folder"
+                    : m.audio_expires_at
                       ? ` · deletes itself ${new Date(m.audio_expires_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
-                      : " · kept until you delete it"
-                  }`
+                      : " · kept until you delete it"}
+                  {m.transcript && (
+                    <label className="mt-1.5 flex w-fit cursor-pointer items-center gap-2 text-ink">
+                      <Switch
+                        checked={m.keep_audio}
+                        onChange={on.onKeepForever}
+                        label="Keep forever"
+                      />
+                      Keep forever
+                    </label>
+                  )}
+                </>
+              )
             }
             action={
               !audioGone &&
               (m.transcript || m.status === "error") && (
                 <div className="flex flex-wrap justify-end gap-1.5">
                   {["done", "error", "ready_summarize"].includes(m.status) && (
-                    <button onClick={on.onRetranscribe} className="btn btn-sm btn-soft" data-tip="Transcribe the audio again and write a new summary">
+                    <button
+                      onClick={on.onRetranscribe}
+                      className="btn btn-sm btn-soft"
+                      data-tip="Transcribe the audio again and write a new summary"
+                    >
                       <RefreshIcon size={16} />
                       Transcribe again
                     </button>
                   )}
-                  <button onClick={on.onDeleteAudio} className="btn btn-sm btn-danger-ghost">
+                  <button
+                    onClick={on.onDeleteAudio}
+                    className="btn btn-sm btn-danger-ghost"
+                  >
                     <TrashIcon size={16} />
                     Delete audio
                   </button>
@@ -224,17 +344,36 @@ export default function MeetingView({ meeting: m, health, tab, onTab, ...on }: P
               detail={
                 m.export_error ? (
                   <span className="text-trail-deep">{m.export_error}</span>
+                ) : m.export_folder ? (
+                  <span className="break-all font-mono text-meta">
+                    {tildePath(m.export_folder)}
+                  </span>
                 ) : m.exported_paths.length > 0 ? (
-                  <span className="font-mono text-meta">{m.exported_paths.map(tildePath).join("  ·  ")}</span>
+                  <span className="font-mono text-meta">
+                    {m.exported_paths.map(tildePath).join("  ·  ")}
+                  </span>
                 ) : (
                   "Not exported yet"
                 )
               }
               action={
-                <button onClick={on.onExport} className="btn btn-sm btn-soft">
-                  <ExportIcon size={16} />
-                  {m.exported_paths.length > 0 ? "Export again" : "Export now"}
-                </button>
+                <div className="flex flex-wrap justify-end gap-1.5">
+                  {m.export_folder && inApp && (
+                    <button
+                      onClick={() => revealInFinder(m.export_folder!)}
+                      className="btn btn-sm btn-ghost"
+                    >
+                      <FolderIcon size={16} />
+                      Show in Finder
+                    </button>
+                  )}
+                  <button onClick={on.onExport} className="btn btn-sm btn-soft">
+                    <ExportIcon size={16} />
+                    {m.exported_paths.length > 0
+                      ? "Export again"
+                      : "Export now"}
+                  </button>
+                </div>
               }
             />
           )}
