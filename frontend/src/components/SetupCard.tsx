@@ -78,7 +78,7 @@ export default function SetupCard({
   const [ollama, setOllama] = useState<OllamaStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const pulling = !!ollama?.pull?.active;
+  const pulling = !!ollama?.pull?.active || !!ollama?.install?.active;
   useEffect(() => {
     if (dismissed) return;
     let alive = true;
@@ -141,6 +141,13 @@ export default function SetupCard({
     setError(null);
     api
       .pullOllamaModel()
+      .then(setOllama)
+      .catch((e) => setError((e as Error).message));
+  };
+  const installOllama = () => {
+    setError(null);
+    api
+      .installOllama()
       .then(setOllama)
       .catch((e) => setError((e as Error).message));
   };
@@ -224,22 +231,64 @@ export default function SetupCard({
         >
           {usingOllama && !ollama?.reachable && (
             <>
-              Summaries run on this Mac with Ollama (free), or in the cloud with
-              an API key.
-              <div className="mt-2 flex flex-wrap gap-2">
-                <a
-                  className="btn btn-sm btn-soft"
-                  href="https://ollama.com/download"
-                >
-                  Get Ollama
-                </a>
-                <button
-                  className="btn btn-sm btn-ghost"
-                  onClick={onOpenSettings}
-                >
-                  Use an API key instead
-                </button>
-              </div>
+              {ollama?.install?.active ? (
+                <>
+                  {ollama.install.status}
+                  {ollama.install.progress != null
+                    ? ` · ${Math.round(ollama.install.progress * 100)}%`
+                    : "…"}
+                  <div
+                    className="mt-2 h-1.5 overflow-hidden rounded-full bg-forest/10"
+                    aria-hidden="true"
+                  >
+                    <div
+                      className={`h-full rounded-full bg-forest transition-[width] duration-700 ${ollama.install.progress == null ? "w-1/3 animate-pulse" : ""}`}
+                      style={
+                        ollama.install.progress == null
+                          ? undefined
+                          : {
+                              width: `${Math.max(2, ollama.install.progress * 100)}%`,
+                            }
+                      }
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  Summaries run on this Mac with Ollama, a free app for local AI
+                  models (about 200 MB), or in the cloud with an API key.
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {ollama?.can_install ? (
+                      <button
+                        className="btn btn-sm btn-soft"
+                        onClick={installOllama}
+                      >
+                        {ollama.installed
+                          ? "Open Ollama"
+                          : "Install Ollama for me"}
+                      </button>
+                    ) : (
+                      <a
+                        className="btn btn-sm btn-soft"
+                        href="https://ollama.com/download"
+                      >
+                        Get Ollama
+                      </a>
+                    )}
+                    <button
+                      className="btn btn-sm btn-ghost"
+                      onClick={onOpenSettings}
+                    >
+                      Use an API key instead
+                    </button>
+                  </div>
+                  {(error || ollama?.install?.error) && (
+                    <p className="mt-1.5 text-trail-deep">
+                      {error || ollama?.install?.error}
+                    </p>
+                  )}
+                </>
+              )}
             </>
           )}
           {usingOllama && ollama?.reachable && (
