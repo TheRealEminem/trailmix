@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trailmix · meeting notes that stay on your Mac</title>
+  <meta name="description" content="Trailmix records your calls, transcribes them on your Mac and writes the notes. Free and open source." />
+  <link rel="icon" href="assets/logo.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Geist:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f8f7f2; --surface: #ffffff; --ink: #1d2a24; --soft: #5b6a62; --line: #e4e2d8;
+      --forest: #236347; --forest-hover: #194d37; --forest-soft: #dce9de; --trail: #e86636; --sun: #f5b83a;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #111814; --surface: #18211c; --ink: #e9eee9; --soft: #a3b1a8; --line: #26332c;
+        --forest: #4fa27a; --forest-hover: #63b58c; --forest-soft: #1d3127; --trail: #ee7445; --sun: #f2be4e;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.6 Geist, -apple-system, system-ui, sans-serif; }
+    a { color: var(--forest); }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 22px 0; }
+    .brand { display: flex; align-items: center; gap: 10px; font: 600 22px Fraunces, serif; color: var(--ink); text-decoration: none; }
+    .brand img { width: 34px; height: 34px; }
+    .gh { color: var(--soft); text-decoration: none; font-weight: 500; }
+    .hero { padding: 48px 0 28px; text-align: center; }
+    h1 { font: 600 clamp(38px, 6vw, 64px)/1.05 Fraunces, serif; letter-spacing: -0.02em; margin: 0 auto 18px; max-width: 13ch; }
+    .lead { color: var(--soft); font-size: 19px; max-width: 40rem; margin: 0 auto 30px; }
+    .cta { display: inline-flex; align-items: center; gap: 10px; background: var(--forest); color: #fff; text-decoration: none; font-weight: 600;
+      padding: 15px 26px; border-radius: 14px; font-size: 18px; box-shadow: 0 6px 20px rgba(35, 99, 71, .25); }
+    .cta:hover { background: var(--forest-hover); }
+    .cta svg { width: 20px; height: 20px; }
+    .meta { color: var(--soft); font-size: 14px; margin-top: 12px; }
+    .shot { margin: 40px auto 0; max-width: 980px; border-radius: 18px; overflow: hidden; border: 1px solid var(--line);
+      box-shadow: 0 30px 80px rgba(0, 0, 0, .25); }
+    .shot img { display: block; width: 100%; height: auto; }
+    section { padding: 56px 0 8px; }
+    h2 { font: 600 32px/1.15 Fraunces, serif; margin: 0 0 8px; letter-spacing: -0.01em; }
+    .sub { color: var(--soft); margin: 0 0 26px; }
+    .steps { display: grid; gap: 16px; counter-reset: step; }
+    .step { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 22px 24px 22px 74px; position: relative; }
+    .step::before { counter-increment: step; content: counter(step); position: absolute; left: 22px; top: 20px; width: 34px; height: 34px;
+      border-radius: 50%; background: var(--forest-soft); color: var(--forest); font-weight: 600; display: grid; place-items: center; }
+    .step h3 { margin: 0 0 6px; font-size: 18px; }
+    .step p, .step ol { margin: 6px 0 0; color: var(--soft); }
+    .step ol { padding-left: 20px; }
+    .step li { margin: 3px 0; }
+    b { color: var(--ink); font-weight: 600; }
+    .why { font-size: 14px; border-left: 3px solid var(--sun); padding-left: 12px; margin-top: 12px !important; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 20px 22px; }
+    .card h3 { margin: 0 0 6px; font-size: 17px; }
+    .card p { margin: 0; color: var(--soft); font-size: 15.5px; }
+    details { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 20px; margin-bottom: 10px; }
+    summary { cursor: pointer; font-weight: 600; }
+    details p { color: var(--soft); margin: 10px 0 0; }
+    footer { color: var(--soft); font-size: 14px; padding: 56px 0 40px; text-align: center; }
+    @media (max-width: 560px) { .step { padding-left: 22px; padding-top: 66px; } .hero { padding-top: 24px; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="./"><img src="assets/logo.svg" alt="" />Trailmix</a>
+      <a class="gh" href="https://github.com/TheRealEminem/trailmix">GitHub</a>
+    </header>
+
+    <div class="hero">
+      <h1>Meeting notes that stay on your Mac</h1>
+      <p class="lead">Trailmix records your calls in Zoom, Google Meet, Teams or FaceTime, transcribes them on your Mac, and writes the notes and action
+        items. No bot joins your call, and nothing leaves your computer unless you choose a cloud AI.</p>
+      <a class="cta" href="https://github.com/TheRealEminem/trailmix/releases/latest/download/Trailmix-arm64.dmg">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>
+        Download for Mac
+      </a>
+      <div class="meta">Free and open source · Apple silicon (M1 or newer) · macOS 14.2 or later</div>
+      <div class="shot"><img src="assets/app.jpg" alt="Trailmix showing the notes of a meeting: overview, discussion, decisions and action items" width="1800" height="1164" /></div>
+    </div>
+
+    <section id="install">
+      <h2>Install in three steps</h2>
+      <p class="sub">Two minutes, plus a one-time download of the speech models.</p>
+      <div class="steps">
+        <div class="step">
+          <h3>Open the download and drag Trailmix to Applications</h3>
+          <p>Double-click <b>Trailmix-arm64.dmg</b> in your Downloads, then drag the Trailmix icon onto the Applications folder next to it.</p>
+        </div>
+        <div class="step">
+          <h3>Open it the first time with “Open Anyway”</h3>
+          <p>Open Trailmix from Applications. macOS says it “can't verify” Trailmix and offers only <b>Done</b> or <b>Move to Trash</b>: click <b>Done</b>. Then:</p>
+          <ol>
+            <li>Open <b>System Settings</b> (Apple menu) → <b>Privacy &amp; Security</b>.</li>
+            <li>Scroll down to <b>“Trailmix” was blocked to protect your Mac</b> and click <b>Open Anyway</b>.</li>
+            <li>Enter your Mac password if asked, then click <b>Open Anyway</b> once more.</li>
+          </ol>
+          <p class="why">Why: Trailmix isn't signed with a paid Apple developer certificate yet, so macOS asks you to confirm once. Updates install from inside the app without this step.</p>
+        </div>
+        <div class="step">
+          <h3>Trailmix walks you through the rest</h3>
+          <p>A short checklist in the app: a sound check that makes sure both sides of your calls are heard (it tells you exactly which macOS prompts to allow), the speech
+            models (about 1.7 GB, once), and a summary model, which it can install for you with one click, or you can use an API key for Claude, OpenAI or Gemini.
+            Then start a call and press Record.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>What it does</h2>
+      <p class="sub">Everything runs on your Mac by default.</p>
+      <div class="grid">
+        <div class="card"><h3>Both sides of every call</h3><p>Records your mic and the other side straight from Zoom, Meet, Teams, Slack or FaceTime. No screen sharing, no bot.</p></div>
+        <div class="card"><h3>Transcripts on your Mac</h3><p>Whisper runs locally on Apple silicon, with You and Them labelled and a live draft while you talk.</p></div>
+        <div class="card"><h3>Notes and action items</h3><p>A summary with decisions, open questions and tasks you can tick off, written by a local model or the AI you choose.</p></div>
+        <div class="card"><h3>Shortcuts from anywhere</h3><p>⌃⌥⌘R starts and stops recording, ⌃⌥⌘M flags a moment worth remembering, whatever app you're in.</p></div>
+        <div class="card"><h3>Ask your meetings</h3><p>Questions across everything you've recorded, with answers that link back to the moment they came from.</p></div>
+        <div class="card"><h3>Bring your history</h3><p>Import transcripts from Granola (its API, or a pasted transcript) and keep them all in one place.</p></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Questions</h2>
+      <details><summary>What do I need?</summary><p>A Mac with Apple silicon (M1 or newer) on macOS 14.2 or later. 16 GB of memory is best for local summaries; with 8 GB, use a cloud AI for summaries or a small local model.</p></details>
+      <details><summary>Does anything leave my Mac?</summary><p>Not by default: recording, transcription and summaries all run locally. If you add an API key for a cloud AI, only the transcript goes to that provider, to write the notes.</p></details>
+      <details><summary>How do updates work?</summary><p>Trailmix checks for new versions and offers to install them from its menu or window. After an update macOS asks for the microphone and system audio permissions again, until Trailmix is signed by Apple.</p></details>
+      <details><summary>Windows, Linux or an Intel Mac?</summary><p>Not yet. The speech engine Trailmix uses runs on Apple silicon; other platforms are planned.</p></details>
+    </section>
+
+    <footer>Trailmix is free and open source (AGPL-3.0) · <a href="https://github.com/TheRealEminem/trailmix">Source on GitHub</a> · <a href="https://github.com/TheRealEminem/trailmix/releases">All releases</a></footer>
+  </div>
+</body>
+</html>
