@@ -83,7 +83,24 @@ final class MainWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKNavigationDe
     // MARK: Messages from the page
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        if message.body as? String == "quit" { NSApp.terminate(nil) }
+        guard let body = message.body as? String else { return }
+        if body == "quit" { NSApp.terminate(nil) }
+        if body.hasPrefix("reveal:") {  // "Show in Finder" for an exported meeting
+            let url = URL(fileURLWithPath: String(body.dropFirst("reveal:".count)))
+            if FileManager.default.fileExists(atPath: url.path) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        }
+    }
+
+    /// File and folder pickers on the page (importing transcripts, or a Trailmix export folder).
+    func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping @MainActor ([URL]?) -> Void) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.canChooseFiles = !parameters.allowsDirectories
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.prompt = parameters.allowsDirectories ? "Import Folder" : "Import"
+        if let window { panel.beginSheetModal(for: window) { completionHandler($0 == .OK ? panel.urls : nil) } }
+        else { panel.begin { completionHandler($0 == .OK ? panel.urls : nil) } }
     }
 
     // MARK: Links, pop-ups, permissions

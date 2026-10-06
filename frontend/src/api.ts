@@ -91,7 +91,8 @@ export interface Settings {
   transcribe_live_model: string;
   auto_export: boolean;
   export_dir: string;
-  export_format: "md" | "txt" | "json";
+  export_formats: ExportFormat[];
+  export_audio: boolean;
   export_summary: boolean;
   export_transcript: boolean;
   export_separate_files: boolean;
@@ -112,6 +113,8 @@ export interface Meeting extends MeetingListItem {
   audio_bytes: number;
   audio_deleted: boolean;
   audio_expires_at: string | null;
+  keep_audio: boolean;
+  export_folder: string | null;
   draft: DraftLine[] | null;
   exported_paths: string[];
   export_error: string | null;
@@ -225,6 +228,16 @@ export interface SoundCheckResult {
   detail?: string;
 }
 
+export type ExportFormat = "pdf" | "docx" | "odt" | "md" | "txt";
+
+export interface ExportJob {
+  active?: boolean;
+  total?: number;
+  done?: number;
+  errors?: string[];
+  folder?: string;
+}
+
 export interface GranolaNote {
   id: string;
   title: string;
@@ -274,6 +287,8 @@ type AppBridge = { postMessage: (message: string) => void };
 const bridge = (window as unknown as { webkit?: { messageHandlers?: { trailmix?: AppBridge } } }).webkit?.messageHandlers?.trailmix;
 export const inApp = !!bridge;
 export const quitApp = () => bridge?.postMessage("quit");
+/** In the app window: show a file or folder in Finder. */
+export const revealInFinder = (path: string) => bridge?.postMessage(`reveal:${path}`);
 
 export const api = {
   auth: () => request<{ required: boolean; ok: boolean }>("/auth"),
@@ -305,6 +320,17 @@ export const api = {
   granolaNotes: () => request<{ notes: GranolaNote[] }>("/import/granola/notes"),
   importGranola: (note_ids: string[], keep_summary: boolean) => request<ImportJob>("/import/granola", json("POST", { note_ids, keep_summary })),
   granolaImportStatus: () => request<ImportJob>("/import/granola"),
+  exportAll: (include_audio: boolean) => request<ExportJob>("/export/all", json("POST", { include_audio })),
+  exportAllStatus: () => request<ExportJob>("/export/all"),
+  keepForever: (id: number, keep: boolean) => request<Meeting>(`/meetings/${id}/keep`, json("POST", { keep })),
+  importTrailmix: (files: File[]) => {
+    const form = new FormData();
+    for (const f of files) {
+      form.append("files", f);
+      form.append("paths", (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name);
+    }
+    return request<{ imported: number[]; skipped: number; problems: string[] }>("/import/trailmix", { method: "POST", body: form });
+  },
   importText: (text: string, title: string, date: string) => request<{ id: number }>("/import/text", json("POST", { text, title, date })),
   installOllama: () => request<OllamaStatus>("/ollama/install", json("POST")),
   pullOllamaModel: (model = "") => request<OllamaStatus>("/ollama/pull", json("POST", { model })),

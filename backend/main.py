@@ -9,14 +9,16 @@ import json
 import logging
 import os
 import signal
+import shutil
 import sys
+import tempfile
 import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, WebSocket
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -26,6 +28,7 @@ from pydantic import BaseModel
 import audio_store as store
 import auth
 import database as db
+import archive
 import exporter
 import importer
 import live
@@ -167,6 +170,9 @@ def _present(m: dict) -> dict:
     out["audio_expires_at"] = store.expires_at(m)
     out["audio_deleted"] = bool(m["audio_deleted"])
     out["has_system"] = bool(m["has_system"])
+    out["keep_audio"] = bool(m.get("keep_audio"))
+    folder = next((str(Path(p).parent) for p in out["exported_paths"] if p.endswith("meeting.json")), None)
+    out["export_folder"] = folder
     return out
 
 
@@ -174,7 +180,7 @@ def _reexport(meeting_id: int) -> None:
     """Keep an already-exported file in step with edits (title, names, ticked tasks)."""
     meeting = db.get_meeting(meeting_id)
     cfg = settings.get_all()
-    if not (cfg["auto_export"] and meeting and meeting["exported_paths"] and meeting["transcript"]):
+    if not (meeting and meeting["exported_paths"] and meeting["transcript"]):  # exported once: keep it current
         return
     try:
         paths = exporter.export_meeting(meeting, cfg)
@@ -298,6 +304,44 @@ def import_text(body: TextImport):
         when = when.astimezone()  # a plain date means local time
     meeting_id = importer.save_imported(body.title.strip(), when or datetime.now(timezone.utc), segments, "paste", None, None)
     return {"id": meeting_id}
+
+
+@app.post("/api/import/trailmix")
+async def import_trailmix(files: list[UploadFile] = File(...), paths: list[str] = Form(default=[])):
+    """Meetings exported from Trailmix: a meeting folder, a whole export folder, or meeting.json files. Each
+    meeting.json is restored with the recording next to it, if any. Meetings already here are skipped."""
+    work = Path(tempfile.mkdtemp(prefix="trailmix-import-"))
+    try:
+        for i, upload in enumerate(files):
+            rel = Path(paths[i] if i < len(paths) and paths[i] else upload.filename or f"file{i}")
+            if rel.is_absolute() or ".." in rel.parts:
+                continue
+            target = work / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with open(target, "wb") as out:
+                shutil.copyfileobj(upload.file, out)
+        imported, skipped, problems = [], 0, []
+        for found in sorted(work.rglob("*.json")):
+            try:
+                data = json.loads(found.read_text(encoding="utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                continue
+            if not archive.looks_like_record(data):
+                continue
+            try:
+                made = await run_in_threadpool(archive.restore, data, found.parent)
+            except (ValueError, KeyError) as e:
+                problems.append(f"{found.parent.name}: {e}")
+                continue
+            if made:
+                imported.append(made)
+            else:
+                skipped += 1
+        if not imported and not skipped and not problems:
+            raise HTTPException(422, "No Trailmix meetings found. Pick a meeting folder (or your export folder) with meeting.json in it.")
+        return {"imported": imported, "skipped": skipped, "problems": problems}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 class PullRequest(BaseModel):
@@ -813,6 +857,44 @@ def export_now(meeting_id: int):
         raise HTTPException(500, f"Export failed: {e}")
     db.update_meeting(meeting_id, exported_paths=json.dumps(paths), export_error=None)
     return {"paths": paths}
+
+
+class KeepRequest(BaseModel):
+    keep: bool
+
+
+@app.post("/api/meetings/{meeting_id}/keep")
+def keep_forever(meeting_id: int, body: KeepRequest):
+    """'Keep forever': the recording is never cleaned up, and the meeting is exported with it, so it lives on
+    in your export folder (hard-linked: no second copy on the same disk)."""
+    meeting = _get_or_404(meeting_id)
+    db.update_meeting(meeting_id, keep_audio=int(body.keep))
+    meeting = db.get_meeting(meeting_id)
+    if body.keep and meeting["transcript"]:
+        try:
+            paths = exporter.export_meeting(meeting, settings.get_all(), include_audio=True)
+            db.update_meeting(meeting_id, exported_paths=json.dumps(paths), export_error=None)
+        except OSError as e:
+            db.update_meeting(meeting_id, export_error=f"Export failed: {e}")
+            raise HTTPException(500, f"Couldn't save it to the export folder: {e}")
+    return _present(db.get_meeting(meeting_id))
+
+
+class ExportAll(BaseModel):
+    include_audio: bool = False
+
+
+@app.post("/api/export/all", status_code=202)
+def export_all(body: ExportAll):
+    """Export every transcribed meeting now, in the background."""
+    if not exporter.export_all(settings.get_all(), body.include_audio):
+        raise HTTPException(409, "An export is already running")
+    return exporter.job_status()
+
+
+@app.get("/api/export/all")
+def export_all_status():
+    return exporter.job_status()
 
 
 @app.delete("/api/meetings/{meeting_id}/audio", status_code=204)
