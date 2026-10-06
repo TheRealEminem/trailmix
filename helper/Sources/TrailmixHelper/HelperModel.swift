@@ -139,6 +139,8 @@ final class HelperModel: ObservableObject {
         if commands.contains("start"), phase == .idle, other == nil {
             start()
         }
+        if commands.contains("open-at-login") { prefs.openAtLogin = true }
+        if commands.contains("no-open-at-login") { prefs.openAtLogin = false }
         if commands.contains("sound-check"), phase == .idle, !soundChecking {
             soundChecking = true
             soundCheck = ["running": true]
@@ -171,6 +173,9 @@ final class HelperModel: ObservableObject {
             "version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
             "mic_allowed": AVCaptureDevice.authorizationStatus(for: .audio) != .denied,
             "sound_check": soundCheck ?? NSNull(),
+            "shortcut_record": prefs.toggleShortcut.display,
+            "shortcut_mark": prefs.markShortcut.display,
+            "open_at_login": prefs.openAtLogin,
         ]
     }
 
