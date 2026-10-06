@@ -216,6 +216,7 @@ class RecorderCheckIn(BaseModel):
     shortcut_record: str = ""
     shortcut_mark: str = ""
     open_at_login: bool | None = None
+    update: dict | None = None
 
 
 class OpenAtLogin(BaseModel):
@@ -334,6 +335,16 @@ def ollama_pull(body: PullRequest):
 def recorder_open_at_login(body: OpenAtLogin):
     """Start Trailmix (and its menu bar recorder) when you log in to your Mac, or stop doing so."""
     if not recorder.request("open-at-login" if body.on else "no-open-at-login"):
+        raise HTTPException(409, "The menu bar recorder isn't running")
+    return {"ok": True}
+
+
+@app.post("/api/recorder/update", status_code=202)
+def recorder_update():
+    """Install the new version of Trailmix.app the menu bar app found (it downloads, checks, swaps, relaunches)."""
+    if live.active_count():
+        raise HTTPException(409, "Finish the recording first, then update")
+    if not recorder.request("update"):
         raise HTTPException(409, "The menu bar recorder isn't running")
     return {"ok": True}
 
