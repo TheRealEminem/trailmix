@@ -15,6 +15,8 @@ const GOOD_MODELS = /^(qwen3|qwen2\.5|gemma3|llama3\.[12]|mistral|phi4)/i;
 
 interface Props {
   health: Health | null;
+  /** At least one meeting exists: the last step ("record your first meeting") is done. */
+  hasMeetings: boolean;
   native: NativeRecorder | null;
   onOpenSettings: () => void;
   onChanged: () => void;
@@ -61,6 +63,7 @@ function Step({
  */
 export default function SetupCard({
   health,
+  hasMeetings,
   native,
   onOpenSettings,
   onChanged,
@@ -119,7 +122,8 @@ export default function SetupCard({
   const summaryDone = usingOllama
     ? !!ollama?.reachable && ollama.models.some((m) => GOOD_MODELS.test(m))
     : health.summary.ready;
-  if (nameDone && micDone && speechDone && summaryDone) return null;
+  if (nameDone && micDone && speechDone && summaryDone && hasMeetings)
+    return null;
 
   const dismiss = () => {
     setDismissed(true);
@@ -346,6 +350,47 @@ export default function SetupCard({
                   Open Settings
                 </button>
               </div>
+            </>
+          )}
+        </Step>
+        <Step done={hasMeetings} title="Record your first meeting">
+          Start your call as usual (Zoom, Google Meet, Teams, FaceTime), then
+          press <b className="text-ink">Start recording</b> below
+          {native?.shortcut_record ? (
+            <>
+              , or <kbd className="kbd">{native.shortcut_record}</kbd> from any
+              app
+            </>
+          ) : null}
+          . Trailmix records you and everyone on the call; the transcript and
+          notes appear after you stop.
+          {native?.shortcut_mark && (
+            <>
+              {" "}
+              Press <kbd className="kbd">{native.shortcut_mark}</kbd> to flag a
+              moment worth remembering.
+            </>
+          )}
+          {native && (
+            <>
+              <p className="mt-1.5">
+                Trailmix lives in your menu bar (the trail icon at the top right
+                of your screen), so you can close this window any time and it
+                keeps listening for the shortcut.
+              </p>
+              <label className="mt-2 flex cursor-pointer items-center gap-2 text-ink">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-[var(--forest)]"
+                  checked={!!native.open_at_login}
+                  onChange={(e) =>
+                    void api
+                      .setOpenAtLogin(e.target.checked)
+                      .catch((err) => setError((err as Error).message))
+                  }
+                />
+                Start Trailmix when I log in
+              </label>
             </>
           )}
         </Step>

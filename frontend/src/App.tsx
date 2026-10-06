@@ -712,6 +712,7 @@ export default function App() {
               {!rec && !remote && (
                 <SetupCard
                   health={health}
+                  hasMeetings={meetings.length > 0}
                   native={native}
                   onOpenSettings={() => goView("settings")}
                   onChanged={() => void refreshHealth()}

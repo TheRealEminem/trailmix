@@ -213,6 +213,13 @@ class RecorderCheckIn(BaseModel):
     version: str = ""
     mic_allowed: bool = True
     sound_check: dict | None = None
+    shortcut_record: str = ""
+    shortcut_mark: str = ""
+    open_at_login: bool | None = None
+
+
+class OpenAtLogin(BaseModel):
+    on: bool
 
 
 @app.post("/api/recorder/check-in")
@@ -321,6 +328,14 @@ def ollama_pull(body: PullRequest):
     if not ollama_setup.start_pull(cfg, model):
         raise HTTPException(409, "A model is already downloading")
     return ollama_setup.status(cfg)
+
+
+@app.post("/api/recorder/open-at-login", status_code=202)
+def recorder_open_at_login(body: OpenAtLogin):
+    """Start Trailmix (and its menu bar recorder) when you log in to your Mac, or stop doing so."""
+    if not recorder.request("open-at-login" if body.on else "no-open-at-login"):
+        raise HTTPException(409, "The menu bar recorder isn't running")
+    return {"ok": True}
 
 
 @app.post("/api/recorder/sound-check", status_code=202)
