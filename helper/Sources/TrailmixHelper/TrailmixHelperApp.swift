@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated {
             let model = HelperModel.shared
             model.begin()
+            Updater.shared.begin()
             guard Bundled.isBundled else { return }
             if atLogin {
                 Task { await model.startServerIfNeeded() }

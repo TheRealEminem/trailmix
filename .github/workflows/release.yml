@@ -28,9 +28,15 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: Trailmix-dmg
-          path: dist/*.dmg
+          path: |
+            dist/*.dmg
+            dist/*.sha256
       - name: Publish the release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.dmg --title "Trailmix ${GITHUB_REF_NAME#v}" --generate-notes
+        # Also a copy with a fixed name, so the download page can always link to releases/latest/download/Trailmix-arm64.dmg
+        run: |
+          cp dist/Trailmix-*-arm64.dmg dist/Trailmix-arm64.dmg
+          gh release create "$GITHUB_REF_NAME" dist/Trailmix-*-arm64.dmg dist/Trailmix-*-arm64.dmg.sha256 dist/Trailmix-arm64.dmg \
+            --title "Trailmix ${GITHUB_REF_NAME#v}" --generate-notes

@@ -214,6 +214,7 @@ export interface NativeRecorder {
   shortcut_record?: string;
   shortcut_mark?: string;
   open_at_login?: boolean | null;
+  update?: { version: string; state: "available" | "downloading" | "installing" | "failed"; progress?: number | null; error?: string; notes?: string } | null;
 }
 
 export interface SoundCheckResult {
@@ -308,6 +309,7 @@ export const api = {
   installOllama: () => request<OllamaStatus>("/ollama/install", json("POST")),
   pullOllamaModel: (model = "") => request<OllamaStatus>("/ollama/pull", json("POST", { model })),
   startNativeRecorder: () => request<{ ok: true }>("/recorder/start", json("POST")),
+  installUpdate: () => request<{ ok: true }>("/recorder/update", json("POST")),
   setOpenAtLogin: (on: boolean) => request<{ ok: true }>("/recorder/open-at-login", json("POST", { on })),
   soundCheck: () => request<{ ok: true }>("/recorder/sound-check", json("POST")),
   markLive: (id: number, note = "") => request<Bookmark>(`/meetings/${id}/mark`, json("POST", { note })),
