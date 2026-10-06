@@ -94,7 +94,7 @@ def delete_audio(meeting: dict) -> None:
 
 
 def expires_at(meeting: dict) -> str | None:
-    if RETENTION_DAYS <= 0 or meeting.get("audio_deleted"):
+    if RETENTION_DAYS <= 0 or meeting.get("audio_deleted") or meeting.get("keep_audio"):
         return None
     created = datetime.fromisoformat(meeting["created_at"].replace("Z", "+00:00"))
     return (created + timedelta(days=RETENTION_DAYS)).isoformat()

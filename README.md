@@ -137,4 +137,5 @@ headphones you avoid your mic hearing the speakers; without them echo is suppres
 ## License
 
 GNU Affero General Public License v3.0 (AGPL-3.0), copyright (C) 2026 Trailmix contributors; see [LICENSE](LICENSE). The app bundles a static ffmpeg build (GPL), the Silero VAD model weights
-(MIT, `backend/assets/silero_vad.LICENSE`) and other open-source packages under their own licenses.
+(MIT, `backend/assets/silero_vad.LICENSE`), the Geist font (SIL OFL, `backend/assets/fonts/Geist.LICENSE`) and
+other open-source packages under their own licenses.

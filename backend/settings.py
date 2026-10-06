@@ -48,10 +48,11 @@ DEFAULTS = {
     # Export
     "auto_export": False,
     "export_dir": str(Path.home() / "Documents" / "Trailmix"),
-    "export_format": "md",            # md | txt | json
+    "export_formats": ["pdf", "docx"],  # any of pdf, docx (Word), odt (OpenDocument), md, txt
     "export_summary": True,
     "export_transcript": True,
     "export_separate_files": False,   # False = one document containing both
+    "export_audio": False,            # also the recording (hard-linked: no extra space on the same disk)
 }
 SECRETS = {k for k in DEFAULTS if k.endswith("_api_key")}
 # Environment variables people already use for these keys.
@@ -62,7 +63,6 @@ _KEY_ENV = {
     "deepseek_api_key": "DEEPSEEK_API_KEY",
 }
 CHOICES = {
-    "export_format": ("md", "txt", "json"),
     "summary_provider": ("ollama", "anthropic", "openai", "gemini", "deepseek", "custom"),
     "summary_fallback": ("none", "ollama", "anthropic", "openai", "gemini", "deepseek", "custom"),
     "transcribe_engine": ("local", "remote"),
@@ -112,6 +112,8 @@ def update(changes: dict) -> dict:
             raise ValueError(f"Setting {key} must be a {type(DEFAULTS[key]).__name__}")
         if key in CHOICES and value not in CHOICES[key]:
             raise ValueError(f"{key} must be one of {', '.join(CHOICES[key])}")
+        if key == "export_formats" and any(f not in ("pdf", "docx", "odt", "md", "txt") for f in value):
+            raise ValueError("export_formats can include pdf, docx, odt, md and txt")
     if "export_dir" in changes:
         folder = Path(changes["export_dir"]).expanduser()
         if not folder.is_absolute():

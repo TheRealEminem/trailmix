@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -66,6 +67,8 @@ _ADDED_COLUMNS = {
     "qa_json": "TEXT",                               # [{q, a, provider, at}] questions asked of this meeting
     "source": "TEXT",                                # where an imported meeting came from ("granola", "paste")
     "external_id": "TEXT",                           # its id there, so it isn't imported twice
+    "uid": "TEXT",                                   # permanent id, kept in exports, so re-imports are recognised
+    "keep_audio": "INTEGER NOT NULL DEFAULT 0",      # "Keep forever": exempt from the audio clean-up, archived
 }
 
 _FTS_FIELDS = ("title", "transcript", "summary")
@@ -82,6 +85,8 @@ def init_db() -> None:
                 conn.execute(f"ALTER TABLE meetings ADD COLUMN {name} {decl}")
                 if name == "transcribed":  # rows from before this column already have a final transcript
                     conn.execute("UPDATE meetings SET transcribed = 1 WHERE transcript IS NOT NULL")
+        for (row_id,) in conn.execute("SELECT id FROM meetings WHERE uid IS NULL").fetchall():
+            conn.execute("UPDATE meetings SET uid = ? WHERE id = ?", (uuid.uuid4().hex, row_id))
         indexed = conn.execute("SELECT count(*) FROM meetings_fts").fetchone()[0]
         total = conn.execute("SELECT count(*) FROM meetings").fetchone()[0]
         if indexed != total:  # first run with search, or an index that drifted: rebuild it
@@ -117,7 +122,8 @@ def _reindex(conn, meeting_id: int) -> None:
 def create_meeting(title: str, title_auto: bool) -> int:
     with connect() as conn:
         cur = conn.execute(
-            "INSERT INTO meetings (title, title_auto, status) VALUES (?, ?, 'recording')", (title, int(title_auto))
+            "INSERT INTO meetings (title, title_auto, status, uid) VALUES (?, ?, 'recording', ?)",
+            (title, int(title_auto), uuid.uuid4().hex),
         )
         meeting_id = cur.lastrowid
         audio_dir = AUDIO_DIR / str(meeting_id)
@@ -126,16 +132,28 @@ def create_meeting(title: str, title_auto: bool) -> int:
     return meeting_id
 
 
-def create_imported_meeting(title: str, created_at: str, source: str, external_id: str | None) -> int:
-    """A meeting that arrives with its transcript (no audio, nothing recorded here)."""
+def create_imported_meeting(title: str, created_at: str, source: str, external_id: str | None, uid: str | None = None) -> int:
+    """A meeting that arrives with its transcript (no audio until the importer adds some)."""
     with connect() as conn:
         cur = conn.execute(
-            "INSERT INTO meetings (title, created_at, status, source, external_id, audio_deleted) VALUES (?, ?, 'queued', ?, ?, 1)",
-            (title, created_at, source, external_id),
+            "INSERT INTO meetings (title, created_at, status, source, external_id, audio_deleted, uid) "
+            "VALUES (?, ?, 'queued', ?, ?, 1, ?)",
+            (title, created_at, source, external_id, uid or uuid.uuid4().hex),
         )
         meeting_id = cur.lastrowid
         _reindex(conn, meeting_id)
     return meeting_id
+
+
+def meeting_by_uid(uid: str) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM meetings WHERE uid = ?", (uid,)).fetchone()
+    return dict(row) if row else None
+
+
+def all_meeting_ids() -> list[int]:
+    with connect() as conn:
+        return [r["id"] for r in conn.execute("SELECT id FROM meetings ORDER BY id")]
 
 
 def imported_ids(source: str) -> dict[str, int]:
@@ -185,7 +203,7 @@ def meetings_with_status(*statuses: str) -> list[dict]:
 def meetings_with_audio() -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, created_at, status FROM meetings WHERE audio_dir IS NOT NULL AND audio_deleted = 0"
+            "SELECT id, created_at, status FROM meetings WHERE audio_dir IS NOT NULL AND audio_deleted = 0 AND keep_audio = 0"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -194,7 +212,7 @@ _UPDATABLE = {
     "title", "status", "wait_reason", "duration_sec", "transcript", "summary", "summary_provider",
     "summary_error", "error", "has_system", "audio_deleted", "segments_json", "transcribed",
     "requested_provider", "requested_template", "title_auto", "draft_json", "exported_paths", "export_error",
-    "bookmarks_json", "speaker_names_json", "qa_json",
+    "bookmarks_json", "speaker_names_json", "qa_json", "keep_audio", "audio_dir",
 }
 _JSON_FIELDS = {"segments_json", "draft_json", "exported_paths", "bookmarks_json", "speaker_names_json", "qa_json"}
 
