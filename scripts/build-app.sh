@@ -147,8 +147,46 @@ if [ "${1:-}" = "--dmg" ]; then
   ditto "$APP" "$STAGE/Trailmix.app"
   ln -s /Applications "$STAGE/Applications"
   cp "$ROOT/scripts/Open Anyway.txt" "$STAGE/Read me first.txt" 2>/dev/null || true
+  # The window people see when they open the disk image: a background with an arrow from Trailmix to
+  # Applications and the "Open Anyway" reminder (scripts/dmg-background.svg, rendered to the .png at 2x).
+  mkdir -p "$STAGE/.background"
+  sips -s dpiWidth 144 -s dpiHeight 144 "$ROOT/scripts/dmg-background.png" --out "$STAGE/.background/background.png" >/dev/null
   rm -f "$DMG"
-  hdiutil create -quiet -volname "Trailmix" -srcfolder "$STAGE" -format ULFO -fs HFS+ "$DMG"
+  RW="$STAGE.rw.dmg"
+  MNT="$STAGE.mnt"
+  hdiutil create -quiet -volname "Trailmix" -srcfolder "$STAGE" -format UDRW -fs HFS+ -ov "$RW"
+  hdiutil attach -quiet -readwrite -noverify -noautoopen -mountpoint "$MNT" "$RW"
+  # Finder lays out the window (needs a desktop session; skipped without one, leaving a plain window).
+  if ! /usr/bin/osascript >/dev/null 2>&1 <<APPLESCRIPT
+tell application "Finder"
+  set f to (POSIX file "$MNT" as alias)
+  open f
+  set w to container window of f
+  set current view of w to icon view
+  set toolbar visible of w to false
+  set statusbar visible of w to false
+  set bounds of w to {200, 120, 860, 568}
+  set opts to icon view options of w
+  set arrangement of opts to not arranged
+  set icon size of opts to 100
+  set text size of opts to 13
+  set background picture of opts to file ".background:background.png" of f
+  set position of item "Trailmix.app" of f to {165, 165}
+  set position of item "Applications" of f to {495, 165}
+  set position of item "Read me first.txt" of f to {600, 285}
+  update f without registering applications
+  delay 1
+  close w
+end tell
+APPLESCRIPT
+  then
+    echo "  (Couldn't lay out the disk image window; it will look plain.)"
+  fi
+  chflags hidden "$MNT/.background" "$MNT/.fseventsd" 2>/dev/null || true  # for people who show hidden files
+  sync
+  hdiutil detach -quiet "$MNT" || hdiutil detach -quiet -force "$MNT"
+  hdiutil convert -quiet "$RW" -format ULFO -o "$DMG"
+  rm -f "$RW"
   # The app's updater checks a download against this before installing it.
   (cd "$OUT" && shasum -a 256 "$(basename "$DMG")" >"$(basename "$DMG").sha256")
   du -sh "$DMG" | awk -v dmg="$DMG" '{print "› Built " dmg " (" $1 ")"}'
