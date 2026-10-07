@@ -283,7 +283,7 @@ def list_models(pid: str, cfg: dict) -> list[str]:
         tags = _ollama_tags(cfg)
         if not tags:
             raise LLMError(f"Ollama isn't reachable at {cfg['ollama_url']}")
-        return [m["name"] for m in tags]
+        return [m["name"] for m in tags if "embed" not in m["name"].lower()]  # embedding models can't write notes
     if pid == "anthropic":
         import anthropic
 
