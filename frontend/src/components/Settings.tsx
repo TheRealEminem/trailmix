@@ -255,6 +255,71 @@ const PROVIDER_META: Record<
   },
 };
 
+/** A dropdown of the provider's models (a native menu, which works in the app window, unlike a suggestion
+ *  list), plus "Other…" to type an id that isn't listed. */
+function ModelPicker({
+  label,
+  value,
+  models,
+  local,
+  onSave,
+  onLoad,
+}: {
+  label: string;
+  value: string;
+  models: string[];
+  local: boolean;
+  onSave: (v: string) => void;
+  onLoad: () => void;
+}) {
+  const listed = !value || models.includes(value);
+  const [typing, setTyping] = useState(false);
+  const options =
+    value && !models.includes(value) ? [value, ...models] : models;
+  return (
+    <div className="flex w-full items-center gap-2 sm:w-auto">
+      {typing || (!models.length && !local) ? (
+        <TextField
+          label={label}
+          value={value}
+          onSave={(v) => {
+            onSave(v);
+            setTyping(false);
+          }}
+          mono
+          className="min-w-0 flex-1 sm:w-56 sm:flex-none"
+          placeholder={local ? "automatic" : "model id"}
+        />
+      ) : (
+        <select
+          aria-label={label}
+          value={value}
+          onChange={(e) =>
+            e.target.value === "\u0000other"
+              ? setTyping(true)
+              : onSave(e.target.value)
+          }
+          className="field min-w-0 flex-1 font-mono text-hint sm:w-56 sm:flex-none"
+        >
+          {(local || !value) && (
+            <option value="">{local ? "Automatic" : "Pick a model"}</option>
+          )}
+          {options.map((m) => (
+            <option key={m} value={m}>
+              {m}
+              {!listed && m === value ? " (not found)" : ""}
+            </option>
+          ))}
+          <option value={"\u0000other"}>Other…</option>
+        </select>
+      )}
+      <button className="btn btn-sm btn-ghost" onClick={onLoad}>
+        {models.length ? "Refresh" : "Load models"}
+      </button>
+    </div>
+  );
+}
+
 function ProviderCard({
   id,
   s,
@@ -279,6 +344,14 @@ function ProviderCard({
   const label = id === "custom" ? s.custom_name || meta.label : meta.label;
   const local = id === "ollama";
   const ready = local || (id === "custom" ? !!s.custom_base_url : !!hint);
+
+  useEffect(() => {
+    if (!open || !ready || models.length) return;
+    api
+      .providerModels(id)
+      .then((r) => setModels(r.models))
+      .catch(() => {}); // "Load models" shows the reason
+  }, [open, ready, id, models.length]);
 
   const run = async (fn: () => Promise<string>) => {
     setResult("busy");
@@ -403,34 +476,20 @@ function ProviderCard({
               label="Model"
               hint={local ? "Empty uses the first installed model." : undefined}
             >
-              <div className="flex w-full items-center gap-2 sm:w-auto">
-                <TextField
-                  label={`${label} model`}
-                  value={String(s[modelKey] ?? "")}
-                  onSave={(v) => save({ [modelKey]: v } as Partial<SettingsT>)}
-                  mono
-                  className="min-w-0 flex-1 sm:w-56 sm:flex-none"
-                  list={`models-${id}`}
-                  placeholder={local ? "automatic" : "model id"}
-                />
-                <datalist id={`models-${id}`}>
-                  {models.map((m) => (
-                    <option key={m} value={m} />
-                  ))}
-                </datalist>
-                <button
-                  className="btn btn-sm btn-ghost"
-                  onClick={() =>
-                    void run(async () => {
-                      const r = await api.providerModels(id);
-                      setModels(r.models);
-                      return `Found ${r.models.length} models. Click the Model field to pick one.`;
-                    })
-                  }
-                >
-                  Load models
-                </button>
-              </div>
+              <ModelPicker
+                label={`${label} model`}
+                value={String(s[modelKey] ?? "")}
+                models={models}
+                local={local}
+                onSave={(v) => save({ [modelKey]: v } as Partial<SettingsT>)}
+                onLoad={() =>
+                  void run(async () => {
+                    const r = await api.providerModels(id);
+                    setModels(r.models);
+                    return `Found ${r.models.length} models.`;
+                  })
+                }
+              />
             </Row>
             <div className="py-3.5">
               <button
