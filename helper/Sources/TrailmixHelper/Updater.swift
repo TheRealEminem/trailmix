@@ -34,18 +34,38 @@ final class Updater: ObservableObject {
         let notes: URL?
         let dmg: URL
         let checksum: URL?
+        let prerelease: Bool
     }
 
     static let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
-    /// Where releases are looked up: TRAILMIX_UPDATE_URL (tests), else the repo baked into Info.plist.
-    private static var feed: URL? {
+
+    /// Beta updates: also offer pre-releases, the versions that go out to testers before everyone else.
+    var beta: Bool {
+        get { UserDefaults.standard.bool(forKey: "betaUpdates") }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "betaUpdates")
+            if !newValue, case .available = state, latest?.prerelease == true { latest = nil; state = .idle }
+            Task { await check() }
+        }
+    }
+
+    /// Where releases are looked up: TRAILMIX_UPDATE_URL (tests), else the repo baked into Info.plist. GitHub's
+    /// "latest" never includes pre-releases; with beta updates the recent releases are listed instead.
+    private var feed: URL? {
         if let override = ProcessInfo.processInfo.environment["TRAILMIX_UPDATE_URL"] { return URL(string: override) }
-        guard let repo = Bundle.main.object(forInfoDictionaryKey: "TrailmixUpdateRepo") as? String, !repo.isEmpty else { return nil }
-        return URL(string: "https://api.github.com/repos/\(repo)/releases/latest")
+        guard let repo = Self.repo else { return nil }
+        return URL(string: beta ? "https://api.github.com/repos/\(repo)/releases?per_page=20"
+                                : "https://api.github.com/repos/\(repo)/releases/latest")
+    }
+
+    private static var repo: String? {
+        (Bundle.main.object(forInfoDictionaryKey: "TrailmixUpdateRepo") as? String).flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// Only the full Trailmix.app updates itself (not a development build or the thin helper).
-    static var enabled: Bool { Bundled.isBundled && feed != nil }
+    static var enabled: Bool {
+        Bundled.isBundled && (repo != nil || ProcessInfo.processInfo.environment["TRAILMIX_UPDATE_URL"] != nil)
+    }
 
     func begin() {
         guard Self.enabled else { return }
@@ -64,7 +84,8 @@ final class Updater: ObservableObject {
     /// build that doesn't update itself.
     var report: [String: Any]? {
         guard Self.enabled else { return nil }
-        var out: [String: Any] = ["current": Self.current, "checked_at": checkedAt.map { $0.timeIntervalSince1970 } ?? NSNull()]
+        var out: [String: Any] = ["current": Self.current, "checked_at": checkedAt.map { $0.timeIntervalSince1970 } ?? NSNull(),
+                                  "beta": beta, "prerelease": latest?.prerelease ?? false]
         switch state {
         case .idle: out["state"] = "idle"
         case .checking: out["state"] = "checking"
@@ -80,7 +101,7 @@ final class Updater: ObservableObject {
 
     /// Looks for a new version. `manual`: you asked (Help → Check for Updates…), so show "Checking…" meanwhile.
     func check(manual: Bool = false) async {
-        guard let feed = Self.feed else { return }
+        guard let feed else { return }
         if case .downloading = state { return }
         if case .installing = state { return }
         if manual, latest == nil { state = .checking }
@@ -88,7 +109,8 @@ final class Updater: ObservableObject {
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200,
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let parsed = try? JSONSerialization.jsonObject(with: data),
+              let json = Self.newest(parsed, beta: beta),
               let tag = json["tag_name"] as? String else {
             if latest == nil, manual || state == .checking { state = .offline }
             return
@@ -106,8 +128,19 @@ final class Updater: ObservableObject {
             return
         }
         latest = Release(version: version, notes: (json["html_url"] as? String).flatMap(URL.init(string:)), dmg: dmg,
-                         checksum: asset("-arm64.dmg.sha256"))
+                         checksum: asset("-arm64.dmg.sha256"), prerelease: json["prerelease"] as? Bool ?? false)
         state = .available(version)
+    }
+
+    /// The release to offer from GitHub's answer: one release ("latest"), or a list (beta updates) from which
+    /// the highest version that isn't a draft (and, without beta updates, isn't a pre-release).
+    static func newest(_ parsed: Any, beta: Bool) -> [String: Any]? {
+        if let one = parsed as? [String: Any] { return one }
+        let usable = (parsed as? [[String: Any]] ?? []).filter {
+            $0["draft"] as? Bool != true && (beta || $0["prerelease"] as? Bool != true) && $0["tag_name"] is String
+        }
+        func version(_ r: [String: Any]) -> String { String((r["tag_name"] as! String).trimmingPrefix("v")) }
+        return usable.max { isNewer(version($1), than: version($0)) }
     }
 
     static func isNewer(_ a: String, than b: String) -> Bool {

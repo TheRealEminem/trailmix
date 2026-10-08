@@ -1,6 +1,10 @@
-# Builds the Mac app and publishes it as a GitHub Release.
-#   git tag v0.1.0 && git push --tags      -> builds Trailmix-0.1.0-arm64.dmg and attaches it to a release
-#   Actions tab -> "Build Mac app" -> Run   -> builds it and keeps it as a downloadable artifact only
+# Builds the Mac app, tries it end to end, and publishes it as a *pre-release* (a beta).
+#   git tag v0.1.0 && git push --tags      -> builds, tests, publishes Trailmix-0.1.0-arm64.dmg as a pre-release
+#   Actions tab -> "Build Mac app" -> Run   -> builds and tests it, keeps it as a downloadable artifact only
+#
+# Nothing is published unless scripts/smoke-test.sh passes: as a fresh install, and as an update from the
+# current release (installed, then updated by its own auto-updater). A pre-release only reaches people with
+# "Beta updates" on; once it's been tried, scripts/promote.sh v0.1.0 makes it the release everyone gets.
 name: Build Mac app
 
 on:
@@ -31,12 +35,25 @@ jobs:
           path: |
             dist/*.dmg
             dist/*.sha256
+      - name: "Smoke test: a fresh install"
+        run: scripts/smoke-test.sh dist/Trailmix.app
+      - name: "Smoke test: updating from the current release"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p previous
+          if gh release download --repo "$GITHUB_REPOSITORY" --pattern 'Trailmix-arm64.dmg' --dir previous; then
+            scripts/smoke-test.sh dist/Trailmix.app dist/Trailmix-*-arm64.dmg previous/Trailmix-arm64.dmg
+          else
+            echo "No earlier release to update from"
+          fi
       - name: Publish the release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # Also a copy with a fixed name, so the download page can always link to releases/latest/download/Trailmix-arm64.dmg
+        # ("latest" skips pre-releases, so the page keeps offering the last promoted version)
         run: |
           cp dist/Trailmix-*-arm64.dmg dist/Trailmix-arm64.dmg
           gh release create "$GITHUB_REF_NAME" dist/Trailmix-*-arm64.dmg dist/Trailmix-*-arm64.dmg.sha256 dist/Trailmix-arm64.dmg \
-            --title "Trailmix ${GITHUB_REF_NAME#v}" --generate-notes
+            --title "Trailmix ${GITHUB_REF_NAME#v}" --generate-notes --prerelease

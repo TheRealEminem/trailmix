@@ -393,6 +393,14 @@ def recorder_update():
     return {"ok": True}
 
 
+@app.post("/api/recorder/beta-updates", status_code=202)
+def recorder_beta_updates(body: OpenAtLogin):
+    """Beta updates: offer pre-releases (new versions being tried out before everyone gets them)."""
+    if not recorder.request("beta-updates" if body.on else "no-beta-updates"):
+        raise HTTPException(409, "The menu bar recorder isn't running")
+    return {"ok": True}
+
+
 @app.post("/api/recorder/check-update", status_code=202)
 def recorder_check_update():
     """Ask Trailmix.app to look for a new version now (the answer arrives with its next check-in)."""
