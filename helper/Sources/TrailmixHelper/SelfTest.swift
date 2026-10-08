@@ -23,11 +23,15 @@ enum SelfTest {
             if rest.count > 2 { sources.append((Wire.meetingAudio, try FileSource(path: rest[2]))) }
             return sources
         }
+        _ = NSApplication.shared  // the window step needs a real app (WebKit)
+        NSApp.setActivationPolicy(.accessory)
         Task {
             await check(model)
+            if !args.contains("--no-window") { await windowRecord(model) }
+            print(failures == 0 ? "All checks passed." : "\(failures) check(s) failed.")
             exit(failures == 0 ? 0 : 1)
         }
-        RunLoop.main.run()
+        NSApp.run()
     }
 
     private static var failures = 0
@@ -89,7 +93,76 @@ enum SelfTest {
         try? await Task.sleep(for: .seconds(2))
         model.toggle()
         expect(await waitUntil(15) { model.phase == .idle }, "stopped cleanly")
-        print(failures == 0 ? "All checks passed." : "\(failures) check(s) failed.")
+    }
+
+    private static func get(_ url: URL) async -> Data? {
+        guard let (data, response) = try? await URLSession.shared.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return data
+    }
+
+    private static func waitUntilAsync(_ seconds: Double, _ condition: () async -> Bool) async -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if await condition() { return true }
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+        return await condition()
+    }
+
+    /// The real Trailmix window and page, the way you use them: Record clicked in the window right after a
+    /// (re)start, before the menu bar recorder has checked in; the recording must still go through the
+    /// recorder, never the page's own capture. Then the transcript (made while recording) must arrive.
+    private static func windowRecord(_ model: HelperModel) async {
+        let base = model.serverOverride!
+        print("6. Record in the real window, clicked before the recorder has checked in")
+        var put = URLRequest(url: base.appendingPathComponent("api/settings"))
+        put.httpMethod = "PUT"
+        put.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        put.httpBody = Data(#"{"live_final": true}"#.utf8)
+        _ = try? await URLSession.shared.data(for: put)
+
+        MainWindow.shared.offscreen = true
+        MainWindow.shared.show(base)
+        let loaded = await waitUntilAsync(40) { await MainWindow.shared.evaluate("!!document.querySelector('[data-testid=record]')") == "true" }
+        expect(loaded, "the window shows the Record button")
+
+        // The page the window runs must be the one the server has now (not a cached older version).
+        let html = String(data: await get(base) ?? Data(), encoding: .utf8) ?? ""
+        let script = await MainWindow.shared.evaluate("document.querySelector('script[src*=\"assets/\"]')?.getAttribute('src')")
+        let src = (try? JSONSerialization.jsonObject(with: Data(script.utf8), options: .fragmentsAllowed)) as? String ?? "?"
+        expect(src != "?" && html.contains(src), "the window runs the current web app (\(src))")
+
+        try? await Task.sleep(for: .seconds(6))  // the server now considers the recorder gone, as after a restart
+        _ = await MainWindow.shared.evaluate("document.querySelector('[data-testid=record]').click()")
+        let checkIns = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))  // the recorder comes back a few seconds later
+            while !Task.isCancelled {
+                await model.checkIn()
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+        expect(await waitUntil(30) { model.phase == .recording }, "the recorder started (\(model.error ?? "no error"))")
+        let id = model.meetingID ?? -1
+        let pageError = await MainWindow.shared.evaluate("document.body.innerText.includes(\"Couldn't start recording\")")
+        expect(pageError == "false", "the window shows no recording error")
+        try? await Task.sleep(for: .seconds(8))
+        let stopShown = await waitUntilAsync(10) { await MainWindow.shared.evaluate("!!document.querySelector('[data-testid=stop]')") == "true" }
+        expect(stopShown, "the window shows the recording")
+        _ = await MainWindow.shared.evaluate("document.querySelector('[data-testid=stop]').click()")
+        expect(await waitUntil(20) { model.phase == .idle }, "Stop in the window stopped the recorder")
+        checkIns.cancel()
+
+        var transcript = ""
+        let done = await waitUntilAsync(180) {
+            guard let data = await get(base.appendingPathComponent("api/meetings/\(id)")),
+                  let m = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+            if m["status"] as? String == "error" { transcript = "error: \(m["error"] ?? "")"; return true }
+            transcript = m["transcript"] as? String ?? ""
+            return !transcript.isEmpty
+        }
+        expect(done && !transcript.hasPrefix("error") && !transcript.isEmpty,
+               "the transcript arrived: \(transcript.prefix(80).replacingOccurrences(of: "\n", with: " "))")
     }
 
     /// Records other apps' audio for a few seconds and reports what arrived: the formats and buffer layout

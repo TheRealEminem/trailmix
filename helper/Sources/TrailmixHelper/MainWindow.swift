@@ -166,6 +166,17 @@ final class MainWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKNavigationDe
         return String(data: data ?? Data("[\"\"]".utf8), encoding: .utf8).map { String($0.dropFirst().dropLast()) } ?? "\"\""
     }
 
+    // MARK: Tests
+
+    /// Runs JavaScript in the page and returns its result as JSON text ("null" if there's no page or it threw).
+    func evaluate(_ script: String) async -> String {
+        guard let web = webView else { return "null" }
+        let wrapped = "(() => { try { return JSON.stringify((() => { return \(script) })()) ?? 'null' } catch (e) { return 'null' } })()"
+        return await withCheckedContinuation { done in
+            web.evaluateJavaScript(wrapped) { result, _ in done.resume(returning: result as? String ?? "null") }
+        }
+    }
+
     // MARK: Snapshots (tests)
 
     /// Waits for the page to settle, then saves what the window shows as a PNG.
