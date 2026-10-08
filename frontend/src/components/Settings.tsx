@@ -266,7 +266,11 @@ const PROVIDER_META: Record<
 function UpdatesSection({ native }: { native: NativeRecorder | null }) {
   const [error, setError] = useState<string | null>(null);
   const [asked, setAsked] = useState(false);
+  const [beta, setBeta] = useState<boolean | null>(null); // until the recorder reports the change
   const u = native?.update ?? null;
+  useEffect(() => {
+    if (beta !== null && u?.beta === beta) setBeta(null);
+  }, [beta, u?.beta]);
   const act = (fn: () => Promise<unknown>) => {
     setError(null);
     fn().catch((e) => setError((e as Error).message));
@@ -288,7 +292,8 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
   else if (u.state === "available")
     status = (
       <span className="font-medium text-forest-deep">
-        Trailmix {u.version} is available.
+        Trailmix {u.version}
+        {u.prerelease ? " (beta)" : ""} is available.
       </span>
     );
   else if (u.state === "downloading")
@@ -354,6 +359,18 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
             </span>
           )}
         </div>
+      )}
+      {u && (
+        <SwitchRow
+          icon={<SparkleIcon size={16} />}
+          label="Beta updates"
+          hint="Get new versions a few days early, before everyone else, to try them out. They may have rough edges."
+          checked={beta ?? !!u.beta}
+          onChange={(v) => {
+            setBeta(v);
+            act(() => api.setBetaUpdates(v));
+          }}
+        />
       )}
       {error && <p className="pb-3.5 text-hint text-trail-deep">{error}</p>}
     </Section>

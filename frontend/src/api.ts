@@ -233,6 +233,8 @@ export interface UpdateInfo {
   error?: string;
   notes?: string;
   checked_at?: number | null;
+  beta?: boolean;
+  prerelease?: boolean;
 }
 
 export interface SoundCheckResult {
@@ -352,6 +354,7 @@ export const api = {
   startNativeRecorder: () => request<{ ok: true }>("/recorder/start", json("POST")),
   installUpdate: () => request<{ ok: true }>("/recorder/update", json("POST")),
   checkForUpdate: () => request<{ ok: true }>("/recorder/check-update", json("POST")),
+  setBetaUpdates: (on: boolean) => request<{ ok: true }>("/recorder/beta-updates", json("POST", { on })),
   setOpenAtLogin: (on: boolean) => request<{ ok: true }>("/recorder/open-at-login", json("POST", { on })),
   soundCheck: () => request<{ ok: true }>("/recorder/sound-check", json("POST")),
   markLive: (id: number, note = "") => request<Bookmark>(`/meetings/${id}/mark`, json("POST", { note })),

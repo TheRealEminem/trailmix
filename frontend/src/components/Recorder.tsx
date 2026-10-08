@@ -138,6 +138,7 @@ function RecordControl({ p }: { p: Props }) {
           </button>
           <button
             onClick={p.onStop}
+            data-testid="stop"
             disabled={p.stopping}
             className="btn btn-md btn-record ml-1 px-4"
           >
@@ -153,6 +154,7 @@ function RecordControl({ p }: { p: Props }) {
         <button
           key="idle"
           onClick={p.onStart}
+          data-testid="record"
           disabled={disabled}
           className="group flex h-[50px] animate-fade-in items-center gap-2.5 px-[26px] text-body font-semibold outline-none disabled:cursor-not-allowed"
         >
@@ -413,7 +415,9 @@ export default function Recorder(p: Props) {
                 <details className="group py-3">
                   <summary className="cursor-pointer list-none text-label font-medium text-ink [&::-webkit-details-marker]:hidden">
                     Test your audio{" "}
-                    <span className="font-normal text-ink-soft group-open:hidden">· plays a chime and checks both sides are heard</span>
+                    <span className="font-normal text-ink-soft group-open:hidden">
+                      · plays a chime and checks both sides are heard
+                    </span>
                   </summary>
                   <div className="mt-2">
                     <SoundCheck native={p.native} />
