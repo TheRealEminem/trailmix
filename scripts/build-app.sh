@@ -152,10 +152,20 @@ if [ "${1:-}" = "--dmg" ]; then
   mkdir -p "$STAGE/.background"
   sips -s dpiWidth 144 -s dpiHeight 144 "$ROOT/scripts/dmg-background.png" --out "$STAGE/.background/background.png" >/dev/null
   rm -f "$DMG"
+  # hdiutil fails now and then on build machines ("Resource busy"): try each step a few times, and say so.
+  retry() {
+    for attempt in 1 2 3 4; do
+      "$@" && return 0
+      echo "  ($1 ${2:-} failed, attempt $attempt; trying again)" >&2
+      sleep $((attempt * 5))
+    done
+    echo "  $* failed" >&2
+    return 1
+  }
   RW="$STAGE.rw.dmg"
   MNT="$STAGE.mnt"
-  hdiutil create -quiet -volname "Trailmix" -srcfolder "$STAGE" -format UDRW -fs HFS+ -ov "$RW"
-  hdiutil attach -quiet -readwrite -noverify -noautoopen -mountpoint "$MNT" "$RW"
+  retry hdiutil create -quiet -volname "Trailmix" -srcfolder "$STAGE" -format UDRW -fs HFS+ -ov "$RW"
+  retry hdiutil attach -quiet -readwrite -noverify -noautoopen -mountpoint "$MNT" "$RW"
   # Finder lays out the window (needs a desktop session; skipped without one, leaving a plain window).
   if ! /usr/bin/osascript >/dev/null 2>&1 <<APPLESCRIPT
 tell application "Finder"
@@ -184,8 +194,8 @@ APPLESCRIPT
   fi
   chflags hidden "$MNT/.background" "$MNT/.fseventsd" 2>/dev/null || true  # for people who show hidden files
   sync
-  hdiutil detach -quiet "$MNT" || hdiutil detach -quiet -force "$MNT"
-  hdiutil convert -quiet "$RW" -format ULFO -o "$DMG"
+  hdiutil detach -quiet "$MNT" || retry hdiutil detach -quiet -force "$MNT"
+  retry hdiutil convert -quiet "$RW" -format ULFO -o "$DMG" -ov
   rm -f "$RW"
   # The app's updater checks a download against this before installing it.
   (cd "$OUT" && shasum -a 256 "$(basename "$DMG")" >"$(basename "$DMG").sha256")
