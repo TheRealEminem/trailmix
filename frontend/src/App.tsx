@@ -360,10 +360,20 @@ export default function App() {
     setMarks([]);
     setElapsed(0);
     setStarting(true);
-    if (native) {
+    // In the app window, always record through the menu bar recorder (the window can't capture other apps'
+    // audio itself). It may not have checked in yet, e.g. just after Trailmix started or updated: keep asking.
+    if (native || inApp) {
       // The menu bar recorder picks this up within a second; the live poll then shows the recording here.
       try {
-        await api.startNativeRecorder();
+        for (let tries = 0; ; tries++) {
+          try {
+            await api.startNativeRecorder();
+            break;
+          } catch (e) {
+            if (!inApp || tries >= 10) throw e;
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+        }
         const deadline = Date.now() + 15000;
         while (Date.now() < deadline) {
           const live = (await api.live())[0];

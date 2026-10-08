@@ -83,22 +83,9 @@ export async function startRecording(opts: Options): Promise<ActiveRecording> {
   let ws: WebSocket | undefined;
 
   try {
-    const processing = { echoCancellation: true, noiseSuppression: true };
-    let mic: MediaStream;
+    // The screen/tab picker must be asked for first, straight from the click: after another await (the mic
+    // prompt) Safari and the app's web view refuse it ("must be called from a user gesture handler").
     let warning: string | undefined;
-    try {
-      mic = await navigator.mediaDevices.getUserMedia({
-        audio: opts.micDeviceId ? { ...processing, deviceId: { exact: opts.micDeviceId } } : processing,
-      });
-    } catch (e) {
-      // The chosen mic was unplugged / is out of range: fall back rather than fail the meeting.
-      if (!opts.micDeviceId || !["OverconstrainedError", "NotFoundError"].includes((e as Error).name)) throw e;
-      mic = await navigator.mediaDevices.getUserMedia({ audio: processing });
-      warning = "The selected microphone isn't available, so the default microphone is being used.";
-    }
-    streams.push(mic);
-    const micLabel = mic.getAudioTracks()[0]?.label || "Default microphone";
-
     let display: MediaStream | undefined;
     if (opts.includeMeetingAudio) {
       // Browsers require video: true for getDisplayMedia; the video is never sent anywhere.
@@ -111,6 +98,23 @@ export async function startRecording(opts: Options): Promise<ActiveRecording> {
         display = undefined;
       }
     }
+
+    const processing = { echoCancellation: true, noiseSuppression: true };
+    let mic: MediaStream;
+    try {
+      mic = await navigator.mediaDevices.getUserMedia({
+        audio: opts.micDeviceId ? { ...processing, deviceId: { exact: opts.micDeviceId } } : processing,
+      });
+    } catch (e) {
+      // The chosen mic was unplugged / is out of range: fall back rather than fail the meeting.
+      if (!opts.micDeviceId || !["OverconstrainedError", "NotFoundError"].includes((e as Error).name)) throw e;
+      mic = await navigator.mediaDevices.getUserMedia({ audio: processing });
+      warning =
+        (warning ? warning + " " : "") +
+        "The selected microphone isn't available, so the default microphone is being used.";
+    }
+    streams.push(mic);
+    const micLabel = mic.getAudioTracks()[0]?.label || "Default microphone";
 
     const { id: meetingId } = await api.startMeeting();
     ws = new WebSocket(api.streamUrl(meetingId, opts.liveDraft));
