@@ -926,5 +926,16 @@ def delete_meeting(meeting_id: int):
 
 
 # The built web app, when present (./trailmix builds it). Registered last so /api routes win.
+class _UI(StaticFiles):
+    """The web app. Its page must never be cached (an update changes which scripts it loads, and a stale copy
+    keeps running the old version); the scripts it loads have their content hash in the name, so those can be."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        immutable = path.startswith("assets/") and response.status_code == 200
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable" if immutable else "no-cache"
+        return response
+
+
 if UI_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=UI_DIR, html=True), name="ui")
+    app.mount("/", _UI(directory=UI_DIR, html=True), name="ui")
