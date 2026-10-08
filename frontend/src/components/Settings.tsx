@@ -5,6 +5,7 @@ import type {
   ExportFormat,
   ExportJob,
   Health,
+  NativeRecorder,
   ProviderId,
   Settings as SettingsT,
 } from "../api";
@@ -42,6 +43,7 @@ import {
 
 interface Props {
   health: Health | null;
+  native: NativeRecorder | null;
   theme: ThemePref;
   onTheme: (t: ThemePref) => void;
   onChanged: () => void;
@@ -54,17 +56,20 @@ function Section({
   title,
   blurb,
   delay = 0,
+  id,
   children,
 }: {
   icon: ReactNode;
   title: string;
   blurb: string;
   delay?: number;
+  id?: string;
   children: ReactNode;
 }) {
   return (
     <section
-      className="mb-10 animate-enter"
+      id={id}
+      className="mb-10 animate-enter scroll-mt-6"
       style={{ animationDelay: `${delay}ms` } as CSSProperties}
     >
       <div className="mb-3 flex items-start gap-3 px-1">
@@ -257,6 +262,104 @@ const PROVIDER_META: Record<
 
 /** A dropdown of the provider's models (a native menu, which works in the app window, unlike a suggestion
  *  list), plus "Other…" to type an id that isn't listed. */
+/** Settings → Updates: which version this is, and checking for and installing a new one. */
+function UpdatesSection({ native }: { native: NativeRecorder | null }) {
+  const [error, setError] = useState<string | null>(null);
+  const [asked, setAsked] = useState(false);
+  const u = native?.update ?? null;
+  const act = (fn: () => Promise<unknown>) => {
+    setError(null);
+    fn().catch((e) => setError((e as Error).message));
+  };
+  const checking = u?.state === "checking" || (asked && !u);
+  const busy = u?.state === "downloading" || u?.state === "installing";
+  const checked = u?.checked_at
+    ? new Date(u.checked_at * 1000).toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
+    : null;
+
+  let status: ReactNode;
+  if (!u)
+    status = native
+      ? "This copy of Trailmix doesn't update itself (a development build)."
+      : "Open Trailmix.app to check for updates.";
+  else if (u.state === "available")
+    status = (
+      <span className="font-medium text-forest-deep">
+        Trailmix {u.version} is available.
+      </span>
+    );
+  else if (u.state === "downloading")
+    status = `Downloading Trailmix ${u.version}${u.progress != null ? ` · ${Math.round(u.progress * 100)}%` : "…"}`;
+  else if (u.state === "installing")
+    status = `Installing Trailmix ${u.version}. It restarts in a moment…`;
+  else if (u.state === "failed")
+    status = (
+      <span className="text-trail-deep">Couldn't update: {u.error}</span>
+    );
+  else if (u.state === "checking") status = "Checking for updates…";
+  else if (u.state === "offline")
+    status = "Couldn't reach GitHub to check. Are you online?";
+  else if (u.state === "up-to-date") status = "You're up to date.";
+  else status = "Trailmix checks for updates a few times a day.";
+
+  return (
+    <Section
+      id="updates"
+      icon={<DownloadIcon size={16} />}
+      title="Updates"
+      blurb="New versions install from here (or Help → Check for Updates…) in about a minute."
+      delay={260}
+    >
+      <Row
+        label={u?.current ? `Trailmix ${u.current}` : "Version"}
+        hint={checked ? `Last checked ${checked}.` : undefined}
+      >
+        <span className="text-ui text-ink-soft">{status}</span>
+      </Row>
+      {u && (
+        <div className="flex flex-wrap items-center gap-2 py-3.5">
+          {u.state === "available" || u.state === "failed" ? (
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={() => act(api.installUpdate)}
+            >
+              <DownloadIcon size={16} />
+              {u.state === "failed" ? "Try again" : `Update to ${u.version}`}
+            </button>
+          ) : (
+            <button
+              className="btn btn-sm btn-soft"
+              disabled={busy || checking}
+              onClick={() => {
+                setAsked(true);
+                act(api.checkForUpdate);
+              }}
+            >
+              {checking ? <Spinner /> : null}
+              Check for updates
+            </button>
+          )}
+          {u.notes && (
+            <a className="btn btn-sm btn-ghost" href={u.notes}>
+              What's new
+            </a>
+          )}
+          {u.state === "available" && (
+            <span className="text-hint text-ink-soft">
+              Trailmix restarts afterwards, and macOS asks for the microphone
+              and system audio again.
+            </span>
+          )}
+        </div>
+      )}
+      {error && <p className="pb-3.5 text-hint text-trail-deep">{error}</p>}
+    </Section>
+  );
+}
+
 function ModelPicker({
   label,
   value,
@@ -545,6 +648,7 @@ const PROVIDER_IDS: ProviderId[] = [
 
 export default function Settings({
   health,
+  native,
   theme,
   onTheme,
   onChanged,
@@ -731,8 +835,9 @@ export default function Settings({
           onChange={(v) => save({ auto_title: v })}
         />
         <p className="py-3.5 text-hint text-ink-soft">
-          Either way, if memory is running low Trailmix checks with you before
-          loading a model on this Mac.
+          Short on free memory, Trailmix carries on and lets macOS use swap. It
+          only waits (and asks) when that would be dire: under 10% of the disk
+          free, or macOS reporting critical memory pressure.
         </p>
       </Section>
 
@@ -843,6 +948,19 @@ export default function Settings({
             ]}
           />
         </Row>
+        <SwitchRow
+          icon={<LinesIcon size={16} />}
+          label="Final transcript while recording"
+          hint={
+            s.live_final
+              ? s.transcribe_engine === "local"
+                ? "The accurate model transcribes as you talk (it uses about 2 GB of memory during calls), so the transcript is ready when you stop and the summary starts straight away."
+                : "The transcription model works as you talk, so the transcript is ready when you stop."
+              : "Off: a quick, rougher draft while recording, and the accurate transcript is made after the meeting."
+          }
+          checked={s.live_final}
+          onChange={(v) => save({ live_final: v })}
+        />
         {s.transcribe_engine === "remote" && (
           <>
             <div className="py-3.5">
@@ -914,18 +1032,20 @@ export default function Settings({
                 className="w-full sm:w-56"
               />
             </Row>
-            <Row
-              label="Live draft model"
-              hint="Smaller and faster is fine. Empty uses the model above."
-            >
-              <TextField
+            {!s.live_final && (
+              <Row
                 label="Live draft model"
-                value={s.transcribe_live_model}
-                onSave={(v) => save({ transcribe_live_model: v })}
-                mono
-                className="w-full sm:w-56"
-              />
-            </Row>
+                hint="Smaller and faster is fine. Empty uses the model above."
+              >
+                <TextField
+                  label="Live draft model"
+                  value={s.transcribe_live_model}
+                  onSave={(v) => save({ transcribe_live_model: v })}
+                  mono
+                  className="w-full sm:w-56"
+                />
+              </Row>
+            )}
           </>
         )}
         <div className="py-3.5">
@@ -1060,6 +1180,8 @@ export default function Settings({
           />
         </Row>
       </Section>
+
+      <UpdatesSection native={native} />
 
       <Section
         icon={<PowerIcon size={16} />}

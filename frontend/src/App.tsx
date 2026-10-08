@@ -311,8 +311,19 @@ export default function App() {
       const m = location.hash.match(/^#meeting-(\d+)$/);
       const page = location.hash.slice(1);
       if (m) openMeeting(Number(m[1]));
-      else if (["import", "settings", "tasks", "ask"].includes(page)) setView(page as View);
-      else return;
+      else if (["import", "settings", "tasks", "ask"].includes(page))
+        setView(page as View);
+      else if (page === "updates") {
+        // Help → Check for Updates…: Settings, scrolled to the Updates section
+        setView("settings");
+        setTimeout(
+          () =>
+            document
+              .getElementById("updates")
+              ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+          150,
+        );
+      } else return;
       history.replaceState(null, "", location.pathname + location.search);
     };
     follow();
@@ -676,6 +687,7 @@ export default function App() {
           {view === "settings" ? (
             <Settings
               health={health}
+              native={native}
               theme={theme.pref}
               onTheme={theme.setPref}
               onChanged={() => void refreshHealth()}
@@ -691,7 +703,11 @@ export default function App() {
               onError={fail}
             />
           ) : view === "import" ? (
-            <ImportPanel onImported={() => void refreshList()} onOpenMeeting={openMeeting} onError={fail} />
+            <ImportPanel
+              onImported={() => void refreshList()}
+              onOpenMeeting={openMeeting}
+              onError={fail}
+            />
           ) : view === "ask" ? (
             <div>
               <PageHeader
@@ -754,7 +770,12 @@ export default function App() {
               onDelete={() => void handleDelete(meeting.id, meeting.title)}
               onDeleteAudio={() => void handleDeleteAudio()}
               onRetranscribe={() => void handleRetranscribe()}
-              onKeepForever={(keep) => void guarded(() => api.keepForever(meeting.id, keep), meeting.id)}
+              onKeepForever={(keep) =>
+                void guarded(
+                  () => api.keepForever(meeting.id, keep),
+                  meeting.id,
+                )
+              }
               onExport={() => void handleExport()}
               onConfirm={() =>
                 void guarded(() => api.confirm(meeting.id), meeting.id)

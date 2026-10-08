@@ -12,7 +12,11 @@ export default function UpdateBanner({
 }) {
   const [error, setError] = useState<string | null>(null);
   const update = native?.update;
-  if (!update) return null;
+  if (
+    !update ||
+    !["available", "downloading", "installing", "failed"].includes(update.state)
+  )
+    return null;
   const busy = update.state === "downloading" || update.state === "installing";
   const go = () => {
     setError(null);

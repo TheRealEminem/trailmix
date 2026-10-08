@@ -154,7 +154,7 @@ def _get_or_404(meeting_id: int) -> dict:
 
 def _present(m: dict) -> dict:
     """Public shape of a meeting: hides file paths, adds parsed fields and audio info."""
-    hidden = ("audio_path", "audio_dir", "segments_json", "requested_provider", "draft_json", "exported_paths",
+    hidden = ("audio_path", "audio_dir", "segments_json", "requested_provider", "draft_json", "exported_paths", "live_json",
               "bookmarks_json", "speaker_names_json", "qa_json")
     out = {k: v for k, v in m.items() if k not in hidden}
     cfg = settings.get_all()
@@ -393,6 +393,14 @@ def recorder_update():
     return {"ok": True}
 
 
+@app.post("/api/recorder/check-update", status_code=202)
+def recorder_check_update():
+    """Ask Trailmix.app to look for a new version now (the answer arrives with its next check-in)."""
+    if not recorder.request("check-update"):
+        raise HTTPException(409, "The menu bar recorder isn't running")
+    return {"ok": True}
+
+
 @app.post("/api/recorder/sound-check", status_code=202)
 def recorder_sound_check():
     """Ask the menu bar recorder to check the mic and other apps' audio (plays a short chime)."""
@@ -466,7 +474,8 @@ def health():
         "transcription": {
             "engine": cfg["transcribe_engine"],
             "model": cfg["transcribe_model"] if remote else mlx_engine.FINAL_MODEL,
-            "live_model": (cfg["transcribe_live_model"] or cfg["transcribe_model"]) if remote else mlx_engine.LIVE_MODEL,
+            "live_model": (cfg["transcribe_model"] if cfg["live_final"] else cfg["transcribe_live_model"] or cfg["transcribe_model"])
+            if remote else (mlx_engine.FINAL_MODEL if cfg["live_final"] else mlx_engine.LIVE_MODEL),
             "url": cfg["transcribe_url"] if remote else None,
             "local_available": mlx_engine.available(),
         },
@@ -588,13 +597,14 @@ async def stream(ws: WebSocket, meeting_id: int, draft: int = 1, client: str = "
             while True:
                 await asyncio.sleep(2)
                 for msg in await run_in_threadpool(session.draft_step):
-                    await send(msg)
+                    if draft:  # final-while-recording runs this loop even with the live draft turned off
+                        await send(msg)
         except asyncio.CancelledError:
             raise
         except Exception:
             log.exception("Live draft stopped for meeting %s (recording continues)", meeting_id)
 
-    drafter = asyncio.create_task(draft_loop()) if draft else None
+    drafter = asyncio.create_task(draft_loop()) if draft or session.final else None
     stop_wait = asyncio.create_task(stop_requested.wait())
     try:
         while True:
@@ -620,6 +630,7 @@ async def stream(ws: WebSocket, meeting_id: int, draft: int = 1, client: str = "
         stop_wait.cancel()
         if drafter:
             drafter.cancel()
+        await run_in_threadpool(session.finish)  # waits for the chunk in hand, saves the transcript so far
         session.close()
         db.update_meeting(
             meeting_id, status="queued", duration_sec=session.duration, has_system=int(session.has_system)
@@ -747,7 +758,7 @@ def retranscribe(meeting_id: int):
     if meeting["audio_deleted"] or not store.audio_bytes(meeting):
         raise HTTPException(409, "The audio for this meeting has been deleted, so it can't be transcribed again")
     db.update_meeting(meeting_id, status="queued", wait_reason=None, error=None, transcribed=0, summary=None,
-                      summary_error=None)
+                      summary_error=None, live_json=None)  # the whole recording, from scratch
     pipeline.enqueue(meeting_id, go=frozenset({"transcribe", "summarize"}))
     return {"ok": True}
 

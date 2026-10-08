@@ -624,7 +624,7 @@ struct UpdateRow: View {
 
     var body: some View {
         switch updater.state {
-        case .idle:
+        case .idle, .checking, .upToDate, .offline:
             EmptyView()
         case .available(let version):
             MenuRow(title: "Update to Trailmix \(version)", icon: "arrow.down.circle") { updater.install() }
