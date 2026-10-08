@@ -24,7 +24,7 @@ final class MainWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKNavigationDe
                 web.evaluateJavaScript("location.hash = \(Self.jsString("#" + fragment))")
             }
         } else {
-            web.load(URLRequest(url: url))
+            web.load(URLRequest(url: url, cachePolicy: .reloadRevalidatingCacheData))  // never a stale page
         }
         guard let window else { return }
         if offscreen {
@@ -43,6 +43,13 @@ final class MainWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKNavigationDe
     private func build() -> WKWebView {
         let config = WKWebViewConfiguration()
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
+        // A new version: forget pages cached by the old one (versions before 0.6.2 let the page be cached, so
+        // after an update the window could keep running the previous version's web app).
+        if UserDefaults.standard.string(forKey: "windowCacheVersion") != version {
+            WKWebsiteDataStore.default().removeData(ofTypes: [WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeMemoryCache],
+                                                    modifiedSince: .distantPast) {}
+            UserDefaults.standard.set(version, forKey: "windowCacheVersion")
+        }
         config.applicationNameForUserAgent = "TrailmixApp/\(version)"  // the web app adapts (e.g. Quit quits the app)
         config.mediaTypesRequiringUserActionForPlayback = []
         config.userContentController.add(self, name: "trailmix")
