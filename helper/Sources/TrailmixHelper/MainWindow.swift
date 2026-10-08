@@ -80,6 +80,17 @@ final class MainWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKNavigationDe
         webView?.reload()
     }
 
+    /// Help → Check for Updates…: looks now and shows the result in Settings → Updates, where it installs.
+    @objc func checkForUpdates() {
+        Task { await Updater.shared.check(manual: true) }
+        openUpdates()
+    }
+
+    @objc func openUpdates() { HelperModel.shared.openTrailmix(page: "updates") }
+    @objc func openSettings() { HelperModel.shared.openTrailmix(page: "settings") }
+    @objc func openWebsite() { NSWorkspace.shared.open(URL(string: "https://therealeminem.github.io/trailmix/")!) }
+    @objc func reportProblem() { NSWorkspace.shared.open(URL(string: "https://github.com/TheRealEminem/trailmix/issues/new")!) }
+
     // MARK: Messages from the page
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -182,6 +193,9 @@ final class MainWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKNavigationDe
         let name = Brand.appName
         submenu(name, [
             item("About \(name)", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), ""),
+            item("Check for Updates…", #selector(MainWindow.checkForUpdates), "", target: MainWindow.shared),
+            .separator(),
+            item("Settings…", #selector(MainWindow.openSettings), ",", target: MainWindow.shared),
             .separator(),
             item("Hide \(name)", #selector(NSApplication.hide(_:)), "h"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", [.command, .option]),
@@ -204,6 +218,14 @@ final class MainWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKNavigationDe
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
             item("Close", #selector(NSWindow.performClose(_:)), "w"),
         ])
+        submenu("Help", [
+            item("Check for Updates…", #selector(MainWindow.checkForUpdates), "", target: MainWindow.shared),
+            item("Update Settings", #selector(MainWindow.openUpdates), "", target: MainWindow.shared),
+            .separator(),
+            item("\(name) Website", #selector(MainWindow.openWebsite), "", target: MainWindow.shared),
+            item("Report a Problem…", #selector(MainWindow.reportProblem), "", target: MainWindow.shared),
+        ])
+        if let help = main.items.last?.submenu { NSApp.helpMenu = help }  // macOS adds its search field
         return main
     }
 }

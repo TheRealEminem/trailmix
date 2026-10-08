@@ -2,6 +2,7 @@
 
   compress audio -> [approve] -> [RAM gate] -> final transcript (local: large model in its own process;
                                                                     remote: an OpenAI-compatible endpoint)
+                 (or, when it was transcribed while recording: just the last few seconds, no approval or gate)
                  -> [approve] -> [RAM gate] -> summary + title + action items (any provider) -> export
 
 [approve]: automatic when the matching "auto" setting is on; otherwise the meeting parks as
@@ -135,6 +136,11 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
         if m["audio_deleted"] or not m["audio_dir"]:
             raise RuntimeError("Audio has been deleted, so this meeting can't be transcribed")
         store.compress_pending(m)  # cheap: shrinks ~10x on disk before anything heavy happens
+        done_live = _finish_live(m, cfg)
+        if done_live:
+            _save_transcript(m, *done_live)
+            m = db.get_meeting(meeting_id)
+    if not m["transcribed"]:
         if "transcribe" not in go and not cfg["auto_transcribe"]:
             db.update_meeting(meeting_id, status="ready_transcribe", wait_reason=None)
             return
@@ -216,6 +222,54 @@ def _transcribe_local(m: dict) -> tuple[list[dict], bool, float]:
             "check the server log. It may have run out of memory or disk space."
         )
     return _label(per_track, tracks), "system" in tracks and "mic" in tracks, duration
+
+
+LIVE_TAIL_MAX_S = 90  # more left over than this (the live job fell behind or stopped): transcribe it all afterwards
+
+
+def _finish_live(m: dict, cfg: dict) -> tuple[list[dict], bool, float] | None:
+    """Completes a transcript made while recording (live.py): transcribes the few seconds after the last
+    chunk, then cleans up and labels it like any other. None if there isn't a usable one."""
+    data = json.loads(m["live_json"]) if m.get("live_json") else None
+    if not data or not data.get("complete") or data.get("engine") != cfg["transcribe_engine"]:
+        return None
+    local = cfg["transcribe_engine"] == "local"
+    folder = store.track_dir(m)
+    try:
+        tracks, per_track = [], {}
+        duration = 0.0
+        for name in store.TRACKS.values():
+            audio = store.load_track(folder, name)
+            if audio is None:
+                continue
+            duration = max(duration, len(audio) / store.SAMPLE_RATE)
+            if np.max(np.abs(audio), initial=0) <= 0.01:  # silent track, as the worker skips it
+                continue
+            tracks.append(name)
+            covered = int(data["covered"].get(name, 0))
+            tail = audio[covered:]
+            if len(tail) > LIVE_TAIL_MAX_S * store.SAMPLE_RATE:
+                return None
+            segs = list(data["tracks"].get(name, []))
+            db.update_meeting(m["id"], status="transcribing", wait_reason="Finishing the transcript")
+            off = covered / store.SAMPLE_RATE
+            for a, b in vad.speech_regions(tail):
+                if local:
+                    found = mlx_engine.transcribe_final(tail[a:b])
+                else:
+                    found = transcribe_remote.transcribe(tail[a:b], cfg["transcribe_url"], cfg["transcribe_api_key"],
+                                                         cfg["transcribe_model"], mlx_engine.LANGUAGE)
+                start = off + a / store.SAMPLE_RATE
+                segs += [{**seg, "start": seg["start"] + start, "end": seg["end"] + start} for seg in found]
+            per_track[name] = segs
+        return _label(per_track, tracks), "system" in tracks and "mic" in tracks, duration
+    except Exception:
+        log.exception("Couldn't finish the live transcript of meeting %s; transcribing it all instead", m["id"])
+        return None
+    finally:
+        if local:
+            mlx_engine.unload()  # the accurate model's memory goes back before the summary model loads
+        db.update_meeting(m["id"], live_json=None)
 
 
 def _transcribe_remote(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:

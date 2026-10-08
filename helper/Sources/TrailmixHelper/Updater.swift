@@ -15,6 +15,9 @@ final class Updater: ObservableObject {
 
     enum State: Equatable {
         case idle
+        case checking
+        case upToDate
+        case offline  // couldn't reach GitHub to check
         case available(String)
         case downloading(String, Double?)
         case installing(String)
@@ -24,6 +27,7 @@ final class Updater: ObservableObject {
     @Published private(set) var state: State = .idle
     private var latest: Release?
     private var timer: Timer?
+    private(set) var checkedAt: Date?
 
     struct Release {
         let version: String
@@ -56,27 +60,40 @@ final class Updater: ObservableObject {
         }
     }
 
-    /// For the window: {"version", "state", "progress", "error", "notes"} or nil when there's nothing to say.
+    /// For the window: {"current", "state", "version", "progress", "error", "notes", "checked_at"}, or nil for a
+    /// build that doesn't update itself.
     var report: [String: Any]? {
+        guard Self.enabled else { return nil }
+        var out: [String: Any] = ["current": Self.current, "checked_at": checkedAt.map { $0.timeIntervalSince1970 } ?? NSNull()]
         switch state {
-        case .idle: return nil
-        case .available(let v): return ["version": v, "state": "available", "notes": latest?.notes?.absoluteString ?? ""]
-        case .downloading(let v, let p): return ["version": v, "state": "downloading", "progress": p ?? NSNull()]
-        case .installing(let v): return ["version": v, "state": "installing"]
-        case .failed(let why): return ["version": latest?.version ?? "", "state": "failed", "error": why]
+        case .idle: out["state"] = "idle"
+        case .checking: out["state"] = "checking"
+        case .upToDate: out["state"] = "up-to-date"
+        case .offline: out["state"] = "offline"
+        case .available(let v): out.merge(["version": v, "state": "available", "notes": latest?.notes?.absoluteString ?? ""]) { $1 }
+        case .downloading(let v, let p): out.merge(["version": v, "state": "downloading", "progress": p ?? NSNull()]) { $1 }
+        case .installing(let v): out.merge(["version": v, "state": "installing"]) { $1 }
+        case .failed(let why): out.merge(["version": latest?.version ?? "", "state": "failed", "error": why]) { $1 }
         }
+        return out
     }
 
-    func check() async {
+    /// Looks for a new version. `manual`: you asked (Help → Check for Updates…), so show "Checking…" meanwhile.
+    func check(manual: Bool = false) async {
         guard let feed = Self.feed else { return }
         if case .downloading = state { return }
         if case .installing = state { return }
+        if manual, latest == nil { state = .checking }
         var request = URLRequest(url: feed)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let tag = json["tag_name"] as? String else { return }
+              let tag = json["tag_name"] as? String else {
+            if latest == nil, manual || state == .checking { state = .offline }
+            return
+        }
+        checkedAt = Date()
         let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
         let assets = (json["assets"] as? [[String: Any]]) ?? []
         func asset(_ suffix: String) -> URL? {
@@ -84,7 +101,8 @@ final class Updater: ObservableObject {
                 .flatMap { $0["browser_download_url"] as? String }.flatMap(URL.init(string:))
         }
         guard Self.isNewer(version, than: Self.current), let dmg = asset("-arm64.dmg") else {
-            if case .available = state {} else { state = .idle }
+            latest = nil
+            state = .upToDate
             return
         }
         latest = Release(version: version, notes: (json["html_url"] as? String).flatMap(URL.init(string:)), dmg: dmg,

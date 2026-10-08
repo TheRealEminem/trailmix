@@ -140,7 +140,7 @@ final class HelperModel: ObservableObject {
             start()
         }
         if commands.contains("update") { Updater.shared.install() }
-        if commands.contains("check-update") { Task { await Updater.shared.check() } }
+        if commands.contains("check-update") { Task { await Updater.shared.check(manual: true) } }
         if commands.contains("open-at-login") { prefs.openAtLogin = true }
         if commands.contains("no-open-at-login") { prefs.openAtLogin = false }
         if commands.contains("sound-check"), phase == .idle, !soundChecking {
@@ -568,25 +568,27 @@ final class HelperModel: ObservableObject {
         try process.run()
     }
 
-    /// Opens Trailmix in its own window, optionally at a meeting. Starts the server first if it isn't running.
-    func openTrailmix(meeting: Int? = nil) {
+    /// Opens Trailmix in its own window, optionally at a meeting or a page ("settings", "updates").
+    /// Starts the server first if it isn't running.
+    func openTrailmix(meeting: Int? = nil, page: String? = nil) {
+        let fragment = meeting.map { "meeting-\($0)" } ?? page
         guard let base = prefs.serverURL else { return }
         if connection != .online, prefs.canStartServer {
             if Bundled.isBundled {
                 Task {
                     await startServerIfNeeded()
-                    if connection == .online { showWindow(base, meeting: meeting) }
+                    if connection == .online { showWindow(base, fragment: fragment) }
                 }
             } else {
                 try? launch("open", openWindow: true)
             }
             return
         }
-        showWindow(base, meeting: meeting)
+        showWindow(base, fragment: fragment)
     }
 
-    private func showWindow(_ base: URL, meeting: Int?) {
-        let text = meeting.map { base.absoluteString + "/#meeting-\($0)" } ?? base.absoluteString
+    private func showWindow(_ base: URL, fragment: String?) {
+        let text = fragment.map { base.absoluteString + "/#\($0)" } ?? base.absoluteString
         if ProcessInfo.processInfo.environment["TRAILMIX_NO_OPEN"] != nil {  // tests: say it instead of opening a window
             FileHandle.standardError.write(Data("Would open \(text)\n".utf8))
             return
