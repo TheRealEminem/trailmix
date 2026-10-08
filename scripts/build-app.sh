@@ -165,7 +165,8 @@ if [ "${1:-}" = "--dmg" ]; then
   RW="$STAGE.rw.dmg"
   MNT="$STAGE.mnt"
   retry hdiutil create -quiet -volname "Trailmix" -srcfolder "$STAGE" -format UDRW -fs HFS+ -ov "$RW"
-  retry hdiutil attach -quiet -readwrite -noverify -noautoopen -mountpoint "$MNT" "$RW"
+  retry hdiutil attach -quiet -readwrite -noverify -noautoopen -nobrowse -mountpoint "$MNT" "$RW"
+  mdutil -i off "$MNT" >/dev/null 2>&1 || true  # Spotlight indexing it would keep it busy and block the detach
   # Finder lays out the window (needs a desktop session; skipped without one, leaving a plain window).
   if ! /usr/bin/osascript >/dev/null 2>&1 <<APPLESCRIPT
 tell application "Finder"
@@ -194,7 +195,11 @@ APPLESCRIPT
   fi
   chflags hidden "$MNT/.background" "$MNT/.fseventsd" 2>/dev/null || true  # for people who show hidden files
   sync
-  hdiutil detach -quiet "$MNT" || retry hdiutil detach -quiet -force "$MNT"
+  detach() { hdiutil detach -quiet "$MNT" || hdiutil detach -quiet -force "$MNT" || diskutil unmount force "$MNT"; }
+  if ! retry detach; then
+    echo "  Still in use:" >&2; lsof +D "$MNT" 2>/dev/null | head -10 >&2 || true
+    exit 1
+  fi
   retry hdiutil convert -quiet "$RW" -format ULFO -o "$DMG" -ov
   rm -f "$RW"
   # The app's updater checks a download against this before installing it.
