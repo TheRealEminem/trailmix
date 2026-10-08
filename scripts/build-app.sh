@@ -162,46 +162,11 @@ if [ "${1:-}" = "--dmg" ]; then
     echo "  $* failed" >&2
     return 1
   }
-  RW="$STAGE.rw.dmg"
-  MNT="$STAGE.mnt"
-  retry hdiutil create -quiet -volname "Trailmix" -srcfolder "$STAGE" -format UDRW -fs HFS+ -ov "$RW"
-  retry hdiutil attach -quiet -readwrite -noverify -noautoopen -nobrowse -mountpoint "$MNT" "$RW"
-  mdutil -i off "$MNT" >/dev/null 2>&1 || true  # Spotlight indexing it would keep it busy and block the detach
-  # Finder lays out the window (needs a desktop session; skipped without one, leaving a plain window).
-  if ! /usr/bin/osascript >/dev/null 2>&1 <<APPLESCRIPT
-tell application "Finder"
-  set f to (POSIX file "$MNT" as alias)
-  open f
-  set w to container window of f
-  set current view of w to icon view
-  set toolbar visible of w to false
-  set statusbar visible of w to false
-  set bounds of w to {200, 120, 860, 568}
-  set opts to icon view options of w
-  set arrangement of opts to not arranged
-  set icon size of opts to 100
-  set text size of opts to 13
-  set background picture of opts to file ".background:background.png" of f
-  set position of item "Trailmix.app" of f to {165, 165}
-  set position of item "Applications" of f to {495, 165}
-  set position of item "Read me first.txt" of f to {600, 285}
-  update f without registering applications
-  delay 1
-  close w
-end tell
-APPLESCRIPT
-  then
-    echo "  (Couldn't lay out the disk image window; it will look plain.)"
-  fi
-  chflags hidden "$MNT/.background" "$MNT/.fseventsd" 2>/dev/null || true  # for people who show hidden files
-  sync
-  detach() { hdiutil detach -quiet "$MNT" || hdiutil detach -quiet -force "$MNT" || diskutil unmount force "$MNT"; }
-  if ! retry detach; then
-    echo "  Still in use:" >&2; lsof +D "$MNT" 2>/dev/null | head -10 >&2 || true
-    exit 1
-  fi
-  retry hdiutil convert -quiet "$RW" -format ULFO -o "$DMG" -ov
-  rm -f "$RW"
+  # The window's layout (background, icon positions) is saved in scripts/dmg-DS_Store (make it again with
+  # scripts/make-dmg-layout.sh), so the image is made in one step: no mounting, which build machines
+  # can't always undo ("Unmount failed").
+  cp "$ROOT/scripts/dmg-DS_Store" "$STAGE/.DS_Store"
+  retry hdiutil create -quiet -volname "Trailmix" -srcfolder "$STAGE" -fs HFS+ -format ULFO -ov "$DMG"
   # The app's updater checks a download against this before installing it.
   (cd "$OUT" && shasum -a 256 "$(basename "$DMG")" >"$(basename "$DMG").sha256")
   du -sh "$DMG" | awk -v dmg="$DMG" '{print "› Built " dmg " (" $1 ")"}'
