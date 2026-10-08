@@ -113,11 +113,18 @@ EOF
     >/dev/null 2>&1 || echo "(the previous version couldn't snapshot its window; carrying on)"
 
   log "Updating it the way you would: Update now"
-  for _ in $(seq 1 60); do
+  for i in $(seq 1 90); do
     curl -s "$URL/api/recorder" | grep -q '"state":"available"' && break
+    # As Help → Check for Updates… does (in case its first look came before everything was up).
+    [ $((i % 10)) = 5 ] && curl -s -o /dev/null -X POST "$URL/api/recorder/check-update"
     sleep 1
   done
-  curl -s "$URL/api/recorder" | grep -q '"state":"available"' || fail "the previous version never offered the update"
+  if ! curl -s "$URL/api/recorder" | grep -q '"state":"available"'; then
+    echo "The previous version reports: $(curl -s "$URL/api/recorder")" >&2
+    echo "Feed: $(curl -s "http://127.0.0.1:$FEED_PORT/latest.json" | head -c 300)" >&2
+    echo "--- its log" >&2; tail -30 "$T/old-app.log" >&2
+    fail "the previous version never offered the update"
+  fi
   curl -sf -X POST "$URL/api/recorder/update" >/dev/null || fail "couldn't ask the previous version to update"
   for _ in $(seq 1 180); do kill -0 "$OLD_APP" 2>/dev/null || break; sleep 1; done
   kill -0 "$OLD_APP" 2>/dev/null && fail "the previous version didn't finish updating (still running after 3 minutes)"
