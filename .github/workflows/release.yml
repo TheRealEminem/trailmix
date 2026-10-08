@@ -27,7 +27,8 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Build Trailmix.app and the disk image
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then export TRAILMIX_VERSION="${GITHUB_REF_NAME#v}"; fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then export TRAILMIX_VERSION="${GITHUB_REF_NAME#v}"
+          else export TRAILMIX_VERSION="$(cat VERSION).$GITHUB_RUN_NUMBER"; fi  # a test build: newer than the release, to update to
           scripts/build-app.sh --dmg
       - uses: actions/upload-artifact@v4
         with:
