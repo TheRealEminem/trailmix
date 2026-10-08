@@ -2,7 +2,8 @@
 
 Two models are used at different times so a meeting never competes with a heavy model:
   - LIVE_MODEL  (small, in this process, for a rough draft while the meeting runs)
-  - FINAL_MODEL (large, in a throwaway subprocess - see transcribe_worker.py - after you stop)
+  - FINAL_MODEL (large, in a throwaway subprocess - see transcribe_worker.py - after you stop; or in this
+                 process during the meeting when "Final transcript while recording" is on, see live.py)
 """
 import gc
 import os
@@ -60,6 +61,12 @@ def transcribe_live(audio: np.ndarray) -> list[dict] | None:
     return filter_hallucinations(segs)
 
 
+def transcribe_final(audio: np.ndarray) -> list[dict]:
+    """The accurate model on a chunk, in this process (final transcript while recording). Waits its turn."""
+    with _lock:
+        return run(audio, FINAL_MODEL)
+
+
 def available() -> bool:
     """MLX only exists on Apple Silicon Macs; a Linux server install uses a remote endpoint instead."""
     import importlib.util
@@ -68,7 +75,7 @@ def available() -> bool:
 
 
 def unload() -> None:
-    """Drop the cached live model (small; the large model never lives in this process)."""
+    """Drop the cached model: the small live one, or the accurate one after a final-while-recording meeting."""
     try:
         import mlx.core as mx
         from mlx_whisper.transcribe import ModelHolder

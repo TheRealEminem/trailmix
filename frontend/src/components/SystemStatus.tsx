@@ -54,8 +54,12 @@ export default function SystemStatus() {
   const ramLow = sys.ram_available_gb < transcribeNeeds;
   const diskLow = sys.disk_free_gb < 5;
   const swapHigh = sys.swap_used_gb > 8;
+  // When models would wait: short on memory and swapping is a bad idea (resources.check).
+  const swapRoomLow = sys.disk_free_percent < sys.swap_disk_free_percent;
+  const critical = sys.memory_pressure >= 4;
+  const dire = ramLow && (swapRoomLow || critical);
 
-  const weather = diskLow
+  const weather = diskLow || dire
     ? { label: "Stormy", cls: "bg-trail-soft text-trail-deep", dot: "bg-trail" }
     : ramLow || swapHigh
       ? { label: "Cloudy", cls: "bg-sun-soft text-sun-deep", dot: "bg-sun" }
@@ -102,9 +106,16 @@ export default function SystemStatus() {
             <Stat label="Disk free" value={`${sys.disk_free_gb} GB`} warn={diskLow} />
             <Stat label="Audio" value={sys.audio_gb < 1 ? `${Math.round(sys.audio_gb * 1024)} MB` : `${sys.audio_gb} GB`} />
           </div>
-          {ramLow && (
+          {ramLow && !dire && (
             <p className="mt-2.5 leading-snug text-sun-deep">
-              Transcription wants ~{transcribeNeeds.toFixed(1)} GB free, so it will check with you before starting.
+              Under ~{transcribeNeeds.toFixed(1)} GB free: models still run, with macOS using swap, so they may be slower.
+            </p>
+          )}
+          {dire && (
+            <p className="mt-2.5 leading-snug text-trail-deep">
+              {critical
+                ? "macOS reports critical memory pressure, so models wait (or you can proceed anyway)."
+                : `Under ${sys.swap_disk_free_percent}% of the disk is free for swap, so models wait until there's memory.`}
             </p>
           )}
           {diskLow && <p className="mt-2.5 leading-snug text-trail-deep">Disk is nearly full. Long recordings and model downloads may fail.</p>}

@@ -8,7 +8,14 @@ import json
 import os
 from pathlib import Path
 
+import psutil
+
 import database as db
+
+# Final transcript while recording: on by default with 16 GB of memory or more, where the accurate speech
+# model (about 2 GB) sits comfortably next to a call; with 8 GB the meeting gets a light draft and the
+# accurate transcript afterwards.
+_ROOMY = psutil.virtual_memory().total >= 15 * 1024**3
 
 DEFAULTS = {
     # Two-step flow: when off, the meeting waits for you to start that step.
@@ -43,6 +50,7 @@ DEFAULTS = {
     "transcribe_api_key": "",
     "transcribe_model": "whisper-1",
     "transcribe_live_model": "",        # empty = same as transcribe_model
+    "live_final": _ROOMY,               # transcribe with the accurate model while recording (see live.py)
     # Import
     "granola_api_key": "",              # grn_… from Granola → Settings → Connectors → API keys (Business plan)
     # Export

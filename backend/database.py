@@ -69,6 +69,7 @@ _ADDED_COLUMNS = {
     "external_id": "TEXT",                           # its id there, so it isn't imported twice
     "uid": "TEXT",                                   # permanent id, kept in exports, so re-imports are recognised
     "keep_audio": "INTEGER NOT NULL DEFAULT 0",      # "Keep forever": exempt from the audio clean-up, archived
+    "live_json": "TEXT",                             # final transcript made while recording (live.py), if any
 }
 
 _FTS_FIELDS = ("title", "transcript", "summary")
@@ -212,7 +213,7 @@ _UPDATABLE = {
     "title", "status", "wait_reason", "duration_sec", "transcript", "summary", "summary_provider",
     "summary_error", "error", "has_system", "audio_deleted", "segments_json", "transcribed",
     "requested_provider", "requested_template", "title_auto", "draft_json", "exported_paths", "export_error",
-    "bookmarks_json", "speaker_names_json", "qa_json", "keep_audio", "audio_dir",
+    "bookmarks_json", "speaker_names_json", "qa_json", "keep_audio", "audio_dir", "live_json",
 }
 _JSON_FIELDS = {"segments_json", "draft_json", "exported_paths", "bookmarks_json", "speaker_names_json", "qa_json"}
 

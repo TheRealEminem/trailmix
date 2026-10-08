@@ -2,6 +2,12 @@
 
 Nothing accumulates in memory except the few seconds awaiting a draft transcription, so a
 multi-hour meeting costs no RAM, and a crash loses at most the last fraction of a second.
+
+With "Final transcript while recording" (settings.live_final) each stretch of speech is transcribed by the
+accurate model as the meeting goes, the same way the after-the-meeting job would (speech regions, then the
+model), and kept per track. When you stop, only the last few seconds are left to do (pipeline.py), so the
+transcript and summary follow straight away. If anything was missed (a chunk failed, the model wasn't
+downloaded yet), the pipeline falls back to transcribing the whole recording afterwards.
 """
 import json
 import threading
@@ -15,10 +21,12 @@ import database as db
 import mlx_engine
 import models
 import transcribe_remote
+import vad
 
 SR = store.SAMPLE_RATE
 MIN_CHUNK_S = 3.0      # don't transcribe less than this
 MAX_CHUNK_S = 12.0     # force a cut if nobody pauses
+FINAL_MAX_CHUNK_S = 28.0  # final transcript: wait longer for a pause (the model's window is 30 s), fewer split sentences
 FRAME_S = 0.25
 SILENCE_RMS = 0.006    # below this a frame counts as a pause / is not worth transcribing
 LABELS = {0: "You", 1: "Them"}
@@ -46,7 +54,7 @@ def rms(x: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.square(x)))) if len(x) else 0.0
 
 
-def find_cut(audio: np.ndarray) -> int | None:
+def find_cut(audio: np.ndarray, max_s: float = MAX_CHUNK_S) -> int | None:
     """Sample index to cut at: the end of the latest pause (>= MIN_CHUNK_S in), else a hard cap."""
     frame = int(FRAME_S * SR)
     n_frames = len(audio) // frame
@@ -56,7 +64,7 @@ def find_cut(audio: np.ndarray) -> int | None:
             break
         if rms(audio[i * frame:end]) < SILENCE_RMS:
             return end
-    return int(MAX_CHUNK_S * SR) if len(audio) >= MAX_CHUNK_S * SR else None
+    return int(max_s * SR) if len(audio) >= max_s * SR else None
 
 
 class LiveSession:
@@ -66,6 +74,11 @@ class LiveSession:
         self.started_at = time.time()
         self.draft = draft
         self.cfg = cfg  # settings snapshot: which engine drafts the live transcript
+        # The accurate model, transcribing for keeps while the meeting runs (see the module docstring).
+        self.final = bool(cfg.get("live_final")) and (cfg["transcribe_engine"] == "remote" or mlx_engine.available())
+        self.final_segments: dict[int, list[dict]] = {0: [], 1: []}
+        self.final_complete = True  # False once any chunk was skipped: then the pipeline redoes it all
+        self._step_lock = threading.Lock()  # one draft_step at a time; finish() waits for the running one
         self.folder = folder
         folder.mkdir(parents=True, exist_ok=True)
         self._files = {}
@@ -106,7 +119,7 @@ class LiveSession:
         samples = np.frombuffer(pcm, dtype=np.int16)
         with self._lock:
             self._written[ch] += len(samples)
-            if self.draft:
+            if self.draft or self.final:
                 self._pending[ch].append(samples)
 
     def describe(self, title: str, recent: int = 40) -> dict:
@@ -123,6 +136,19 @@ class LiveSession:
         self.bookmarks.append(b)
         db.update_meeting(self.meeting_id, bookmarks_json=self.bookmarks)
         return b
+
+    def _final_text(self, chunk: np.ndarray) -> list[dict]:
+        """The accurate transcript of a chunk: speech regions first, like the after-the-meeting job."""
+        cfg, out = self.cfg, []
+        for a, b in vad.speech_regions(chunk):
+            if cfg["transcribe_engine"] == "remote":
+                segs = transcribe_remote.transcribe(chunk[a:b], cfg["transcribe_url"], cfg["transcribe_api_key"],
+                                                    cfg["transcribe_model"], mlx_engine.LANGUAGE, timeout=60)
+            else:
+                models.require(mlx_engine.FINAL_MODEL)
+                segs = mlx_engine.transcribe_final(chunk[a:b])
+            out += [{**seg, "start": seg["start"] + a / SR, "end": seg["end"] + a / SR} for seg in segs]
+        return out
 
     def _draft_text(self, chunk: np.ndarray) -> list[dict] | None:
         if self.cfg["transcribe_engine"] == "remote":
@@ -141,8 +167,25 @@ class LiveSession:
         with _registry_lock:
             _active.pop(self.meeting_id, None)
 
+    def finish(self) -> None:
+        """After the recording stops: waits for the chunk being transcribed, then saves the final-mode
+        transcript so far (the pipeline picks it up and does the rest)."""
+        if not self.final:
+            return
+        with self._step_lock:
+            covered = {store.TRACKS[ch]: self._pending_start[ch] for ch in (0, 1)}
+            db.update_meeting(self.meeting_id, live_json=json.dumps({
+                "tracks": {store.TRACKS[ch]: segs for ch, segs in self.final_segments.items()},
+                "covered": covered, "complete": self.final_complete,
+                "engine": self.cfg["transcribe_engine"],
+            }))
+
     def draft_step(self) -> list[dict]:
         """Transcribe whatever is ready. Runs in a worker thread; returns draft lines for the UI."""
+        with self._step_lock:
+            return self._draft_step()
+
+    def _draft_step(self) -> list[dict]:
         out = []
         for ch in (0, 1):
             with self._lock:
@@ -150,7 +193,7 @@ class LiveSession:
                     continue
                 buf = np.concatenate(self._pending[ch])
                 audio = buf.astype(np.float32) / 32768.0
-                cut = find_cut(audio)
+                cut = find_cut(audio, FINAL_MAX_CHUNK_S if self.final else MAX_CHUNK_S)
                 if cut is None:
                     self._pending[ch] = [buf]
                     continue
@@ -161,12 +204,25 @@ class LiveSession:
             if rms(chunk) < SILENCE_RMS:
                 continue
             try:
-                segs = self._draft_text(chunk)
+                if self.final:
+                    found = self._final_text(chunk)
+                    off = start / SR
+                    self.final_segments[ch] += [{**s, "start": s["start"] + off, "end": s["end"] + off} for s in found]
+                    segs = mlx_engine.filter_hallucinations([{**s} for s in found])
+                else:
+                    segs = self._draft_text(chunk)
             except transcribe_remote.RemoteError as e:
+                self.final_complete = False
                 out.append({"type": "status", "message": f"Live draft paused: {e}"})
                 continue
             except models.NotReady as e:
+                self.final_complete = False
                 out.append({"type": "status", "message": str(e)})
+                continue
+            except Exception:
+                if not self.final:
+                    raise
+                self.final_complete = False  # the whole recording is transcribed afterwards instead
                 continue
             if segs is None:
                 out.append({"type": "status", "message": "Live draft paused while another job uses the transcriber"})

@@ -89,6 +89,7 @@ export interface Settings {
   transcribe_api_key: string;
   transcribe_model: string;
   transcribe_live_model: string;
+  live_final: boolean;
   auto_export: boolean;
   export_dir: string;
   export_formats: ExportFormat[];
@@ -176,6 +177,9 @@ export interface SystemInfo {
   audio_gb: number;
   headroom_gb: number;
   final_model_gb: number;
+  disk_free_percent: number;
+  swap_disk_free_percent: number;
+  memory_pressure: number;
   ollama_model_gb: number;
 }
 
@@ -217,7 +221,18 @@ export interface NativeRecorder {
   shortcut_record?: string;
   shortcut_mark?: string;
   open_at_login?: boolean | null;
-  update?: { version: string; state: "available" | "downloading" | "installing" | "failed"; progress?: number | null; error?: string; notes?: string } | null;
+  update?: UpdateInfo | null;
+}
+
+/** What Trailmix.app's updater is doing (only the full app updates itself). */
+export interface UpdateInfo {
+  current?: string;
+  state: "idle" | "checking" | "up-to-date" | "offline" | "available" | "downloading" | "installing" | "failed";
+  version?: string;
+  progress?: number | null;
+  error?: string;
+  notes?: string;
+  checked_at?: number | null;
 }
 
 export interface SoundCheckResult {
@@ -336,6 +351,7 @@ export const api = {
   pullOllamaModel: (model = "") => request<OllamaStatus>("/ollama/pull", json("POST", { model })),
   startNativeRecorder: () => request<{ ok: true }>("/recorder/start", json("POST")),
   installUpdate: () => request<{ ok: true }>("/recorder/update", json("POST")),
+  checkForUpdate: () => request<{ ok: true }>("/recorder/check-update", json("POST")),
   setOpenAtLogin: (on: boolean) => request<{ ok: true }>("/recorder/open-at-login", json("POST", { on })),
   soundCheck: () => request<{ ok: true }>("/recorder/sound-check", json("POST")),
   markLive: (id: number, note = "") => request<Bookmark>(`/meetings/${id}/mark`, json("POST", { note })),
