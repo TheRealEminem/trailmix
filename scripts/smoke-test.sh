@@ -41,7 +41,7 @@ if curl -s -o /dev/null "$URL/api/health" 2>/dev/null; then fail "something is a
 
 # The environment the app gets: hermetic, small models, no browser windows.
 ENV=(HOME="$HOME_DIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin HF_HOME="$HF_CACHE"
-     TRAILMIX_DATA_DIR="$DATA" TRAILMIX_SERVER_URL="$URL" TRAILMIX_NO_OPEN=1 TRAILMIX_PREFETCH=0
+     TRAILMIX_DATA_DIR="$DATA" TRAILMIX_SERVER_URL="$URL" TRAILMIX_NO_OPEN=1
      TRAILMIX_WHISPER_MODEL=mlx-community/whisper-tiny-mlx TRAILMIX_LIVE_MODEL=mlx-community/whisper-tiny-mlx
      TRAILMIX_WHISPER_RAM_GB=0.5)
 
@@ -133,6 +133,14 @@ log "Starting $(version_of "$UNDER_TEST")'s engine"
 start_engine "$UNDER_TEST"
 SERVED=$(curl -s "$URL/" | grep -o 'assets/index-[A-Za-z0-9_-]*\.js' | head -1)
 [ -f "$UNDER_TEST/Contents/Resources/ui/$SERVED" ] || fail "the engine at $URL isn't this app's (it serves $SERVED)"
+
+log "Speech models (downloaded on first start, as during setup)"
+for _ in $(seq 1 300); do
+  curl -s "$URL/api/models" | grep -q '"installed":false' || break
+  sleep 1
+done
+curl -s "$URL/api/models" | grep -q '"installed":false' && fail "the speech models didn't download"
+echo "ready"
 
 log "The recorder and the window, end to end"
 env -i "${ENV[@]}" "$UNDER_TEST/Contents/MacOS/Trailmix" --self-test "$URL" "$T/me.wav" "$T/them.wav" \
