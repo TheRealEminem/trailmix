@@ -21,6 +21,7 @@ import {
   ListChecks,
   Menu,
   MessageSquareText,
+  MessageSquareWarning,
   Mic,
   Monitor,
   Moon,
@@ -84,6 +85,7 @@ export const LinesIcon = icon(Text);
 export const ColumnsIcon = icon(Columns2);
 export const BackpackIcon = icon(Backpack);
 export const FlagIcon = icon(Flag);
+export const ReportIcon = icon(MessageSquareWarning);
 export const WaveIcon = icon(AudioLines);
 export const UsersIcon = icon(Users);
 export const ChevronDownIcon = icon(ChevronDown);

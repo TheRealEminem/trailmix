@@ -183,16 +183,16 @@ export default function MeetingView({
             <UsersIcon size={16} className="text-ink-faint" />
             {m.has_system ? "You & them" : "One mic"}
           </span>
-          <WorkspacePicker
+          <span data-private="workspace"><WorkspacePicker
             workspaces={on.workspaces}
             value={m.workspace_id}
             auto={!!m.workspace_auto}
             onChange={on.onWorkspace}
-          />
+          /></span>
         </div>
 
         <div className="mt-2.5 flex items-start gap-2">
-          <TitleField value={m.title} onSave={on.onRename} />
+          <div data-private="meeting title" className="min-w-0 flex-1"><TitleField value={m.title} onSave={on.onRename} /></div>
           <div className="mt-1 flex items-center gap-0.5">
             {m.summary && (
               <RetitleButton onRetitle={on.onRetitle} />
@@ -224,7 +224,7 @@ export default function MeetingView({
           </p>
         )}
         {m.tags.length > 0 && (
-          <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Topics">
+          <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Topics" data-private="topics">
             {m.tags.map((t) => (
               <span key={t} className="chip bg-forest/[.07] text-ink-soft">
                 {t}
@@ -387,11 +387,11 @@ export default function MeetingView({
                 m.export_error ? (
                   <span className="text-trail-deep">{m.export_error}</span>
                 ) : m.export_folder ? (
-                  <span className="break-all font-mono text-meta">
+                  <span className="break-all font-mono text-meta" data-private="export folder">
                     {tildePath(m.export_folder)}
                   </span>
                 ) : m.exported_paths.length > 0 ? (
-                  <span className="font-mono text-meta">
+                  <span className="font-mono text-meta" data-private="exported files">
                     {m.exported_paths.map(tildePath).join("  ·  ")}
                   </span>
                 ) : (

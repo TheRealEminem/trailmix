@@ -611,7 +611,7 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
         <SwitchRow
           icon={<SparkleIcon size={16} />}
           label="Beta updates"
-          hint="Get new versions a few days early, before everyone else, to try them out. They may have rough edges."
+          hint="Get new versions a few days early, to try them out; they may have rough edges. A beta reaches everyone after 3 days unless someone reports it blocks them. Report problems with the button in the bottom corner: personal information is removed on your Mac, and you check the report before posting it on GitHub. Trailmix sends nothing in the background."
           checked={beta ?? !!u.beta}
           onChange={(v) => {
             setBeta(v);

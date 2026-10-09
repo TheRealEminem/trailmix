@@ -91,7 +91,7 @@ export default function TasksView({ onOpenMeeting, onChanged, onError, workspace
       )}
 
       {groups.length > 0 && (
-        <div className="panel animate-enter divide-y divide-line" style={{ animationDelay: "60ms" }}>
+        <div data-private="tasks" className="panel animate-enter divide-y divide-line" style={{ animationDelay: "60ms" }}>
           {groups.map((g) => (
             <section key={g.id} className="px-4 py-5 sm:px-6">
               <button onClick={() => onOpenMeeting(g.id)} className="group mb-2 rounded-sm px-2 text-left">

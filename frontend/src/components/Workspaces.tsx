@@ -195,7 +195,7 @@ export function WorkspaceSuggestions({
     }
   };
   return (
-    <div className="space-y-2 py-3.5">
+    <div className="space-y-2 py-3.5" data-private="workspace suggestions">
       <div className="flex items-center justify-between gap-3">
         <span className="text-label font-medium">Suggested from your meetings</span>
         {ideas.length > 1 && (

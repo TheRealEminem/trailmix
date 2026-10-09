@@ -201,7 +201,7 @@ export default function Sidebar({
       </div>
 
       <div className="px-4">
-        <div className="mb-3">
+        <div className="mb-3" data-private="workspace">
           <WorkspaceSwitcher
             workspaces={workspaces}
             value={workspace}
@@ -266,7 +266,7 @@ export default function Sidebar({
         <NavItem active={view === "import"} onClick={() => onView("import")} icon={<DownloadIcon size={16} />} label="Import" />
       </nav>
 
-      <nav className="fade-edges-y mt-3 flex-1 overflow-y-auto px-3 pb-4 pt-1" aria-label="Meetings">
+      <nav data-private="meeting list" className="fade-edges-y mt-3 flex-1 overflow-y-auto px-3 pb-4 pt-1" aria-label="Meetings">
         {hits !== null && (
           <section className="animate-fade-in">
             <h3 className="eyebrow px-3 pb-1.5 pt-2">
