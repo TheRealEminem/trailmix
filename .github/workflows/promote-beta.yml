@@ -1,0 +1,31 @@
+# Makes the newest beta the release everyone gets once it's been tried: every day, scripts/auto-promote.sh checks
+# the newest pre-release, and if it's been out 3 days with no open "[Beta X.Y.Z] [blocks me]" issue, promotes it
+# (the same as running scripts/promote.sh by hand). Otherwise it just logs why not.
+#   Actions tab -> "Promote beta" -> Run   -> checks now (tick "dry run" to only see what it would do)
+name: Promote beta
+
+on:
+  schedule:
+    - cron: "0 16 * * *"   # daily, 16:00 UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: only say what it would do"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # to edit the release
+  issues: read      # to look for "blocks me" reports
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Promote the newest beta if it's ready
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TRAILMIX_REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: scripts/auto-promote.sh

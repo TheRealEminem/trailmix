@@ -82,7 +82,7 @@ export default function AskPanel({ meetingId, workspaceId = null, history = [], 
     });
 
   return (
-    <div>
+    <div data-private="questions and answers">
       {entries.length === 0 && !busy && (
         <div className="py-4 text-center">
           <ContourBadge>

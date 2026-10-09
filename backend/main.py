@@ -45,6 +45,7 @@ import templates
 import model_ranks
 import workspaces
 import file_import
+import feedback
 import transcribe_remote
 
 log = logging.getLogger("trailmix")
@@ -950,6 +951,25 @@ def set_meeting_workspace(meeting_id: int, body: MeetingWorkspace):
     db.update_meeting(meeting_id, workspace_id=body.workspace_id, workspace_auto=0)
     _reexport(meeting_id)
     return {"ok": True}
+
+
+class ReportRequest(BaseModel):
+    description: str = ""
+    screen: str = ""              # the window's text, private parts already replaced by placeholders
+    page: str = ""                # which screen it was (e.g. "Settings", "Meeting")
+    include_screen: bool = True
+    include_diagnostics: bool = True
+    blocks: bool = False          # "this stops me using Trailmix": holds the beta back from everyone
+    meeting_id: int | None = None
+
+
+@app.post("/api/report")
+def prepare_report(body: ReportRequest):
+    """A problem report with personal information removed (feedback.py), for you to check, then open as a
+    GitHub issue. Nothing is sent anywhere by this: you send it."""
+    cfg = settings.get_all()
+    return feedback.prepare(body.description[:4000], body.screen[:20000], body.page[:60], body.include_screen,
+                            body.include_diagnostics, body.blocks, body.meeting_id, cfg)
 
 
 class OrganizeRequest(BaseModel):
