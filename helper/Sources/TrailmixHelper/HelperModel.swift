@@ -156,6 +156,17 @@ final class HelperModel: ObservableObject {
         }
     }
 
+    /// A call app with audio open (looked up every few seconds): the engine then gets the speech model ready.
+    private var currentCallApp: String? {
+        if Date().timeIntervalSince(callAppCheckedAt) > 5 {
+            callAppCache = AudioApp.callInProgress()
+            callAppCheckedAt = Date()
+        }
+        return callAppCache
+    }
+    private var callAppCache: String?
+    private var callAppCheckedAt = Date.distantPast
+
     private var soundChecking = false
     /// The last sound check's result, reported with each check-in so the window can show it.
     private var soundCheck: [String: Any]?
@@ -181,6 +192,7 @@ final class HelperModel: ObservableObject {
             "shortcut_mark": prefs.markShortcut.display,
             "open_at_login": prefs.openAtLogin,
             "update": Updater.shared.report ?? NSNull(),
+            "call_app": currentCallApp ?? NSNull(),
         ]
     }
 

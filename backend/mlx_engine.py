@@ -22,7 +22,9 @@ _lock = threading.Lock()
 _HALLUCINATIONS = {"you", "thank you.", "thanks for watching!", "thanks for watching.", "bye.", "."}
 
 
-def run(audio: np.ndarray, model: str) -> list[dict]:
+def run(audio: np.ndarray, model: str, prompt: str | None = None) -> list[dict]:
+    """`prompt`: what was said just before (live chunks are a few seconds long; it gives the model the
+    context a long recording would have, for names and words cut at a chunk's start)."""
     import mlx_whisper  # lazy: slow import, and lets the API boot without it
 
     result = mlx_whisper.transcribe(
@@ -30,6 +32,7 @@ def run(audio: np.ndarray, model: str) -> list[dict]:
         path_or_hf_repo=model,
         language=LANGUAGE,
         condition_on_previous_text=False,  # avoids repetition loops on long recordings
+        initial_prompt=prompt or None,
         verbose=None,
     )
     segments = []
@@ -50,21 +53,45 @@ def filter_hallucinations(segs: list[dict]) -> list[dict]:
     return [s for s in segs if s["text"].lower() not in _HALLUCINATIONS]
 
 
-def transcribe_live(audio: np.ndarray) -> list[dict] | None:
+def transcribe_live(audio: np.ndarray, prompt: str | None = None) -> list[dict] | None:
     """Rough draft of a short chunk. Returns None if the engine is busy (draft is skipped, not queued)."""
     if not _lock.acquire(blocking=False):
         return None
     try:
-        segs = run(audio, LIVE_MODEL)
+        segs = run(audio, LIVE_MODEL, prompt)
     finally:
         _lock.release()
     return filter_hallucinations(segs)
 
 
-def transcribe_final(audio: np.ndarray) -> list[dict]:
+def transcribe_final(audio: np.ndarray, prompt: str | None = None) -> list[dict]:
     """The accurate model on a chunk, in this process (final transcript while recording). Waits its turn."""
     with _lock:
-        return run(audio, FINAL_MODEL)
+        return run(audio, FINAL_MODEL, prompt)
+
+
+def loaded() -> str | None:
+    """Which model is in memory in this process, if any."""
+    try:
+        from mlx_whisper.transcribe import ModelHolder
+    except ImportError:
+        return None
+    return ModelHolder.model_path if ModelHolder.model is not None else None
+
+
+def warm(model: str) -> bool:
+    """Loads `model` and runs it once on a moment of silence, so a recording's first words come out in about
+    a second instead of waiting for the model to load. False if it was busy or failed."""
+    if not _lock.acquire(blocking=False):
+        return False
+    try:
+        if loaded() != model:
+            run(np.zeros(16000, dtype=np.float32), model)
+        return True
+    except Exception:
+        return False
+    finally:
+        _lock.release()
 
 
 def available() -> bool:

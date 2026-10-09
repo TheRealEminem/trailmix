@@ -95,6 +95,7 @@ struct AudioProcess {
     let pid: pid_t
     let bundleID: String
     let isPlaying: Bool
+    var isListening = false  // using a microphone
 
     static func all() -> [AudioProcess] {
         CA.objects(CA.system, kAudioHardwarePropertyProcessObjectList).map { object in
@@ -102,7 +103,8 @@ struct AudioProcess {
                 objectID: object,
                 pid: CA.value(object, kAudioProcessPropertyPID, default: pid_t(-1)),
                 bundleID: CA.string(object, kAudioProcessPropertyBundleID) ?? "",
-                isPlaying: CA.value(object, kAudioProcessPropertyIsRunningOutput, default: UInt32(0)) != 0
+                isPlaying: CA.value(object, kAudioProcessPropertyIsRunningOutput, default: UInt32(0)) != 0,
+                isListening: CA.value(object, kAudioProcessPropertyIsRunningInput, default: UInt32(0)) != 0
             )
         }
     }
@@ -137,6 +139,22 @@ struct AudioApp: Identifiable, Hashable {
             apps[id] = AudioApp(id: id, name: app.localizedName ?? id, isPlaying: playing)
         }
         return apps.values.sorted { ($0.isPlaying ? 0 : 1, $0.name.lowercased()) < ($1.isPlaying ? 0 : 1, $1.name.lowercased()) }
+    }
+
+    /// Apps people take calls in. Browsers aren't here: they play all sorts of sound.
+    static let callApps: [String: String] = [
+        "us.zoom.xos": "Zoom", "com.microsoft.teams2": "Microsoft Teams", "com.microsoft.teams": "Microsoft Teams",
+        calls: "FaceTime", "com.apple.FaceTime": "FaceTime", "com.cisco.webexmeetingsapp": "Webex",
+        "Cisco-Systems.Spark": "Webex", "com.tinyspeck.slackmacgap": "Slack", "com.hnc.Discord": "Discord",
+        "net.whatsapp.WhatsApp": "WhatsApp", "com.skype.skype": "Skype", "com.google.meet": "Google Meet",
+    ]
+
+    /// A call app that has the mic or the speakers open right now (a call is starting or under way), if any.
+    static func callInProgress() -> String? {
+        for process in AudioProcess.all() where process.isPlaying || process.isListening {
+            if let name = callApps.first(where: { process.belongs(to: $0.key) })?.value { return name }
+        }
+        return nil
     }
 
     /// Is anything other than us making sound? Used to tell "silence" from "not allowed to listen".

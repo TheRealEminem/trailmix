@@ -1,20 +1,23 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { TaskWithMeeting } from "../api";
+import type { TaskWithMeeting, WorkspaceFilter } from "../api";
 import { formatLongDate } from "../format";
 import { CheckSquareIcon } from "./icons";
 import { ContourBadge } from "./illustrations";
 import TaskItem from "./TaskItem";
 import { PageHeader, Skeleton, Switch } from "./ui";
+import { inWorkspace } from "./Workspaces";
 
 interface Props {
   onOpenMeeting: (id: number) => void;
   onChanged: () => void;
   onError: (msg: string) => void;
+  /** Only tasks from meetings in this workspace. */
+  workspace: WorkspaceFilter;
 }
 
-/** Every action item from every meeting, with the open ones first. */
-export default function TasksView({ onOpenMeeting, onChanged, onError }: Props) {
+/** Every action item from every meeting (in the workspace you're in), with the open ones first. */
+export default function TasksView({ onOpenMeeting, onChanged, onError, workspace }: Props) {
   const [tasks, setTasks] = useState<TaskWithMeeting[] | null>(null);
   const [showDone, setShowDone] = useState(false);
 
@@ -39,15 +42,16 @@ export default function TasksView({ onOpenMeeting, onChanged, onError }: Props) 
     }
   };
 
-  const visible = (tasks ?? []).filter((t) => showDone || !t.done);
+  const here = (tasks ?? []).filter((t) => inWorkspace(workspace, t.workspace_id));
+  const visible = here.filter((t) => showDone || !t.done);
   const groups: { id: number; title: string; created: string; items: TaskWithMeeting[] }[] = [];
   for (const t of visible) {
     const g = groups.find((x) => x.id === t.meeting_id);
     if (g) g.items.push(t);
     else groups.push({ id: t.meeting_id, title: t.meeting_title, created: t.meeting_created_at, items: [t] });
   }
-  groups.sort((a, b) => b.id - a.id);
-  const open = (tasks ?? []).filter((t) => !t.done).length;
+  groups.sort((a, b) => b.created.localeCompare(a.created) || b.id - a.id); // newest meeting first
+  const open = here.filter((t) => !t.done).length;
 
   return (
     <div>

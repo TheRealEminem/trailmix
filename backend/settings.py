@@ -22,6 +22,8 @@ DEFAULTS = {
     "auto_transcribe": True,
     "auto_summarize": True,
     "auto_title": True,
+    "auto_workspace": True,             # sort each new meeting into a workspace from its notes (workspaces.py)
+    "current_workspace": 0,             # the workspace you're in (0: all); new recordings go there
     # People
     "your_name": "",
     # Summaries

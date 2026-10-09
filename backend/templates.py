@@ -135,10 +135,11 @@ def final_prompt(template_id: str, custom: str, material: str, from_notes: bool,
     so they're the last thing the model reads (and never the part a too-long prompt loses)."""
     flagged = ""
     if moments:
+        # Only "cover them": the Flagged Moments section itself is written by Trailmix from the real flags
+        # (llm_engine.place_moments). Asked to write it, small models list half the meeting as "flagged".
         flagged = (
-            "\n\nThe listener flagged these moments as important. Make sure the notes cover them, and add a "
-            '"## Flagged Moments" section just before Action Items with one bullet per moment, starting with '
-            "its timestamp:\n" + "\n".join(moments)
+            "\n\nThe listener flagged these moments as important; make sure the notes cover what was said "
+            "there. Don't write a section listing them:\n" + "\n".join(moments)
         )
     label = "NOTES TAKEN DURING THE MEETING, IN ORDER" if from_notes else "TRANSCRIPT"
     source = "the notes above" if from_notes else "the transcript above"
