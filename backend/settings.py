@@ -23,6 +23,8 @@ DEFAULTS = {
     "auto_summarize": True,
     "auto_title": True,
     "auto_workspace": True,             # sort each new meeting into a workspace from its notes (workspaces.py)
+    "ask_questions": True,              # quick questions about what the AI wasn't sure of (questions.py)
+    "vocabulary": [],                   # names and terms you confirmed, for the speech model and notes AI
     "current_workspace": 0,             # the workspace you're in (0: all); new recordings go there
     # People
     "your_name": "",

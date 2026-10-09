@@ -16,6 +16,7 @@ import threading
 
 import database as db
 import llm_engine
+import questions
 
 NOTES_CHARS = 2500  # how much of the notes (or transcript) the AI sees: the overview is what matters
 EXAMPLES = 4        # meetings certainly in each workspace shown to the AI (yours first): small models need them
@@ -123,35 +124,38 @@ Workspace: <its name, exactly as listed>
 Fit: <good, partial, or poor>"""
 
 
-def _answer(text: str, candidates: list[dict]) -> dict | None:
-    """The workspace named on the "Workspace:" line, if the model says it fits well. ("Partial" fits were
-    mostly wrong in testing, e.g. tabletop games filed under a startup: better left in Default.)"""
+def _answer(text: str, candidates: list[dict]) -> tuple[dict | None, dict | None]:
+    """(the workspace named on the "Workspace:" line if the model says it fits well, or None; the one it
+    named if the fit was only partial, to ask you about). "Partial" fits were mostly wrong in testing (e.g.
+    tabletop games filed under a startup), so they're asked about rather than acted on."""
     named = re.search(r"workspace:\s*(.+)", text, re.I)
     fit = re.search(r"fit:\s*(\w+)", text, re.I)
-    if not named or not fit or fit.group(1).lower() != "good":
-        return None
+    if not named or not fit:
+        return None, None
     said = named.group(1).strip(" .*\"'`")
     exact = [w for w in candidates if w["name"].lower() == said.lower()]
-    if exact:
-        return exact[0]
     mentioned = [w for w in candidates if _named_in(w["name"], said)]
-    return mentioned[0] if len(mentioned) == 1 else None  # a name it made up: no
+    space = exact[0] if exact else mentioned[0] if len(mentioned) == 1 else None  # a name it made up: no
+    level = fit.group(1).lower()
+    return (space, None) if level == "good" else (None, space if level == "partial" else None)
 
 
-def choose(m: dict, spaces: list[dict], cfg: dict, pid: str | None = None) -> tuple[dict | None, str | None]:
-    """(the workspace a meeting belongs in or None, the model that decided or None if its title did)."""
+def choose(m: dict, spaces: list[dict], cfg: dict, pid: str | None = None) -> tuple[dict | None, str | None, dict | None]:
+    """(the workspace a meeting belongs in or None, the model that decided or None if its title did, a
+    workspace it only partly fits, to ask you about)."""
     if not spaces:
-        return None, None
+        return None, None, None
     titled = [w for w in spaces if _named_in(w["name"], m["title"])]
     if len(titled) == 1:
-        return titled[0], None
+        return titled[0], None, None
     candidates = titled or spaces
     got = _ask(cfg, _sort_prompt(m, candidates), pid)
     if got:
-        return _answer(got[0], candidates), got[1]
+        space, maybe = _answer(got[0], candidates)
+        return space, got[1], maybe
     # No AI available: only an unmistakable mention in the notes counts.
     named = [w for w in candidates if _named_in(w["name"], m.get("summary") or "")]
-    return (named[0] if len(named) == 1 else None), None
+    return (named[0] if len(named) == 1 else None), None, None
 
 
 def _place(meeting_id: int, spaces: list[dict], cfg: dict, pid: str | None = None) -> bool:
@@ -159,7 +163,9 @@ def _place(meeting_id: int, spaces: list[dict], cfg: dict, pid: str | None = Non
     m = db.get_meeting(meeting_id)
     if not m or (m.get("workspace_id") and not m.get("workspace_auto")):
         return False
-    chosen, model = choose(m, spaces, cfg, pid)
+    chosen, model, maybe = choose(m, spaces, cfg, pid)
+    if maybe and not chosen:
+        questions.ask_workspace(meeting_id, maybe)
     now = db.get_meeting(meeting_id) or {}
     if now.get("workspace_id") and not now.get("workspace_auto"):  # you placed it meanwhile
         return False
@@ -176,6 +182,7 @@ def after_notes(meeting_id: int, cfg: dict, pid: str | None = None) -> None:
     m = db.get_meeting(meeting_id)
     if spaces and m and not m.get("workspace_id") and cfg.get("auto_workspace"):
         _place(meeting_id, spaces, cfg, pid)
+    questions.ask_about(meeting_id, cfg, pid)  # anything the AI wasn't sure of: names, misheard words
 
 
 # ── Suggesting workspaces ───────────────────────────────────────────────

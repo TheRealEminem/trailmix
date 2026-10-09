@@ -67,6 +67,16 @@ export interface DeviceAdvice {
   notes: string[];
 }
 
+/** Something the AI wasn't sure about in a meeting, for you to answer with a tap. */
+export interface MeetingQuestion {
+  id: number;
+  kind: "them" | "spelling" | "term" | "workspace";
+  prompt: string;
+  options: { label: string; value: string }[];
+  /** You can also type an answer (a name, the right spelling). */
+  free_text: boolean;
+}
+
 /** A problem report with personal information removed, ready to check and post. */
 export interface ProblemReport {
   title: string;
@@ -133,6 +143,8 @@ export interface Settings {
   auto_title: boolean;
   auto_workspace: boolean;
   current_workspace: number;
+  ask_questions: boolean;
+  vocabulary: string[];
   your_name: string;
   summary_provider: ProviderId;
   summary_fallback: ProviderId | "none";
@@ -417,6 +429,10 @@ export const api = {
   upgradeNotes: () => request<{ queued: number }>("/upgrades/notes", json("POST")),
   retitle: (id: number) => request<{ title: string }>(`/meetings/${id}/retitle`, json("POST")),
   device: () => request<DeviceAdvice>("/device"),
+  questions: (meetingId: number) => request<MeetingQuestion[]>(`/meetings/${meetingId}/questions`),
+  questionCounts: () => request<Record<string, number>>("/questions"),
+  answerQuestion: (id: number, value: string) => request<{ ok: true }>(`/questions/${id}`, json("POST", { value })),
+  dismissQuestion: (id: number) => request<{ ok: true }>(`/questions/${id}/dismiss`, json("POST")),
   prepareReport: (r: {
     description: string;
     screen: string;

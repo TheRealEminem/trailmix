@@ -71,19 +71,57 @@ API key for a cloud provider. First use downloads the Whisper models (base ≈ 1
 
 ## Features
 
-- **Live draft** while recording, **final transcript** after, with **You / Them** from separate tracks. Rename
-  speakers by clicking their names.
-- **Click any transcript line to play the audio** from that moment (the audio is kept for 30 days by default).
-- **Mark moments** while recording (button or **M** key) or afterwards (the flag on each line). Flagged moments
-  get their own section in the summary.
-- **Summaries with templates** (general, 1:1, standup, interview, sales call, or your own), an auto-generated
-  title, and **action items you can tick off**, collected across all meetings in **Tasks**.
-- **Ask** a single meeting or all of them; answers link back to the meetings they used.
-- **Search** titles, transcripts and summaries from the sidebar.
-- **Any AI provider**: Ollama (local), Claude, OpenAI, Gemini, DeepSeek, or any OpenAI-compatible API, with a
-  fallback. Keys are entered in Settings and never shown again.
-- **Export** to Markdown, text or JSON; **Day** and **Dusk** themes.
-- **Trailmix Helper** in the menu bar: records Zoom, Teams or FaceTime audio directly, with global hotkeys.
+**Recording**
+- Both sides of a call as separate tracks (your mic, and the call app's audio via Core Audio process taps), so the
+  transcript knows **You** from **Them**. Menu bar recorder with global hotkeys (⌃⌥⌘R start/stop, ⌃⌥⌘M flag a
+  moment); Record in the window works through it. A sound check walks you through the macOS permissions.
+- Audio is written to disk as it arrives (a crash loses nothing), then compressed to Opus. See *Audio on disk*.
+
+**Transcription**
+- Whisper (large-v3-turbo) on Apple silicon with MLX, or any OpenAI-compatible endpoint. With 16 GB or more the
+  accurate model transcribes *while you record* (chunks of at most 5 s, cut at pauses, each given the previous
+  words and your vocabulary as context), so the transcript is ready about a second after Stop; with less, a
+  small model drafts live and the accurate one runs after. Silero VAD, hallucination and echo cleanup.
+- The live model is loaded at startup, after each meeting's processing, and when a call app opens audio.
+- Each meeting records what transcribed it (`whisper-large-v3-turbo, while recording`).
+
+**Notes**
+- Summaries with templates (general, 1:1, standup, interview, sales call, or your own), long meetings summarized
+  in parts first, an auto-generated title (or a new one on demand), action items collected in **Tasks**.
+- Flagged moments get their own section, written from your real flags.
+- Any AI: Ollama (local, installable from setup), Claude, OpenAI, Gemini, DeepSeek or any OpenAI-compatible API,
+  with a fallback. Models only run when there's memory for them (or macOS can swap without it being dire).
+
+**Organizing**
+- **Workspaces** (e.g. a job, a committee, personal) with Default for the rest: meetings, tasks, search and Ask
+  follow the one you're in; ⌃1…⌃9 switch. New meetings are **tagged** by topic and **sorted** from their notes
+  (a workspace named in the title wins; the AI must call the fit good; meetings you place by hand are examples
+  for it and never moved). Setup and Settings can **suggest workspaces** from your meetings' topics.
+- **Quick questions** when the AI isn't sure: who was on the call, a name one letter off one you know, a word that
+  sounds like a mishearing, a workspace it only partly fits. Answers fix the meeting and join a **vocabulary**
+  the speech model and the notes AI use from then on.
+- **Better models**: each meeting remembers which model wrote its notes, tags and workspace; a ranked list of
+  models (`backend/assets/model-ranks.json`, refreshed daily from `docs/model-ranks.json`) tells Trailmix when
+  the one you use now is clearly better, and Settings offers to redo that work.
+
+**Finding things**
+- Full-text search (titles, transcripts, notes, tags); **Ask** one meeting or all of them (or one workspace),
+  with answers linking back to their sources; click any transcript line to play from that moment.
+
+**Import and export**
+- Import from **Granola** (API or pasted), **transcript files** (WebVTT and SRT from Zoom, Teams and Meet; Otter
+  TXT and DOCX; text), **recordings** (any audio or video ffmpeg reads; your file is never changed) and
+  **Trailmix exports**.
+- Export a folder per meeting: notes and transcript as PDF, Word, OpenDocument, Markdown or text, `meeting.json`
+  with everything (re-importable), and optionally the recording (hard-linked, so no extra space). "Keep forever"
+  exempts a meeting's audio from the 30-day clean-up.
+
+**The app**
+- Auto-updates from GitHub releases (checksum and signature checked). **Beta updates** get new versions first;
+  a beta reaches everyone after 3 days unless a blocking report is open.
+- **Report a problem** from any screen: private content is replaced by placeholders, then patterns, known names
+  and your local AI remove personal details; you check the text before posting it as a GitHub issue.
+- Spell checking (macOS's own) in text fields; Day and Dusk themes.
 
 ## Audio on disk
 

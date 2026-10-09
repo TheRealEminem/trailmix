@@ -18,6 +18,7 @@ import {
   BackpackIcon,
   CheckIcon,
   ChevronDownIcon,
+  CloseIcon,
   CloudIcon,
   ExportIcon,
   FolderIcon,
@@ -1105,6 +1106,35 @@ export default function Settings({
           checked={s.auto_summarize}
           onChange={(v) => save({ auto_summarize: v })}
         />
+        <SwitchRow
+          icon={<SparkleIcon size={16} />}
+          label="Ask quick questions"
+          hint="When the AI isn't sure about a name, a word or who was on the call, it asks you with a tap above the notes. Your answers fix the meeting and teach Trailmix how to spell them."
+          checked={s.ask_questions}
+          onChange={(v) => save({ ask_questions: v })}
+        />
+        {s.vocabulary.length > 0 && (
+          <div className="py-3.5" data-private="your vocabulary">
+            <div className="text-label font-medium">Names and terms Trailmix knows</div>
+            <p className="mt-0.5 text-hint text-ink-soft">
+              From your answers. The speech model and the notes AI spell these the way you confirmed.
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {s.vocabulary.map((w) => (
+                <span key={w} className="chip h-6 gap-1 bg-forest/[.07] pr-1 text-ink">
+                  {w}
+                  <button
+                    className="rounded-full p-0.5 text-ink-faint hover:text-trail-deep"
+                    aria-label={`Forget ${w}`}
+                    onClick={() => save({ vocabulary: s.vocabulary.filter((x) => x !== w) })}
+                  >
+                    <CloseIcon size={12} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         <SwitchRow
           icon={<PencilIcon size={16} />}
           label="Auto-title meetings"
