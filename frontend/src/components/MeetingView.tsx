@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { inApp, revealInFinder } from "../api";
 import type { Bookmark, Health, Meeting, Provider, Task, Workspace } from "../api";
@@ -29,7 +29,7 @@ import { WorkspacePicker } from "./Workspaces";
 import PipelineStatus from "./PipelineStatus";
 import Summary from "./Summary";
 import Transcript from "./Transcript";
-import { Segmented, Switch } from "./ui";
+import { Segmented, Spinner, Switch } from "./ui";
 
 export type Tab = "summary" | "transcript" | "ask";
 
@@ -53,6 +53,8 @@ interface Props {
   onError: (msg: string) => void;
   workspaces: Workspace[];
   onWorkspace: (id: number | null) => void;
+  /** A new title from the notes. */
+  onRetitle: () => Promise<void>;
 }
 
 const WORKING = ["recording", "queued", "transcribing", "summarizing"];
@@ -113,7 +115,7 @@ function TitleField({
         key={value}
         rows={1}
         defaultValue={value}
-        spellCheck={false}
+        spellCheck
         onInput={fit}
         onBlur={(e) => onSave(e.target.value.replace(/\s+/g, " ").trim())}
         onKeyDown={(e) => {
@@ -134,6 +136,25 @@ function TitleField({
         className="pointer-events-none absolute right-3 top-3.5 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100"
       />
     </label>
+  );
+}
+
+/** Asks the AI for a new title from the notes (spins while it thinks). */
+function RetitleButton({ onRetitle }: { onRetitle: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        setBusy(true);
+        void onRetitle().finally(() => setBusy(false));
+      }}
+      disabled={busy}
+      className="icon-btn"
+      aria-label="New title from the notes"
+      data-tip="New title from the notes"
+    >
+      {busy ? <Spinner /> : <SparkleIcon size={18} />}
+    </button>
   );
 }
 
@@ -173,6 +194,9 @@ export default function MeetingView({
         <div className="mt-2.5 flex items-start gap-2">
           <TitleField value={m.title} onSave={on.onRename} />
           <div className="mt-1 flex items-center gap-0.5">
+            {m.summary && (
+              <RetitleButton onRetitle={on.onRetitle} />
+            )}
             {m.transcript && (
               <button
                 onClick={on.onExport}
@@ -198,6 +222,15 @@ export default function MeetingView({
             <SparkleIcon size={16} className="text-sun-deep" /> Named by
             Trailmix · click the title to rename
           </p>
+        )}
+        {m.tags.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Topics">
+            {m.tags.map((t) => (
+              <span key={t} className="chip bg-forest/[.07] text-ink-soft">
+                {t}
+              </span>
+            ))}
+          </div>
         )}
       </header>
 

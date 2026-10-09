@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { api, inApp } from "../api";
 import type {
@@ -6,7 +6,7 @@ import type {
   ExportJob,
   Health,
   NativeRecorder,
-  SortJob,
+  Upgrades,
   Workspace,
   ProviderId,
   Settings as SettingsT,
@@ -35,7 +35,13 @@ import {
   TrashIcon,
   CompassIcon,
 } from "./icons";
-import { WORKSPACE_COLORS, WorkspaceDot } from "./Workspaces";
+import {
+  OrganizeProgress,
+  WORKSPACE_COLORS,
+  WorkspaceDot,
+  WorkspaceSuggestions,
+  useOrganize,
+} from "./Workspaces";
 import {
   Collapse,
   ControlRow,
@@ -51,6 +57,8 @@ interface Props {
   health: Health | null;
   native: NativeRecorder | null;
   workspaces: Workspace[];
+  /** Meetings in Default (not in another workspace). */
+  defaultCount: number;
   onWorkspacesChanged: () => void;
   theme: ThemePref;
   onTheme: (t: ThemePref) => void;
@@ -142,7 +150,7 @@ function TextField({
       value={v}
       disabled={disabled}
       list={list}
-      spellCheck={false}
+      spellCheck={!mono} // words get spell-checked; addresses, keys and model names don't
       placeholder={placeholder}
       aria-label={label}
       onChange={(e) => setV(e.target.value)}
@@ -273,18 +281,23 @@ const PROVIDER_META: Record<
 /** Settings → Workspaces: the parts of your life meetings belong to, and sorting meetings into them. */
 function WorkspacesSection({
   workspaces,
+  defaultCount,
   onChanged,
   auto,
   onAuto,
+  organize,
 }: {
   workspaces: Workspace[];
+  defaultCount: number;
   onChanged: () => void;
   auto: boolean;
   onAuto: (v: boolean) => void;
+  organize: ReturnType<typeof useOrganize>;
 }) {
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [job, setJob] = useState<SortJob | null>(null);
+  const { job, start } = organize;
+  const busy = !!job?.active;
   const act = async (fn: () => Promise<unknown>) => {
     setError(null);
     try {
@@ -300,29 +313,12 @@ function WorkspacesSection({
     void act(() => api.createWorkspace({ name: n })).then(() => setName(""));
   };
 
-  // Sorting runs in the background: follow it while it does (refreshing the counts as it goes).
-  const changed = useRef(onChanged);
-  changed.current = onChanged;
-  useEffect(() => {
-    if (!job?.active) return;
-    const t = setInterval(() => {
-      api
-        .sortStatus()
-        .then((j) => {
-          setJob(j);
-          changed.current();
-        })
-        .catch(() => undefined);
-    }, 1500);
-    return () => clearInterval(t);
-  }, [job?.active]);
-
   return (
     <Section
       id="workspaces"
       icon={<CompassIcon size={16} />}
       title="Workspaces"
-      blurb="Keep the parts of your life apart (a job, a committee, personal) and switch between them at the top of the sidebar."
+      blurb="Keep the parts of your life apart (a job, a committee, personal) and switch between them at the top of the sidebar. Every meeting starts in Default."
       delay={40}
     >
       {workspaces.map((w) => (
@@ -334,8 +330,7 @@ function WorkspacesSection({
             onClick={() =>
               void act(() =>
                 api.updateWorkspace(w.id, {
-                  color:
-                    WORKSPACE_COLORS[(WORKSPACE_COLORS.indexOf(w.color) + 1) % WORKSPACE_COLORS.length],
+                  color: WORKSPACE_COLORS[(WORKSPACE_COLORS.indexOf(w.color) + 1) % WORKSPACE_COLORS.length],
                 }),
               )
             }
@@ -358,16 +353,16 @@ function WorkspacesSection({
               label={`What ${w.name} is about`}
               value={w.about}
               onSave={(v) => void act(() => api.updateWorkspace(w.id, { about: v }))}
-              placeholder="What it's about, e.g. “my startup: vaccine cold-chain hardware, investors”"
+              placeholder="What it's about: the project, people, topics. It helps Trailmix sort meetings here."
               className="w-full"
             />
           </div>
           <button
             className="icon-btn mt-1 hover:!bg-trail-soft hover:!text-trail-deep"
             aria-label={`Delete ${w.name}`}
-            data-tip="Delete workspace (its meetings stay)"
+            data-tip="Delete workspace (its meetings go back to Default)"
             onClick={() => {
-              if (window.confirm(`Delete the ${w.name} workspace? Its meetings stay, just not in a workspace.`))
+              if (window.confirm(`Delete the ${w.name} workspace? Its meetings go back to Default.`))
                 void act(() => api.deleteWorkspace(w.id));
             }}
           >
@@ -375,53 +370,141 @@ function WorkspacesSection({
           </button>
         </div>
       ))}
+      <div className="flex items-center gap-3 py-3.5">
+        <span className="flex h-5 w-5 items-center justify-center">
+          <WorkspaceDot color={undefined} className="h-3 w-3" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-ui font-medium">Default</div>
+          <div className="text-hint text-ink-soft">
+            Meetings that don't fit another workspace · {defaultCount} meeting{defaultCount === 1 ? "" : "s"}
+          </div>
+        </div>
+      </div>
       <div className="flex flex-wrap items-center gap-2 py-3.5">
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && add()}
-          placeholder={workspaces.length ? "Another workspace" : "e.g. Work, a committee, Personal"}
+          placeholder={workspaces.length ? "Another workspace" : "e.g. your job, a committee, Personal"}
           aria-label="New workspace name"
+          spellCheck
           className="field min-w-0 flex-1 sm:max-w-xs"
         />
         <button className="btn btn-sm btn-soft" onClick={add} disabled={!name.trim()}>
           <PlusIcon size={16} /> Add
         </button>
+        <button
+          className="btn btn-sm btn-ghost"
+          disabled={busy}
+          onClick={() => start("suggest")}
+          data-tip="Tags your meetings by topic (if they aren't yet), then suggests workspaces from the topics"
+        >
+          <SparkleIcon size={16} /> Suggest from my meetings
+        </button>
       </div>
+      <WorkspaceSuggestions job={job} existing={workspaces} onAdded={onChanged} />
+      <SwitchRow
+        icon={<SparkleIcon size={16} />}
+        label="Organize new meetings automatically"
+        hint="After the notes are written, the summary AI tags each meeting by topic and moves it from Default into the workspace that fits well (a workspace named in the title always wins). Recordings started while you're in a workspace go straight into it."
+        checked={auto}
+        onChange={onAuto}
+      />
       {workspaces.length > 0 && (
-        <>
-          <SwitchRow
-            icon={<SparkleIcon size={16} />}
-            label="Sort new meetings automatically"
-            hint="After the notes are written, the summary AI puts each meeting in the workspace that fits (using what you wrote about each), or leaves it out if none does. A workspace named in the title always wins. Recordings started while you're in a workspace go straight into it."
-            checked={auto}
-            onChange={onAuto}
-          />
-          <div className="flex flex-wrap items-center gap-3 py-3.5">
-            <button
-              className="btn btn-sm btn-soft"
-              disabled={!!job?.active}
-              onClick={() =>
-                void api
-                  .sortIntoWorkspaces()
-                  .then(setJob)
-                  .catch((e: Error) => setError(e.message))
-              }
-            >
-              {job?.active ? <Spinner /> : <CompassIcon size={16} />}
-              Sort meetings that aren't in a workspace
-            </button>
-            {job && (
-              <span className="text-hint text-ink-soft">
-                {job.active
-                  ? `Sorting ${job.done ?? 0} of ${job.total ?? 0}…`
-                  : `Sorted ${job.sorted ?? 0} of ${job.total ?? 0}; the rest didn't clearly fit one.`}
-              </span>
-            )}
-          </div>
-        </>
+        <div className="flex flex-wrap items-center gap-2 py-3.5">
+          <button className="btn btn-sm btn-soft" disabled={busy} onClick={() => start("sort")}>
+            <CompassIcon size={16} /> Sort meetings in Default
+          </button>
+          <button
+            className="btn btn-sm btn-ghost"
+            disabled={busy}
+            onClick={() => start("resort")}
+            data-tip="Sorts every meeting again, except ones you placed yourself: for new workspaces, or a better AI model"
+          >
+            Re-sort everything
+          </button>
+        </div>
       )}
-      {error && <p className="pb-3.5 text-hint text-trail-deep">{error}</p>}
+      {(job?.kind || organize.error || error) && (
+        <div className="pb-3.5">
+          <OrganizeProgress job={job} />
+          {(organize.error || error) && <p className="text-hint text-trail-deep">{organize.error || error}</p>}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+/** Settings → Better models: work an older model did that the one you have now would do better. */
+function UpgradesSection({ organize, onChanged }: { organize: ReturnType<typeof useOrganize>; onChanged: () => void }) {
+  const [up, setUp] = useState<Upgrades | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const { job, start } = organize;
+  const load = () =>
+    api
+      .upgrades()
+      .then(setUp)
+      .catch(() => setUp(null));
+  useEffect(() => {
+    void load();
+  }, [job?.active]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!up) return null;
+  const from = (counts: Record<string, number>) =>
+    Object.entries(counts)
+      .map(([model, n]) => `${model} (${n})`)
+      .join(", ");
+  const nothing = !up.notes.count && !up.tags.count && !up.sorting.count;
+  return (
+    <Section
+      id="models"
+      icon={<SparkleIcon size={16} />}
+      title="Better models"
+      blurb="Each meeting remembers which AI wrote its notes, tags and sorted it. When the model you use now is clearly better, redo that work here."
+      delay={60}
+    >
+      <Row label="Your AI now" hint={up.score != null ? `Rated ${Math.round(up.score)} of 100 for meeting notes` : "Not rated yet"}>
+        <span className="font-mono text-hint">{up.model}</span>
+      </Row>
+      {nothing && (
+        <p className="py-3.5 text-hint text-ink-soft">
+          Nothing to redo: your meetings were done by this model or one about as good.
+        </p>
+      )}
+      {up.notes.count > 0 && (
+        <Row label={`Notes for ${up.notes.count} meeting${up.notes.count === 1 ? "" : "s"}`} hint={`Written by ${from(up.notes.from)}`}>
+          <button
+            className="btn btn-sm btn-soft"
+            onClick={() =>
+              void api
+                .upgradeNotes()
+                .then((r) => {
+                  setNote(`Rewriting ${r.queued} meetings' notes, one after another. Ticked tasks stay ticked.`);
+                  onChanged();
+                  void load();
+                })
+                .catch((e: Error) => setNote(e.message))
+            }
+          >
+            Rewrite them
+          </button>
+        </Row>
+      )}
+      {up.tags.count > 0 && (
+        <Row label={`Tags on ${up.tags.count} meeting${up.tags.count === 1 ? "" : "s"}`} hint={`Made by ${from(up.tags.from)}`}>
+          <button className="btn btn-sm btn-soft" disabled={!!job?.active} onClick={() => start("tag", true)}>
+            Redo tags
+          </button>
+        </Row>
+      )}
+      {up.sorting.count > 0 && (
+        <Row label={`${up.sorting.count} meeting${up.sorting.count === 1 ? "" : "s"} sorted`} hint={`By ${from(up.sorting.from)}`}>
+          <button className="btn btn-sm btn-soft" disabled={!!job?.active} onClick={() => start("resort")}>
+            Re-sort
+          </button>
+        </Row>
+      )}
+      {note && <p className="pb-3.5 text-hint text-ink-soft">{note}</p>}
     </Section>
   );
 }
@@ -831,6 +914,7 @@ export default function Settings({
   health,
   native,
   workspaces,
+  defaultCount,
   onWorkspacesChanged,
   theme,
   onTheme,
@@ -839,6 +923,7 @@ export default function Settings({
   onSignOut,
 }: Props) {
   const [s, setS] = useState<SettingsT | null>(null);
+  const organize = useOrganize(onWorkspacesChanged);
   const [dir, setDir] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [tResult, setTResult] = useState<
@@ -992,10 +1077,13 @@ export default function Settings({
 
       <WorkspacesSection
         workspaces={workspaces}
+        defaultCount={defaultCount}
         onChanged={onWorkspacesChanged}
         auto={s.auto_workspace}
         onAuto={(v) => save({ auto_workspace: v })}
+        organize={organize}
       />
+      <UpgradesSection organize={organize} onChanged={onWorkspacesChanged} />
 
       <Section
         icon={<SparkleIcon size={16} />}
@@ -1098,6 +1186,7 @@ export default function Settings({
 
       <Section
         icon={<KeyIcon size={16} />}
+        id="providers"
         title="AI providers"
         blurb="Connect the models you want to use. Keys are stored in Trailmix's database and never shown again."
         delay={160}

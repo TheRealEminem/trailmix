@@ -228,6 +228,19 @@ final class MainWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKNavigationDe
             item("Copy", #selector(NSText.copy(_:)), "c"),
             item("Paste", #selector(NSText.paste(_:)), "v"),
             item("Select All", #selector(NSText.selectAll(_:)), "a"),
+            .separator(),
+            {
+                let spelling = NSMenuItem(title: "Spelling and Grammar", action: nil, keyEquivalent: "")
+                let menu = NSMenu(title: "Spelling and Grammar")
+                menu.addItem(item("Show Spelling and Grammar", #selector(NSText.showGuessPanel(_:)), ":"))
+                menu.addItem(item("Check Document Now", #selector(NSText.checkSpelling(_:)), ";"))
+                menu.addItem(.separator())
+                menu.addItem(item("Check Spelling While Typing", #selector(NSTextView.toggleContinuousSpellChecking(_:)), ""))
+                menu.addItem(item("Check Grammar With Spelling", #selector(NSTextView.toggleGrammarChecking(_:)), ""))
+                menu.addItem(item("Correct Spelling Automatically", #selector(NSTextView.toggleAutomaticSpellingCorrection(_:)), ""))
+                spelling.submenu = menu
+                return spelling
+            }(),
         ])
         submenu("View", [
             item("Reload", #selector(MainWindow.reload), "r", target: MainWindow.shared),

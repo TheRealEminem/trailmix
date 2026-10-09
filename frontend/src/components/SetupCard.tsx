@@ -1,15 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type {
+  DeviceAdvice,
   Health,
   NativeRecorder,
   OllamaStatus,
   SpeechModels,
+  Workspace,
 } from "../api";
 import { CheckIcon, CloseIcon } from "./icons";
 import SoundCheck, { soundCheckPassed } from "./SoundCheck";
+import { OrganizeProgress, WorkspaceSuggestions, useOrganize } from "./Workspaces";
 
 const DISMISSED_KEY = "trailmix.setupDismissed";
+const WORKSPACES_SKIPPED_KEY = "trailmix.workspacesSkipped";
 // Instruction-following families that write good notes (see llm_engine.preferred_ollama_model).
 const GOOD_MODELS = /^(qwen3|qwen2\.5|gemma3|llama3\.[12]|mistral|phi4)/i;
 
@@ -17,9 +21,28 @@ interface Props {
   health: Health | null;
   /** At least one meeting exists: the last step ("record your first meeting") is done. */
   hasMeetings: boolean;
+  /** How many meetings there are (workspace suggestions need a few). */
+  meetingCount: number;
+  workspaces: Workspace[];
   native: NativeRecorder | null;
-  onOpenSettings: () => void;
+  onOpenSettings: (section?: string) => void;
   onChanged: () => void;
+}
+
+function remembered(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function remember(key: string) {
+  try {
+    localStorage.setItem(key, "1");
+  } catch {
+    /* private window */
+  }
 }
 
 function Step({
@@ -64,6 +87,8 @@ function Step({
 export default function SetupCard({
   health,
   hasMeetings,
+  meetingCount,
+  workspaces,
   native,
   onOpenSettings,
   onChanged,
@@ -80,6 +105,26 @@ export default function SetupCard({
   const [speech, setSpeech] = useState<SpeechModels | null>(null);
   const [ollama, setOllama] = useState<OllamaStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [device, setDevice] = useState<DeviceAdvice | null>(null);
+  const [skippedSpaces, setSkippedSpaces] = useState(() => remembered(WORKSPACES_SKIPPED_KEY));
+  const organize = useOrganize(onChanged);
+  const sortedAfterSuggest = useRef(false);
+  // Once every suggested workspace is added, sort the meetings into them.
+  useEffect(() => {
+    const ideas = organize.job?.kind === "suggest" && !organize.job.active ? (organize.job.suggestions ?? []) : [];
+    const left = ideas.filter((i) => !workspaces.some((w) => w.name.toLowerCase() === i.name.toLowerCase()));
+    if (ideas.length && !left.length && !sortedAfterSuggest.current) {
+      sortedAfterSuggest.current = true;
+      organize.start("sort");
+    }
+  }, [workspaces, organize.job]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    api
+      .device()
+      .then(setDevice)
+      .catch(() => undefined);
+  }, []);
 
   const pulling = !!ollama?.pull?.active || !!ollama?.install?.active;
   useEffect(() => {
@@ -122,16 +167,19 @@ export default function SetupCard({
   const summaryDone = usingOllama
     ? !!ollama?.reachable && ollama.models.some((m) => GOOD_MODELS.test(m))
     : health.summary.ready;
-  if (nameDone && micDone && speechDone && summaryDone && hasMeetings)
+  // A Mac short on memory or disk: a cloud AI for notes is the recommendation (done once one is chosen).
+  const deviceDone = !device || device.verdict === "local" || !health.summary.local;
+  // Open while suggestions are waiting to be added, or meetings are being sorted into new workspaces.
+  const ideasLeft = (organize.job?.suggestions ?? []).filter(
+    (idea) => !workspaces.some((w) => w.name.toLowerCase() === idea.name.toLowerCase()),
+  ).length;
+  const spacesDone = skippedSpaces || (workspaces.length > 0 && !ideasLeft && !organize.job?.active);
+  if (nameDone && micDone && speechDone && summaryDone && hasMeetings && deviceDone && spacesDone)
     return null;
 
   const dismiss = () => {
     setDismissed(true);
-    try {
-      localStorage.setItem(DISMISSED_KEY, "1");
-    } catch {
-      /* ignore */
-    }
+    remember(DISMISSED_KEY);
   };
   const saveName = () => {
     const v = draft.trim();
@@ -181,6 +229,29 @@ export default function SetupCard({
         </button>
       </header>
       <ol className="divide-y divide-line px-5 pb-1 sm:px-6">
+        {device && (
+          <Step
+            done={deviceDone}
+            title={
+              deviceDone
+                ? `Your Mac: ${[device.chip, `${device.ram_gb} GB memory`, `${device.disk_free_gb} GB free`].filter(Boolean).join(" · ")}`
+                : device.verdict === "cloud"
+                  ? "Your Mac is short on space: use a cloud AI for notes"
+                  : "A cloud AI is recommended for notes on this Mac"
+            }
+          >
+            {device.notes.map((n) => (
+              <p key={n} className="mb-1">
+                {n}
+              </p>
+            ))}
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button className="btn btn-sm btn-primary" onClick={() => onOpenSettings("providers")}>
+                Add a cloud AI
+              </button>
+            </div>
+          </Step>
+        )}
         <Step
           done={nameDone}
           title={nameDone ? `Your name: ${name}` : "Your name"}
@@ -281,7 +352,7 @@ export default function SetupCard({
                     )}
                     <button
                       className="btn btn-sm btn-ghost"
-                      onClick={onOpenSettings}
+                      onClick={() => onOpenSettings()}
                     >
                       Use an API key instead
                     </button>
@@ -324,7 +395,7 @@ export default function SetupCard({
                     </button>
                     <button
                       className="btn btn-sm btn-ghost"
-                      onClick={onOpenSettings}
+                      onClick={() => onOpenSettings()}
                     >
                       Use an API key instead
                     </button>
@@ -345,12 +416,62 @@ export default function SetupCard({
               <div className="mt-2">
                 <button
                   className="btn btn-sm btn-soft"
-                  onClick={onOpenSettings}
+                  onClick={() => onOpenSettings()}
                 >
                   Open Settings
                 </button>
               </div>
             </>
+          )}
+        </Step>
+        <Step
+          done={spacesDone}
+          title={
+            workspaces.length
+              ? `Workspaces: ${workspaces.map((w) => w.name).join(", ")}`
+              : skippedSpaces
+                ? "Workspaces: maybe later"
+                : "Organize into workspaces (optional)"
+          }
+        >
+          Keep the parts of your life apart, like your job, a committee and
+          personal, and switch between them in the sidebar. Everything starts in
+          Default; Trailmix sorts meetings in as their notes are written.
+          {meetingCount >= 3 && (
+            <> It can also suggest workspaces from the topics of the meetings you have.</>
+          )}
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {meetingCount >= 3 && (
+              <button
+                className="btn btn-sm btn-primary"
+                disabled={!!organize.job?.active}
+                onClick={() => organize.start("suggest")}
+              >
+                Suggest from my meetings
+              </button>
+            )}
+            <button className="btn btn-sm btn-soft" onClick={() => onOpenSettings("workspaces")}>
+              Add my own
+            </button>
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={() => {
+                setSkippedSpaces(true);
+                remember(WORKSPACES_SKIPPED_KEY);
+              }}
+            >
+              Skip
+            </button>
+          </div>
+          <div className="mt-2">
+            <OrganizeProgress job={organize.job} />
+            {organize.error && <span className="text-trail-deep">{organize.error}</span>}
+          </div>
+          <WorkspaceSuggestions job={organize.job} existing={workspaces} onAdded={onChanged} />
+          {workspaces.length > 0 && !ideasLeft && !organize.job?.active && (
+            <button className="btn btn-sm btn-soft mt-2" onClick={() => organize.start("sort")}>
+              Sort my meetings into them
+            </button>
           )}
         </Step>
         <Step done={hasMeetings} title="Record your first meeting">
