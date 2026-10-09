@@ -114,6 +114,7 @@ export default function App() {
     }
   });
   const [allTasks, setAllTasks] = useState<TaskWithMeeting[]>([]);
+  const [questionCounts, setQuestionCounts] = useState<Record<string, number>>({});
   const [listLoaded, setListLoaded] = useState(false);
   const wide = useWide();
   const [drawer, setDrawer] = useState(false);
@@ -196,6 +197,10 @@ export default function App() {
   const refreshList = useCallback(async () => {
     try {
       void refreshWorkspaces(); // their meeting counts change with the list
+      void api
+        .questionCounts()
+        .then(setQuestionCounts)
+        .catch(() => undefined);
       setMeetings(await api.listMeetings());
       setListLoaded(true);
       setBackendDown(false);
@@ -688,6 +693,7 @@ export default function App() {
           workspaces={workspaces}
           workspace={workspace}
           onWorkspace={setWorkspace}
+          questions={questionCounts}
         />
       </div>
       {drawer && !wide && (
@@ -856,6 +862,10 @@ export default function App() {
               }
               onExport={() => void handleExport()}
               workspaces={workspaces}
+              onChanged={() => {
+                void refreshSelected(meeting.id);
+                void refreshList();
+              }}
               onRetitle={async () => {
                 try {
                   await api.retitle(meeting.id);

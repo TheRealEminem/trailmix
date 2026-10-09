@@ -46,6 +46,7 @@ import model_ranks
 import workspaces
 import file_import
 import feedback
+import questions
 import transcribe_remote
 
 log = logging.getLogger("trailmix")
@@ -950,6 +951,40 @@ def set_meeting_workspace(meeting_id: int, body: MeetingWorkspace):
         raise HTTPException(404, "No such workspace")
     db.update_meeting(meeting_id, workspace_id=body.workspace_id, workspace_auto=0)
     _reexport(meeting_id)
+    return {"ok": True}
+
+
+class AnswerRequest(BaseModel):
+    value: str
+
+
+@app.get("/api/meetings/{meeting_id}/questions")
+def meeting_questions(meeting_id: int):
+    """What the AI wasn't sure about in this meeting, to ask you (questions.py)."""
+    _get_or_404(meeting_id)
+    return questions.open_for(meeting_id)
+
+
+@app.get("/api/questions")
+def question_counts():
+    """{meeting id: open questions}, for the sidebar."""
+    return {str(k): v for k, v in questions.open_counts().items()}
+
+
+@app.post("/api/questions/{question_id}")
+def answer_question(question_id: int, body: AnswerRequest):
+    """Your answer: fixes the meeting (a name, a misheard word, who was on the call, its workspace)."""
+    try:
+        meeting_id = questions.answer(question_id, body.value[:80])
+    except KeyError:
+        raise HTTPException(404, "No such question")
+    _reexport(meeting_id)
+    return {"ok": True}
+
+
+@app.post("/api/questions/{question_id}/dismiss")
+def dismiss_question(question_id: int):
+    questions.dismiss(question_id)
     return {"ok": True}
 
 

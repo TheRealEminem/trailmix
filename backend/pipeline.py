@@ -26,6 +26,7 @@ import cleanup
 import database as db
 import exporter
 import live
+import questions
 import llm_engine
 import meeting_text
 import mlx_engine
@@ -180,7 +181,8 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
                 meeting_text.transcript_text(m, cfg), cfg, choice,
                 m["requested_template"] or cfg["summary_template"], meeting_text.moments(m, cfg),
                 want_title=bool(cfg["auto_title"] and m["title_auto"]),
-                about=f"This meeting lasted {minutes:.0f} minutes. {meeting_text.speakers_note(m, cfg)}",
+                about=f"This meeting lasted {minutes:.0f} minutes. {meeting_text.speakers_note(m, cfg)} "
+                      f"{questions.vocabulary_prompt().replace('Names and terms:', 'Names and terms that may come up, spelled correctly:')}".strip(),
                 minutes=minutes,
                 on_progress=lambda what: db.update_meeting(meeting_id, wait_reason=what),
             )
@@ -208,7 +210,8 @@ def _transcribe_local(m: dict) -> tuple[list[dict], bool, float]:
                                     + (f": {p:.0%}" if p is not None else "…")),
     )
     proc = subprocess.Popen(
-        [sys.executable, str(Path(__file__).with_name("transcribe_worker.py")), str(store.track_dir(m))],
+        [sys.executable, str(Path(__file__).with_name("transcribe_worker.py")), str(store.track_dir(m)),
+         questions.vocabulary_prompt()[:300]],  # names and terms you confirmed, so they're spelled right
         stdout=subprocess.PIPE, text=True, cwd=Path(__file__).parent,  # stderr: model download progress -> server log
     )
     tracks, duration, per_track, done = [], 0.0, {}, False
@@ -265,7 +268,7 @@ def _finish_live(m: dict, cfg: dict) -> tuple[list[dict], bool, float] | None:
             off = covered / store.SAMPLE_RATE
             for a, b in vad.speech_regions(tail):
                 if local:
-                    found = mlx_engine.transcribe_final(tail[a:b])
+                    found = mlx_engine.transcribe_final(tail[a:b], questions.vocabulary_prompt()[:300] or None)
                 else:
                     found = transcribe_remote.transcribe(tail[a:b], cfg["transcribe_url"], cfg["transcribe_api_key"],
                                                          cfg["transcribe_model"], mlx_engine.LANGUAGE)
