@@ -34,11 +34,43 @@ export interface Workspace {
 /** Which meetings you're looking at: all of them, one workspace, or the ones in none yet. */
 export type WorkspaceFilter = "all" | "none" | number;
 
-export interface SortJob {
+export type OrganizeKind = "sort" | "resort" | "tag" | "suggest";
+
+export interface OrganizeJob {
   active?: boolean;
+  kind?: OrganizeKind;
   total?: number;
   done?: number;
   sorted?: number;
+  /** The AI model doing it. */
+  model?: string;
+  /** After "suggest": workspace ideas from your meetings' tags. */
+  suggestions?: { name: string; about: string }[] | null;
+  error?: string;
+}
+
+/** Work an older, weaker model did that the model you have now would do better. */
+export interface Upgrades {
+  model: string;
+  score: number | null;
+  notes: { count: number; from: Record<string, number> };
+  tags: { count: number; from: Record<string, number> };
+  sorting: { count: number; from: Record<string, number> };
+}
+
+/** What this Mac can comfortably run, for setup. */
+export interface DeviceAdvice {
+  verdict: "local" | "mixed" | "cloud";
+  chip: string;
+  ram_gb: number;
+  disk_free_gb: number;
+  notes: string[];
+}
+
+export interface FileImport {
+  kind: "recording" | "transcript";
+  id: number | null;
+  skipped: boolean;
 }
 
 export interface SearchHit extends MeetingListItem {
@@ -145,7 +177,11 @@ export interface Meeting extends MeetingListItem {
   export_folder: string | null;
   /** Trailmix sorted it there (rather than you). */
   workspace_auto: number;
-  draft: DraftLine[] | null;
+  /** e.g. "whisper-large-v3-turbo, while recording", or where an imported transcript came from. */
+  transcribed_with: string | null;
+  /** The model that wrote the notes, e.g. "qwen2.5:7b". */
+  summary_model: string | null;
+  tags: string[];
   exported_paths: string[];
   export_error: string | null;
   title_auto: boolean;
@@ -365,8 +401,19 @@ export const api = {
   deleteWorkspace: (id: number) => request<{ ok: true }>(`/workspaces/${id}`, json("DELETE")),
   setMeetingWorkspace: (id: number, workspace_id: number | null) =>
     request<{ ok: true }>(`/meetings/${id}/workspace`, json("POST", { workspace_id })),
-  sortIntoWorkspaces: () => request<SortJob>("/workspaces/sort", json("POST")),
-  sortStatus: () => request<SortJob>("/workspaces/sort"),
+  organize: (kind: OrganizeKind, only_older = false) =>
+    request<OrganizeJob>("/organize", json("POST", { kind, only_older })),
+  organizeStatus: () => request<OrganizeJob>("/organize"),
+  upgrades: () => request<Upgrades>("/upgrades"),
+  upgradeNotes: () => request<{ queued: number }>("/upgrades/notes", json("POST")),
+  retitle: (id: number) => request<{ title: string }>(`/meetings/${id}/retitle`, json("POST")),
+  device: () => request<DeviceAdvice>("/device"),
+  /** One file as the request body (streamed to disk on the server, however big). */
+  importFile: (file: File) =>
+    request<FileImport>(
+      `/import/file?name=${encodeURIComponent(file.name)}&modified=${file.lastModified || 0}`,
+      { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream" } },
+    ),
   streamUrl: (id: number, draft: boolean) => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     return `${proto}://${location.host}/api/meetings/${id}/stream?draft=${draft ? 1 : 0}&client=web`;

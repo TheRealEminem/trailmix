@@ -96,7 +96,9 @@ def delete_audio(meeting: dict) -> None:
 def expires_at(meeting: dict) -> str | None:
     if RETENTION_DAYS <= 0 or meeting.get("audio_deleted") or meeting.get("keep_audio"):
         return None
-    created = datetime.fromisoformat(meeting["created_at"].replace("Z", "+00:00"))
+    # An imported recording's 30 days start when it was imported, not when it was recorded.
+    since = meeting.get("imported_at") or meeting["created_at"]
+    created = datetime.fromisoformat(since.replace("Z", "+00:00"))
     return (created + timedelta(days=RETENTION_DAYS)).isoformat()
 
 
@@ -109,7 +111,7 @@ def sweep_expired() -> int:
     for m in db.meetings_with_audio():
         if m["status"] not in ("done", "error"):
             continue
-        created = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00"))
+        created = datetime.fromisoformat(m["kept_since"].replace("Z", "+00:00"))
         if created < cutoff:
             delete_audio(db.get_meeting(m["id"]))
             cleaned += 1

@@ -42,7 +42,9 @@ import recorder
 import resources
 import settings
 import templates
+import model_ranks
 import workspaces
+import file_import
 import transcribe_remote
 
 log = logging.getLogger("trailmix")
@@ -53,6 +55,7 @@ UI_DIR = Path(os.getenv("TRAILMIX_UI_DIR", Path(__file__).resolve().parent.paren
 async def _sweep_loop():
     while True:
         await run_in_threadpool(store.sweep_expired)
+        await run_in_threadpool(model_ranks.refresh)  # newer model rankings from the Trailmix site, once a day
         await asyncio.sleep(SWEEP_INTERVAL_S)
 
 
@@ -98,6 +101,7 @@ async def lifespan(_: FastAPI):
     _exit_with_parent()
     db.init_db()
     models.prefetch()
+    file_import.clear_leftovers()  # temporary copies from an import the last run didn't finish
     pipeline.recover_unfinished()
     sweeper = asyncio.create_task(_sweep_loop())
     warmer = asyncio.create_task(_warm_loop()) if os.getenv("TRAILMIX_WARM") != "0" else None
@@ -194,11 +198,12 @@ def _get_or_404(meeting_id: int) -> dict:
 def _present(m: dict) -> dict:
     """Public shape of a meeting: hides file paths, adds parsed fields and audio info."""
     hidden = ("audio_path", "audio_dir", "segments_json", "requested_provider", "draft_json", "exported_paths", "live_json",
+              "tags_json",
               "bookmarks_json", "speaker_names_json", "qa_json")
     out = {k: v for k, v in m.items() if k not in hidden}
     cfg = settings.get_all()
     out["segments"] = meeting_text.segments(m) or None
-    out["draft"] = json.loads(m["draft_json"]) if m.get("draft_json") else None
+    out["tags"] = json.loads(m["tags_json"]) if m.get("tags_json") else []
     out["exported_paths"] = json.loads(m["exported_paths"]) if m.get("exported_paths") else []
     out["bookmarks"] = meeting_text.bookmarks(m)
     out["speaker_names"] = meeting_text.speaker_names(m, cfg)
@@ -345,6 +350,38 @@ def import_text(body: TextImport):
     return {"id": meeting_id}
 
 
+@app.post("/api/import/file")
+async def import_file(request: Request, name: str, modified: float = 0):
+    """One file, sent as the request body (streamed to disk, so a long video never sits in memory): a
+    recording (audio or video) or a transcript from another app. `modified`: the file's date (ms), used when
+    the file itself doesn't say when it was recorded."""
+    what = file_import.kind(name)
+    if not what:
+        raise HTTPException(415, f"{name}: Trailmix can't import this kind of file")
+    when = datetime.fromtimestamp(modified / 1000, timezone.utc) if modified else datetime.now(timezone.utc)
+    cfg = settings.get_all()
+    if what == "transcript":
+        data = await request.body()
+        try:
+            meeting_id = await run_in_threadpool(file_import.import_transcript, name, data, when, {cfg["your_name"]})
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        return {"kind": what, "id": meeting_id, "skipped": meeting_id is None}
+    temp = file_import.temp_path(name)
+    try:
+        with temp.open("wb") as out:
+            async for chunk in request.stream():
+                out.write(chunk)
+    except Exception:
+        temp.unlink(missing_ok=True)
+        raise
+    try:
+        meeting_id = await run_in_threadpool(file_import.import_recording, name, temp, when)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return {"kind": what, "id": meeting_id, "skipped": meeting_id is None}
+
+
 @app.post("/api/import/trailmix")
 async def import_trailmix(files: list[UploadFile] = File(...), paths: list[str] = Form(default=[])):
     """Meetings exported from Trailmix: a meeting folder, a whole export folder, or meeting.json files. Each
@@ -456,6 +493,12 @@ def recorder_sound_check():
     if not recorder.request("sound-check"):
         raise HTTPException(409, "The menu bar recorder isn't running")
     return {"ok": True}
+
+
+@app.get("/api/device")
+def device():
+    """What this Mac can comfortably run (memory, disk, chip), for the setup checklist."""
+    return resources.device_advice()
 
 
 @app.get("/api/models")
@@ -909,21 +952,98 @@ def set_meeting_workspace(meeting_id: int, body: MeetingWorkspace):
     return {"ok": True}
 
 
-@app.post("/api/workspaces/sort", status_code=202)
-def sort_into_workspaces():
-    """Sorts every meeting that isn't in a workspace yet (in the background; see GET)."""
-    if not db.list_workspaces():
+class OrganizeRequest(BaseModel):
+    kind: str                # sort | resort | tag | suggest (see workspaces.start)
+    only_older: bool = False  # tag: also redo tags made by a weaker model than yours now
+
+
+@app.post("/api/organize", status_code=202)
+def organize(body: OrganizeRequest):
+    """Tags, sorts or re-sorts meetings, or suggests workspaces, in the background (follow it with GET)."""
+    if body.kind not in ("sort", "resort", "tag", "suggest"):
+        raise HTTPException(422, "Unknown job")
+    if body.kind in ("sort", "resort") and not db.list_workspaces():
         raise HTTPException(409, "Add a workspace first")
     cfg = settings.get_all()
     _local_llm_paused(cfg)
-    if not workspaces.sort_all(cfg):
-        raise HTTPException(409, "Already sorting")
+    if not workspaces.start(body.kind, cfg, body.only_older):
+        raise HTTPException(409, "Trailmix is already organizing your meetings")
     return workspaces.job_status()
 
 
-@app.get("/api/workspaces/sort")
-def sort_status():
+@app.get("/api/organize")
+def organize_status():
     return workspaces.job_status()
+
+
+# ── Redoing work with a better model ────────────────────────────────────
+
+def _upgradable(cfg: dict) -> dict:
+    """What the AI you have now would do better than the model that did it, per job."""
+    current = llm_engine.model_for(llm_engine.chain("auto", cfg)[0], cfg)
+    with db.connect() as conn:
+        rows = conn.execute(
+            """SELECT id, summary, summary_provider, summary_model, tags_json, tags_model, workspace_id,
+                      workspace_auto, workspace_model, status FROM meetings WHERE status = 'done'""").fetchall()
+    ours = set(llm_engine.PROVIDERS)
+    notes = [r for r in rows if r["summary"] and r["summary_provider"] in ours
+             and model_ranks.better(current, r["summary_model"])]
+    tags = [r for r in rows if r["tags_json"] and model_ranks.better(current, r["tags_model"])]
+    sorting = [r for r in rows if r["workspace_auto"] and r["workspace_model"]
+               and model_ranks.better(current, r["workspace_model"])]
+
+    def by_model(items, key):
+        counts: dict[str, int] = {}
+        for r in items:
+            counts[r[key] or "an earlier model"] = counts.get(r[key] or "an earlier model", 0) + 1
+        return counts
+
+    return {"model": current, "score": model_ranks.score(current),
+            "notes": {"count": len(notes), "ids": [r["id"] for r in notes], "from": by_model(notes, "summary_model")},
+            "tags": {"count": len(tags), "from": by_model(tags, "tags_model")},
+            "sorting": {"count": len(sorting), "from": by_model(sorting, "workspace_model")}}
+
+
+@app.get("/api/upgrades")
+def upgrades():
+    """Meetings whose notes, tags or workspace came from a weaker model than the one you have now."""
+    data = _upgradable(settings.get_all())
+    data["notes"].pop("ids")
+    return data
+
+
+@app.post("/api/upgrades/notes", status_code=202)
+def upgrade_notes():
+    """Rewrites the notes made by a weaker model, one meeting after another (your ticked tasks stay ticked)."""
+    cfg = settings.get_all()
+    _local_llm_paused(cfg)
+    ids = _upgradable(cfg)["notes"]["ids"]
+    for meeting_id in ids:
+        db.update_meeting(meeting_id, status="queued", wait_reason=None, summary=None, summary_error=None,
+                          requested_provider="auto")
+        pipeline.enqueue(meeting_id, go=frozenset({"summarize"}))
+    return {"queued": len(ids)}
+
+
+@app.post("/api/meetings/{meeting_id}/retitle")
+def retitle(meeting_id: int):
+    """A new title from the meeting's notes (it's yours to rename again; automatic titling won't change it)."""
+    m = _get_or_404(meeting_id)
+    if not m["summary"]:
+        raise HTTPException(409, "This meeting has no notes to name it from yet")
+    cfg = settings.get_all()
+    _local_llm_paused(cfg)
+    notes = llm_engine.place_moments(m["summary"], [])[:6000]
+    try:
+        title, _ = llm_engine.run_chain("auto", cfg, lambda pid: llm_engine.clean_title(
+            llm_engine.generate(pid, cfg, llm_engine.TITLE_PROMPT.format(summary=notes))))
+    except llm_engine.LLMError as e:
+        raise HTTPException(502, str(e))
+    if not title:
+        raise HTTPException(502, "The AI didn't come up with a usable title; try again")
+    db.update_meeting(meeting_id, title=title, title_auto=1)
+    _reexport(meeting_id)
+    return {"title": title}
 
 
 @app.post("/api/ask")

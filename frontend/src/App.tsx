@@ -746,6 +746,7 @@ export default function App() {
               health={health}
               native={native}
               workspaces={workspaces}
+              defaultCount={meetings.filter((x) => !x.workspace_id).length}
               onWorkspacesChanged={() => void refreshList()}
               theme={theme.pref}
               onTheme={theme.setPref}
@@ -792,9 +793,24 @@ export default function App() {
                 <SetupCard
                   health={health}
                   hasMeetings={meetings.length > 0}
+                  meetingCount={meetings.length}
+                  workspaces={workspaces}
                   native={native}
-                  onOpenSettings={() => goView("settings")}
-                  onChanged={() => void refreshHealth()}
+                  onOpenSettings={(section) => {
+                    goView("settings");
+                    if (section)
+                      setTimeout(
+                        () =>
+                          document
+                            .getElementById(section)
+                            ?.scrollIntoView({ behavior: "smooth", block: "start" }),
+                        150,
+                      );
+                  }}
+                  onChanged={() => {
+                    void refreshHealth();
+                    void refreshList();
+                  }}
                 />
               )}
               <Recorder
@@ -839,6 +855,15 @@ export default function App() {
               }
               onExport={() => void handleExport()}
               workspaces={workspaces}
+              onRetitle={async () => {
+                try {
+                  await api.retitle(meeting.id);
+                  await refreshSelected(meeting.id);
+                  await refreshList();
+                } catch (e) {
+                  fail((e as Error).message);
+                }
+              }}
               onWorkspace={(id) =>
                 void guarded(
                   () => api.setMeetingWorkspace(meeting.id, id),
