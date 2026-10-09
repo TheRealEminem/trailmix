@@ -44,6 +44,16 @@ CREATE TABLE IF NOT EXISTS action_items (
 );
 CREATE INDEX IF NOT EXISTS action_items_meeting ON action_items(meeting_id);
 
+-- Workspaces: the parts of your life meetings belong to (a job, a committee, personal). A meeting has one or
+-- none (meetings.workspace_id). `about` describes it, for sorting meetings into it automatically.
+CREATE TABLE IF NOT EXISTS workspaces (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    name      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    color     TEXT NOT NULL DEFAULT 'forest',
+    about     TEXT NOT NULL DEFAULT '',
+    position  INTEGER NOT NULL DEFAULT 0
+);
+
 -- Full-text index over what you'd search for; rowid = meetings.id. Kept in sync by update_meeting.
 CREATE VIRTUAL TABLE IF NOT EXISTS meetings_fts USING fts5(title, transcript, summary, tokenize='porter unicode61');
 """
@@ -70,6 +80,8 @@ _ADDED_COLUMNS = {
     "uid": "TEXT",                                   # permanent id, kept in exports, so re-imports are recognised
     "keep_audio": "INTEGER NOT NULL DEFAULT 0",      # "Keep forever": exempt from the audio clean-up, archived
     "live_json": "TEXT",                             # final transcript made while recording (live.py), if any
+    "workspace_id": "INTEGER",                       # workspaces.id, or NULL: not sorted into one yet
+    "workspace_auto": "INTEGER NOT NULL DEFAULT 0",  # Trailmix chose the workspace (you can still change it)
 }
 
 _FTS_FIELDS = ("title", "transcript", "summary")
@@ -120,11 +132,11 @@ def _reindex(conn, meeting_id: int) -> None:
     )
 
 
-def create_meeting(title: str, title_auto: bool) -> int:
+def create_meeting(title: str, title_auto: bool, workspace_id: int | None = None) -> int:
     with connect() as conn:
         cur = conn.execute(
-            "INSERT INTO meetings (title, title_auto, status, uid) VALUES (?, ?, 'recording', ?)",
-            (title, int(title_auto), uuid.uuid4().hex),
+            "INSERT INTO meetings (title, title_auto, status, uid, workspace_id) VALUES (?, ?, 'recording', ?, ?)",
+            (title, int(title_auto), uuid.uuid4().hex, workspace_id),
         )
         meeting_id = cur.lastrowid
         audio_dir = AUDIO_DIR / str(meeting_id)
@@ -167,7 +179,7 @@ def imported_ids(source: str) -> dict[str, int]:
 def list_meetings() -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, title, created_at, duration_sec, status FROM meetings ORDER BY id DESC"
+            "SELECT id, title, created_at, duration_sec, status, workspace_id FROM meetings ORDER BY created_at DESC, id DESC"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -188,9 +200,11 @@ def get_meetings(ids: list[int]) -> list[dict]:
     return [by_id[i] for i in ids if i in by_id]
 
 
-def recent_meetings(limit: int) -> list[dict]:
+def recent_meetings(limit: int, workspace_id: int | None = None) -> list[dict]:
+    within = "WHERE workspace_id = ?" if workspace_id else ""
     with connect() as conn:
-        rows = conn.execute("SELECT * FROM meetings ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        rows = conn.execute(f"SELECT * FROM meetings {within} ORDER BY created_at DESC, id DESC LIMIT ?",
+                            (*([workspace_id] if workspace_id else []), limit)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -213,7 +227,7 @@ _UPDATABLE = {
     "title", "status", "wait_reason", "duration_sec", "transcript", "summary", "summary_provider",
     "summary_error", "error", "has_system", "audio_deleted", "segments_json", "transcribed",
     "requested_provider", "requested_template", "title_auto", "draft_json", "exported_paths", "export_error",
-    "bookmarks_json", "speaker_names_json", "qa_json", "keep_audio", "audio_dir", "live_json",
+    "bookmarks_json", "speaker_names_json", "qa_json", "keep_audio", "audio_dir", "live_json", "workspace_id", "workspace_auto",
 }
 _JSON_FIELDS = {"segments_json", "draft_json", "exported_paths", "bookmarks_json", "speaker_names_json", "qa_json"}
 
@@ -264,17 +278,19 @@ def fts_query(text: str, any_term: bool = False) -> str | None:
     return (" OR " if any_term else " AND ").join(terms)
 
 
-def search(text: str, limit: int = 30, any_term: bool = False) -> list[dict]:
+def search(text: str, limit: int = 30, any_term: bool = False, workspace_id: int | None = None) -> list[dict]:
+    """Best matches first. `workspace_id`: only meetings in that workspace."""
     q = fts_query(text, any_term)
     if not q:
         return []
+    within = "AND m.workspace_id = ?" if workspace_id else ""
     with connect() as conn:
         rows = conn.execute(
-            f"""SELECT m.id, m.title, m.created_at, m.duration_sec, m.status,
+            f"""SELECT m.id, m.title, m.created_at, m.duration_sec, m.status, m.workspace_id,
                        snippet(meetings_fts, -1, '{HIT_START}', '{HIT_END}', '…', 14) AS snippet
                 FROM meetings_fts JOIN meetings m ON m.id = meetings_fts.rowid
-                WHERE meetings_fts MATCH ? ORDER BY bm25(meetings_fts, 5.0, 1.0, 2.0) LIMIT ?""",
-            (q, limit),
+                WHERE meetings_fts MATCH ? {within} ORDER BY bm25(meetings_fts, 5.0, 1.0, 2.0) LIMIT ?""",
+            (q, *([workspace_id] if workspace_id else []), limit),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -308,9 +324,10 @@ def tasks_for(meeting_id: int) -> list[dict]:
 def all_tasks() -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
-            """SELECT a.id, a.text, a.done, a.meeting_id, m.title AS meeting_title, m.created_at AS meeting_created_at
+            """SELECT a.id, a.text, a.done, a.meeting_id, m.title AS meeting_title, m.created_at AS meeting_created_at,
+                      m.workspace_id
                FROM action_items a JOIN meetings m ON m.id = a.meeting_id
-               ORDER BY a.done, m.id DESC, a.position"""
+               ORDER BY a.done, m.created_at DESC, m.id DESC, a.position"""
         ).fetchall()
     return [{**dict(r), "done": bool(r["done"])} for r in rows]
 
@@ -323,3 +340,59 @@ def set_task_done(task_id: int, done: bool) -> int | None:
             return None
         conn.execute("UPDATE action_items SET done = ? WHERE id = ?", (int(done), task_id))
     return row["meeting_id"]
+
+
+# ── Workspaces ──────────────────────────────────────────────────────────
+
+WORKSPACE_COLORS = ("forest", "sky", "sun", "trail", "ink")
+
+
+def list_workspaces() -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute(
+            """SELECT w.*, (SELECT count(*) FROM meetings m WHERE m.workspace_id = w.id) AS meetings
+               FROM workspaces w ORDER BY w.position, w.id"""
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_workspace(workspace_id: int) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def workspace_by_name(name: str) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM workspaces WHERE name = ?", (name.strip(),)).fetchone()
+    return dict(row) if row else None
+
+
+def create_workspace(name: str, color: str = "", about: str = "") -> int:
+    with connect() as conn:
+        count, top = conn.execute("SELECT count(*), coalesce(max(position), -1) FROM workspaces").fetchone()
+        color = color if color in WORKSPACE_COLORS else WORKSPACE_COLORS[count % len(WORKSPACE_COLORS)]
+        return conn.execute("INSERT INTO workspaces (name, color, about, position) VALUES (?, ?, ?, ?)",
+                            (name.strip(), color, about.strip(), top + 1)).lastrowid
+
+
+def update_workspace(workspace_id: int, **fields) -> None:
+    allowed = {k: v for k, v in fields.items() if k in ("name", "color", "about", "position") and v is not None}
+    if not allowed:
+        return
+    with connect() as conn:
+        conn.execute(f"UPDATE workspaces SET {', '.join(f'{k} = ?' for k in allowed)} WHERE id = ?",
+                     (*allowed.values(), workspace_id))
+
+
+def delete_workspace(workspace_id: int) -> None:
+    """Its meetings stay, just not in a workspace any more."""
+    with connect() as conn:
+        conn.execute("UPDATE meetings SET workspace_id = NULL, workspace_auto = 0 WHERE workspace_id = ?", (workspace_id,))
+        conn.execute("DELETE FROM workspaces WHERE id = ?", (workspace_id,))
+
+
+def unsorted_meeting_ids() -> list[int]:
+    with connect() as conn:
+        return [r["id"] for r in conn.execute(
+            "SELECT id FROM meetings WHERE workspace_id IS NULL AND status != 'recording' ORDER BY created_at DESC")]

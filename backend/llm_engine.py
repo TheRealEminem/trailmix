@@ -147,7 +147,7 @@ def ollama_ram_needed_gb(cfg: dict) -> float:
     return (ollama_model_size_gb(cfg) or 0) * 1.1 + 1.5
 
 
-def _ollama(cfg: dict, prompt: str, system: str | None, keep_alive: str) -> str:
+def _ollama(cfg: dict, prompt: str, system: str | None, keep_alive: str, temperature: float = 0.2) -> str:
     model = model_for("ollama", cfg)
     if not model:
         raise LLMError(f"Ollama isn't reachable at {cfg['ollama_url']} (or has no models installed)")
@@ -156,7 +156,7 @@ def _ollama(cfg: dict, prompt: str, system: str | None, keep_alive: str) -> str:
         "prompt": prompt,
         "stream": False,
         "keep_alive": keep_alive,
-        "options": {"num_ctx": OLLAMA_NUM_CTX, "temperature": 0.2},
+        "options": {"num_ctx": OLLAMA_NUM_CTX, "temperature": temperature},
     }
     if system:
         body["system"] = system
@@ -245,12 +245,14 @@ def _gemini(cfg: dict, prompt: str, system: str | None) -> str:
     return "".join(p.get("text", "") for p in parts)
 
 
-def generate(pid: str, cfg: dict, prompt: str, system: str | None = None, keep_alive: str | None = None) -> str:
+def generate(pid: str, cfg: dict, prompt: str, system: str | None = None, keep_alive: str | None = None,
+             exact: bool = False) -> str:
+    """`exact`: the same answer every time (no sampling) where the provider allows it, for picking from a list."""
     ok, why = configured(pid, cfg)
     if not ok:
         raise LLMError(why)
     if pid == "ollama":
-        text = _ollama(cfg, prompt, system, keep_alive or OLLAMA_KEEP_ALIVE)
+        text = _ollama(cfg, prompt, system, keep_alive or OLLAMA_KEEP_ALIVE, 0.0 if exact else 0.2)
     elif pid == "anthropic":
         text = _anthropic(cfg, prompt, system)
     elif pid == "gemini":
@@ -381,6 +383,28 @@ def _drop_stray_none(lines: list[str]) -> list[str]:
 
 
 _ACTION_HEADING = re.compile(r"^#{1,4}\s*action items\b", re.I | re.M)
+_MOMENTS_HEADING = re.compile(r"^#{1,4}\s*flagged moments\b", re.I)
+
+
+def place_moments(summary: str, moments: list[str]) -> str:
+    """The notes' "Flagged Moments" section, made from the real flags (what was being said at each one),
+    just before Action Items. Any such section the model wrote anyway is dropped: they invent flags."""
+    out, skipping = [], False
+    for line in summary.splitlines():
+        if re.match(r"^#{1,4}\s", line):
+            skipping = bool(_MOMENTS_HEADING.match(line))
+        if not skipping:
+            out.append(line)
+    summary = "\n".join(out).strip()
+    if not moments:
+        return summary
+    section = "## Flagged Moments\n" + "\n".join(f"- {m}" for m in moments)
+    lines = summary.splitlines()
+    at = next((i for i, ln in enumerate(lines) if _ACTION_HEADING.match(ln)), None)
+    if at is None:
+        return f"{summary}\n\n{section}"
+    before, after = "\n".join(lines[:at]).rstrip(), "\n".join(lines[at:])
+    return f"{before}\n\n{section}\n\n{after}" if before else f"{section}\n\n{after}"
 _TIMESTAMP = re.compile(r"^\[(\d+(?::\d\d)+)\]", re.M)
 
 
@@ -433,6 +457,7 @@ def summarize(transcript: str, cfg: dict, choice: str, template: str, moments: l
             system, prompt = templates.actions_prompt(material, from_notes, about)
             actions = tidy(generate(pid, cfg, prompt, system=system, keep_alive=hold))
             summary += "\n\n" + (actions if _ACTION_HEADING.search(actions) else "## Action Items\n- None")
+        summary = place_moments(summary, moments)
         if not want_title:
             unload(pid, cfg)
         title = None

@@ -67,6 +67,11 @@ def snapshot() -> dict:
     }
 
 
+def has_room(required_gb: float) -> bool:
+    """Enough free memory right now for a model this size, with the usual headroom (no swapping)."""
+    return psutil.virtual_memory().available / GB >= required_gb + HEADROOM_GB
+
+
 def check(required_gb: float, what: str) -> str | None:
     """Returns None if the model can run now, otherwise a human-readable reason to wait.
 

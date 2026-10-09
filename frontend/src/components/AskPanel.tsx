@@ -17,6 +17,8 @@ interface Entry {
 interface Props {
   /** Ask one meeting (with its saved history), or omit to ask across every meeting. */
   meetingId?: number;
+  /** Asking across meetings: only those in this workspace. */
+  workspaceId?: number | null;
   history?: QA[];
   health: Health | null;
   onOpenMeeting?: (id: number) => void;
@@ -27,7 +29,7 @@ interface Props {
 const MEETING_PROMPTS = ["What was decided?", "What did they commit to, and by when?", "Write a 3-bullet update I can paste in Slack"];
 const ALL_PROMPTS = ["What did I promise to do recently?", "When did we last talk about pricing?", "What's still unresolved across my meetings?"];
 
-export default function AskPanel({ meetingId, history = [], health, onOpenMeeting, onError, onCleared }: Props) {
+export default function AskPanel({ meetingId, workspaceId = null, history = [], health, onOpenMeeting, onError, onCleared }: Props) {
   const [entries, setEntries] = useState<Entry[]>(history);
   const [question, setQuestion] = useState("");
   const [pending, setPending] = useState<string | null>(null); // the question being answered
@@ -55,7 +57,7 @@ export default function AskPanel({ meetingId, history = [], health, onOpenMeetin
         const e = await api.askMeeting(meetingId, q);
         setEntries((xs) => [...xs, e]);
       } else {
-        const r = await api.askAll(q);
+        const r = await api.askAll(q, workspaceId);
         setEntries((xs) => [...xs, { q, a: r.answer, provider: r.provider, sources: r.sources }]);
       }
     } catch (e) {

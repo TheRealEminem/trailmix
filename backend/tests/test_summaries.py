@@ -95,3 +95,15 @@ def test_excerpt_keeps_the_relevant_lines_in_order():
     text = meeting_text.excerpt("\n".join(lines), "What is the pilot budget?", 200)
     assert "twelve thousand" in text and len(text) <= 200 + 10
     assert text.index("[00:29]") < text.index("[00:30]") < text.index("[00:31]")
+
+
+def test_flagged_moments_come_from_the_real_flags_not_the_model():
+    import llm_engine
+
+    written = ("## Flagged Moments\n- [ ] 00:00: Mark introduces Jeff.\n- [ ] 00:11: Mark mentions sunsets.\n\n"
+               "## Overview\nThe commission met.\n\n## Action Items\n- [ ] Mark: send the agenda")
+    notes = llm_engine.place_moments(written, ["[10:06] Them: Let's postpone the code amendment"])
+    assert "introduces Jeff" not in notes
+    assert notes.index("## Overview") < notes.index("## Flagged Moments") < notes.index("## Action Items")
+    assert "- [10:06] Them: Let's postpone the code amendment" in notes
+    assert "Flagged Moments" not in llm_engine.place_moments(written, [])  # no flags, no section

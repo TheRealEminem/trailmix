@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../api";
-import type { MeetingListItem, SearchHit } from "../api";
+import type { MeetingListItem, SearchHit, Workspace, WorkspaceFilter } from "../api";
 import { dayGroup, formatDuration, formatTime } from "../format";
 import { ChatIcon, CheckSquareIcon, CloseIcon, DownloadIcon, MicIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons";
 import { Logo } from "./illustrations";
 import SystemStatus from "./SystemStatus";
 import { Pulse, Skeleton, Spinner, StatusChip } from "./ui";
+import { WorkspaceDot, WorkspaceSwitcher, inWorkspace } from "./Workspaces";
 
 export type View = "main" | "settings" | "tasks" | "ask" | "import";
 
@@ -24,6 +25,9 @@ interface Props {
   openTasks: number;
   /** In the narrow-window drawer, where glass over busy content reads as smudges. */
   opaque?: boolean;
+  workspaces: Workspace[];
+  workspace: WorkspaceFilter;
+  onWorkspace: (w: WorkspaceFilter) => void;
 }
 
 /** Renders a search snippet, turning the … markers into highlights. */
@@ -63,7 +67,20 @@ function NavItem({ active, onClick, icon, label, badge }: { active: boolean; onC
   );
 }
 
-function MeetingRow({ m, active, onSelect, onDelete }: { m: MeetingListItem; active: boolean; onSelect: () => void; onDelete: () => void }) {
+function MeetingRow({
+  m,
+  active,
+  onSelect,
+  onDelete,
+  space,
+}: {
+  m: MeetingListItem;
+  active: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+  /** Shown when looking at all meetings: which workspace this one is in. */
+  space?: Workspace;
+}) {
   const busy = m.status === "recording";
   return (
     <div className="group relative transition-transform duration-150 ease-out hover:translate-x-px">
@@ -76,6 +93,7 @@ function MeetingRow({ m, active, onSelect, onDelete }: { m: MeetingListItem; act
       >
         <div className={`truncate text-ui leading-5 ${active ? "font-semibold text-ink" : "font-medium text-ink"}`}>{m.title}</div>
         <div className="mt-0.5 flex items-center gap-1.5 text-meta leading-4 text-ink-soft">
+          {space && <WorkspaceDot color={space.color} className="mr-0.5" />}
           <span className="tabular-nums">{formatTime(m.created_at)}</span>
           <span className="text-ink-faint" aria-hidden="true">
             ·
@@ -100,7 +118,25 @@ function MeetingRow({ m, active, onSelect, onDelete }: { m: MeetingListItem; act
   );
 }
 
-export default function Sidebar({ meetings, loaded, selectedId, recording, elapsed, onSelect, onNew, onDelete, view, onView, openTasks, opaque }: Props) {
+export default function Sidebar({
+  meetings: everyMeeting,
+  loaded,
+  selectedId,
+  recording,
+  elapsed,
+  onSelect,
+  onNew,
+  onDelete,
+  view,
+  onView,
+  openTasks,
+  opaque,
+  workspaces,
+  workspace,
+  onWorkspace,
+}: Props) {
+  const meetings = everyMeeting.filter((m) => inWorkspace(workspace, m.workspace_id));
+  const spaceOf = (id: number | null) => (workspace === "all" && id ? workspaces.find((w) => w.id === id) : undefined);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -123,18 +159,24 @@ export default function Sidebar({ meetings, loaded, selectedId, recording, elaps
     return () => clearTimeout(t);
   }, [query]);
 
-  // ⌘K / Ctrl+K jumps to search.
+  // ⌘K / Ctrl+K jumps to search; ⌃1…⌃9 switch workspace, ⌃0 shows all meetings.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         searchBox.current?.focus();
         searchBox.current?.select();
+      } else if (e.ctrlKey && !e.metaKey && !e.altKey && /^[0-9]$/.test(e.key)) {
+        const n = Number(e.key);
+        if (n === 0) onWorkspace("all");
+        else if (workspaces[n - 1]) onWorkspace(workspaces[n - 1].id);
+        else return;
+        e.preventDefault();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [workspaces, onWorkspace]);
 
   const groups: { label: string; items: MeetingListItem[] }[] = [];
   for (const m of meetings) {
@@ -159,6 +201,19 @@ export default function Sidebar({ meetings, loaded, selectedId, recording, elaps
       </div>
 
       <div className="px-4">
+        <div className="mb-3">
+          <WorkspaceSwitcher
+            workspaces={workspaces}
+            value={workspace}
+            onChange={onWorkspace}
+            total={everyMeeting.length}
+            unsorted={everyMeeting.filter((m) => !m.workspace_id).length}
+            onManage={() => {
+              onView("settings");
+              setTimeout(() => document.getElementById("workspaces")?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+            }}
+          />
+        </div>
         {recording ? (
           <button
             onClick={onNew}
@@ -215,9 +270,12 @@ export default function Sidebar({ meetings, loaded, selectedId, recording, elaps
         {hits !== null && (
           <section className="animate-fade-in">
             <h3 className="eyebrow px-3 pb-1.5 pt-2">
-              {hits.length ? `${hits.length} match${hits.length === 1 ? "" : "es"}` : "No matches"}
+              {(() => {
+                const n = hits.filter((h) => inWorkspace(workspace, h.workspace_id)).length;
+                return n ? `${n} match${n === 1 ? "" : "es"}` : "No matches";
+              })()}
             </h3>
-            {hits.map((h) => (
+            {hits.filter((h) => inWorkspace(workspace, h.workspace_id)).map((h) => (
               <button
                 key={h.id}
                 onClick={() => onSelect(h.id)}
@@ -250,8 +308,12 @@ export default function Sidebar({ meetings, loaded, selectedId, recording, elaps
 
         {hits === null && loaded && meetings.length === 0 && (
           <div className="mx-1 mt-3 rounded-lg px-4 py-6 text-center inset-surface">
-            <p className="text-ui font-medium">No meetings yet</p>
-            <p className="mt-1 text-hint leading-snug text-ink-soft">Your first recording will appear here.</p>
+            <p className="text-ui font-medium">{workspace === "all" ? "No meetings yet" : "Nothing here yet"}</p>
+            <p className="mt-1 text-hint leading-snug text-ink-soft">
+              {workspace === "all"
+                ? "Your first recording will appear here."
+                : "Recordings you start here go into this workspace."}
+            </p>
           </div>
         )}
 
@@ -261,7 +323,14 @@ export default function Sidebar({ meetings, loaded, selectedId, recording, elaps
               <h3 className="eyebrow px-3 pb-1 pt-3">{g.label}</h3>
               <div className="space-y-px">
                 {g.items.map((m) => (
-                  <MeetingRow key={m.id} m={m} active={m.id === selectedId} onSelect={() => onSelect(m.id)} onDelete={() => onDelete(m)} />
+                  <MeetingRow
+                    key={m.id}
+                    m={m}
+                    active={m.id === selectedId}
+                    onSelect={() => onSelect(m.id)}
+                    onDelete={() => onDelete(m)}
+                    space={spaceOf(m.workspace_id)}
+                  />
                 ))}
               </div>
             </section>

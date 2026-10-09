@@ -15,6 +15,30 @@ export interface MeetingListItem {
   created_at: string;
   duration_sec: number;
   status: MeetingStatus;
+  workspace_id: number | null;
+}
+
+export type WorkspaceColor = "forest" | "sky" | "sun" | "trail" | "ink";
+
+/** A part of your life meetings belong to: a job, a committee, personal. */
+export interface Workspace {
+  id: number;
+  name: string;
+  color: WorkspaceColor;
+  /** What it's about, which helps Trailmix sort meetings into it. */
+  about: string;
+  position: number;
+  meetings: number;
+}
+
+/** Which meetings you're looking at: all of them, one workspace, or the ones in none yet. */
+export type WorkspaceFilter = "all" | "none" | number;
+
+export interface SortJob {
+  active?: boolean;
+  total?: number;
+  done?: number;
+  sorted?: number;
 }
 
 export interface SearchHit extends MeetingListItem {
@@ -50,6 +74,7 @@ export interface TaskWithMeeting extends Task {
   meeting_id: number;
   meeting_title: string;
   meeting_created_at: string;
+  workspace_id: number | null;
 }
 
 export interface QA {
@@ -65,6 +90,8 @@ export interface Settings {
   auto_transcribe: boolean;
   auto_summarize: boolean;
   auto_title: boolean;
+  auto_workspace: boolean;
+  current_workspace: number;
   your_name: string;
   summary_provider: ProviderId;
   summary_fallback: ProviderId | "none";
@@ -116,6 +143,8 @@ export interface Meeting extends MeetingListItem {
   audio_expires_at: string | null;
   keep_audio: boolean;
   export_folder: string | null;
+  /** Trailmix sorted it there (rather than you). */
+  workspace_auto: number;
   draft: DraftLine[] | null;
   exported_paths: string[];
   export_error: string | null;
@@ -326,7 +355,18 @@ export const api = {
   listMeetings: () => request<MeetingListItem[]>("/meetings"),
   search: (q: string) => request<SearchHit[]>(`/search?q=${encodeURIComponent(q)}`),
   getMeeting: (id: number) => request<Meeting>(`/meetings/${id}`),
-  startMeeting: (title = "") => request<{ id: number }>("/meetings", json("POST", { title })),
+  startMeeting: (title = "", workspace_id: number | null = null) =>
+    request<{ id: number }>("/meetings", json("POST", { title, workspace_id })),
+  workspaces: () => request<Workspace[]>("/workspaces"),
+  createWorkspace: (w: { name: string; color?: WorkspaceColor; about?: string }) =>
+    request<Workspace>("/workspaces", json("POST", w)),
+  updateWorkspace: (id: number, w: Partial<Pick<Workspace, "name" | "color" | "about" | "position">>) =>
+    request<Workspace>(`/workspaces/${id}`, json("PATCH", w)),
+  deleteWorkspace: (id: number) => request<{ ok: true }>(`/workspaces/${id}`, json("DELETE")),
+  setMeetingWorkspace: (id: number, workspace_id: number | null) =>
+    request<{ ok: true }>(`/meetings/${id}/workspace`, json("POST", { workspace_id })),
+  sortIntoWorkspaces: () => request<SortJob>("/workspaces/sort", json("POST")),
+  sortStatus: () => request<SortJob>("/workspaces/sort"),
   streamUrl: (id: number, draft: boolean) => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     return `${proto}://${location.host}/api/meetings/${id}/stream?draft=${draft ? 1 : 0}&client=web`;
@@ -372,10 +412,10 @@ export const api = {
     request<{ ok: true }>(`/meetings/${id}/summarize`, json("POST", { provider, template })),
   askMeeting: (id: number, question: string) => request<QA>(`/meetings/${id}/ask`, json("POST", { question })),
   clearQuestions: (id: number) => request<void>(`/meetings/${id}/ask`, { method: "DELETE" }),
-  askAll: (question: string) =>
+  askAll: (question: string, workspace_id: number | null = null) =>
     request<{ answer: string; provider: string; sources: { id: number; title: string; created_at: string }[] }>(
       "/ask",
-      json("POST", { question }),
+      json("POST", { question, workspace_id }),
     ),
   tasks: () => request<TaskWithMeeting[]>("/tasks"),
   setTaskDone: (id: number, done: boolean) => request<{ ok: true }>(`/tasks/${id}`, json("PATCH", { done })),
