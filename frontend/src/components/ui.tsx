@@ -119,6 +119,8 @@ export interface Option {
   value: string;
   label: string;
   hint?: string;
+  /** Shown before the label, e.g. a workspace's color dot. */
+  icon?: ReactNode;
 }
 
 export function Select({
@@ -243,7 +245,10 @@ export function Select({
         }}
         className={`field flex min-w-0 items-center justify-between gap-2 text-left ${size === "sm" ? "py-[5px] text-ui" : ""} ${className}`}
       >
-        <span className="min-w-0 truncate">{options[current]?.label ?? ""}</span>
+        <span className="flex min-w-0 items-center gap-2">
+          {options[current]?.icon}
+          <span className="min-w-0 truncate">{options[current]?.label ?? ""}</span>
+        </span>
         <ChevronDownIcon size={16} className={`shrink-0 text-ink-faint transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
       </button>
       {open &&
@@ -276,6 +281,7 @@ export function Select({
                   }`}
                 >
                   <CheckIcon size={16} className={`mt-0.5 shrink-0 text-forest ${selected ? "" : "invisible"}`} />
+                  {o.icon && <span className="mt-0.5 flex h-4 shrink-0 items-center">{o.icon}</span>}
                   <span className="min-w-0 flex-1">
                     <span className={`block truncate ${selected ? "font-medium" : ""}`}>{o.label}</span>
                     {o.hint && <span className="block truncate text-meta text-ink-soft">{o.hint}</span>}

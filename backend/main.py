@@ -42,6 +42,7 @@ import recorder
 import resources
 import settings
 import templates
+import workspaces
 import transcribe_remote
 
 log = logging.getLogger("trailmix")
@@ -70,6 +71,28 @@ def _exit_with_parent() -> None:
     threading.Thread(target=watch, daemon=True, name="parent-watch").start()
 
 
+WARM_EVERY_S = 15
+
+
+async def _warm_loop():
+    """Keeps the live speech model loaded while Trailmix is idle, so a recording's first words show up within
+    seconds: from startup, again after each meeting's processing (which frees it for the summary model), and
+    as soon as a call app (Zoom, Teams, FaceTime…) opens audio. Only with room to spare in memory, unless a
+    call is starting (then only not when it would be dire)."""
+    while True:
+        try:
+            cfg = settings.get_all()
+            model = live.live_model(cfg)
+            if model and mlx_engine.loaded() != model:
+                need = mlx_engine.FINAL_MODEL_RAM_GB if cfg["live_final"] else 0.5
+                calling = bool(recorder.status().get("call_app"))
+                if resources.has_room(need) or (calling and resources.check(need, "The speech model") is None):
+                    live.warm_up(cfg)
+        except Exception:
+            log.exception("Warming the speech model failed")
+        await asyncio.sleep(WARM_EVERY_S)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _exit_with_parent()
@@ -77,8 +100,11 @@ async def lifespan(_: FastAPI):
     models.prefetch()
     pipeline.recover_unfinished()
     sweeper = asyncio.create_task(_sweep_loop())
+    warmer = asyncio.create_task(_warm_loop()) if os.getenv("TRAILMIX_WARM") != "0" else None
     yield
     sweeper.cancel()
+    if warmer:
+        warmer.cancel()
 
 
 app = FastAPI(title="Trailmix", lifespan=lifespan)
@@ -103,6 +129,18 @@ async def require_login(request: Request, call_next):
 
 class StartRequest(BaseModel):
     title: str = ""
+    workspace_id: int | None = None  # the workspace you're in when you press Record
+
+
+class WorkspaceBody(BaseModel):
+    name: str | None = None
+    color: str | None = None
+    about: str | None = None
+    position: int | None = None
+
+
+class MeetingWorkspace(BaseModel):
+    workspace_id: int | None = None
 
 
 class MeetingPatch(BaseModel):
@@ -124,6 +162,7 @@ class LoginRequest(BaseModel):
 
 class Question(BaseModel):
     question: str
+    workspace_id: int | None = None  # only meetings in this workspace
 
 
 class Bookmark(BaseModel):
@@ -572,7 +611,11 @@ def start_meeting(body: StartRequest):
     if live.active_count():
         raise HTTPException(409, "Trailmix is already recording. Stop that recording first.")
     title = body.title.strip()
-    return {"id": db.create_meeting(title or f"Meeting {datetime.now():%b %d, %H:%M}", title_auto=not title)}
+    # The workspace you're in (the window says which; the menu bar and hotkey use the last one you picked).
+    wanted = body.workspace_id or settings.get_all()["current_workspace"]
+    space = wanted if wanted and db.get_workspace(wanted) else None
+    return {"id": db.create_meeting(title or f"Meeting {datetime.now():%b %d, %H:%M}", title_auto=not title,
+                                    workspace_id=space)}
 
 
 @app.websocket("/api/meetings/{meeting_id}/stream")
@@ -603,7 +646,7 @@ async def stream(ws: WebSocket, meeting_id: int, draft: int = 1, client: str = "
     async def draft_loop():
         try:
             while True:
-                await asyncio.sleep(2)
+                await asyncio.sleep(0.5)  # a chunk is ready every few seconds; pick it up promptly
                 for msg in await run_in_threadpool(session.draft_step):
                     if draft:  # final-while-recording runs this loop even with the live draft turned off
                         await send(msg)
@@ -814,6 +857,75 @@ def clear_questions(meeting_id: int):
     db.update_meeting(meeting_id, qa_json=None)
 
 
+# ── Workspaces ──────────────────────────────────────────────────────────
+
+@app.get("/api/workspaces")
+def list_workspaces():
+    return db.list_workspaces()
+
+
+@app.post("/api/workspaces", status_code=201)
+def create_workspace(body: WorkspaceBody):
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(422, "Give the workspace a name")
+    if db.workspace_by_name(name):
+        raise HTTPException(409, f"There's already a workspace called {name}")
+    return db.get_workspace(db.create_workspace(name[:60], body.color or "", (body.about or "")[:500]))
+
+
+@app.patch("/api/workspaces/{workspace_id}")
+def update_workspace(workspace_id: int, body: WorkspaceBody):
+    if not db.get_workspace(workspace_id):
+        raise HTTPException(404, "No such workspace")
+    name = body.name.strip()[:60] if body.name is not None else None
+    if name == "":
+        raise HTTPException(422, "Give the workspace a name")
+    other = db.workspace_by_name(name) if name else None
+    if other and other["id"] != workspace_id:
+        raise HTTPException(409, f"There's already a workspace called {name}")
+    if body.color is not None and body.color not in db.WORKSPACE_COLORS:
+        raise HTTPException(422, "Unknown color")
+    db.update_workspace(workspace_id, name=name, color=body.color,
+                        about=body.about.strip()[:500] if body.about is not None else None, position=body.position)
+    return db.get_workspace(workspace_id)
+
+
+@app.delete("/api/workspaces/{workspace_id}")
+def delete_workspace(workspace_id: int):
+    """The workspace goes; its meetings stay, unsorted."""
+    db.delete_workspace(workspace_id)
+    return {"ok": True}
+
+
+@app.post("/api/meetings/{meeting_id}/workspace")
+def set_meeting_workspace(meeting_id: int, body: MeetingWorkspace):
+    """Puts a meeting in a workspace (or none). Your choice is never changed by automatic sorting."""
+    _get_or_404(meeting_id)
+    if body.workspace_id and not db.get_workspace(body.workspace_id):
+        raise HTTPException(404, "No such workspace")
+    db.update_meeting(meeting_id, workspace_id=body.workspace_id, workspace_auto=0)
+    _reexport(meeting_id)
+    return {"ok": True}
+
+
+@app.post("/api/workspaces/sort", status_code=202)
+def sort_into_workspaces():
+    """Sorts every meeting that isn't in a workspace yet (in the background; see GET)."""
+    if not db.list_workspaces():
+        raise HTTPException(409, "Add a workspace first")
+    cfg = settings.get_all()
+    _local_llm_paused(cfg)
+    if not workspaces.sort_all(cfg):
+        raise HTTPException(409, "Already sorting")
+    return workspaces.job_status()
+
+
+@app.get("/api/workspaces/sort")
+def sort_status():
+    return workspaces.job_status()
+
+
 @app.post("/api/ask")
 def ask_everything(body: Question):
     """Question across all meetings: find the relevant ones with full-text search, answer from them."""
@@ -822,8 +934,8 @@ def ask_everything(body: Question):
         raise HTTPException(422, "Ask a question")
     cfg = settings.get_all()
     _local_llm_paused(cfg)
-    hits = db.search(question, limit=6, any_term=True)
-    meetings = db.get_meetings([h["id"] for h in hits]) or db.recent_meetings(5)
+    hits = db.search(question, limit=6, any_term=True, workspace_id=body.workspace_id)
+    meetings = db.get_meetings([h["id"] for h in hits]) or db.recent_meetings(5, body.workspace_id)
     meetings = [m for m in meetings if m.get("transcript")]
     if not meetings:
         raise HTTPException(409, "There are no transcribed meetings to search yet")

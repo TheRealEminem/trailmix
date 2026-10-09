@@ -34,6 +34,7 @@ import resources
 import settings
 import transcribe_remote
 import vad
+import workspaces
 
 log = logging.getLogger("trailmix.pipeline")
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pipeline")
@@ -183,6 +184,10 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
             db.replace_tasks(meeting_id, meeting_text.action_items(summary))
             if title and db.get_meeting(meeting_id)["title_auto"]:  # you may have renamed it meanwhile
                 db.update_meeting(meeting_id, title=title)
+            try:
+                workspaces.auto_sort(meeting_id, cfg, used)
+            except Exception:
+                log.exception("Couldn't sort meeting %s into a workspace", meeting_id)
         except llm_engine.LLMError as e:
             db.update_meeting(meeting_id, summary_error=str(e))
     _export(meeting_id, cfg)

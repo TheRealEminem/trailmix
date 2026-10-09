@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { api, inApp } from "../api";
 import type {
@@ -6,6 +6,8 @@ import type {
   ExportJob,
   Health,
   NativeRecorder,
+  SortJob,
+  Workspace,
   ProviderId,
   Settings as SettingsT,
 } from "../api";
@@ -29,7 +31,11 @@ import {
   PowerIcon,
   SparkleIcon,
   SunIcon,
+  PlusIcon,
+  TrashIcon,
+  CompassIcon,
 } from "./icons";
+import { WORKSPACE_COLORS, WorkspaceDot } from "./Workspaces";
 import {
   Collapse,
   ControlRow,
@@ -44,6 +50,8 @@ import {
 interface Props {
   health: Health | null;
   native: NativeRecorder | null;
+  workspaces: Workspace[];
+  onWorkspacesChanged: () => void;
   theme: ThemePref;
   onTheme: (t: ThemePref) => void;
   onChanged: () => void;
@@ -262,6 +270,162 @@ const PROVIDER_META: Record<
 
 /** A dropdown of the provider's models (a native menu, which works in the app window, unlike a suggestion
  *  list), plus "Other…" to type an id that isn't listed. */
+/** Settings → Workspaces: the parts of your life meetings belong to, and sorting meetings into them. */
+function WorkspacesSection({
+  workspaces,
+  onChanged,
+  auto,
+  onAuto,
+}: {
+  workspaces: Workspace[];
+  onChanged: () => void;
+  auto: boolean;
+  onAuto: (v: boolean) => void;
+}) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [job, setJob] = useState<SortJob | null>(null);
+  const act = async (fn: () => Promise<unknown>) => {
+    setError(null);
+    try {
+      await fn();
+      onChanged();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  const add = () => {
+    const n = name.trim();
+    if (!n) return;
+    void act(() => api.createWorkspace({ name: n })).then(() => setName(""));
+  };
+
+  // Sorting runs in the background: follow it while it does (refreshing the counts as it goes).
+  const changed = useRef(onChanged);
+  changed.current = onChanged;
+  useEffect(() => {
+    if (!job?.active) return;
+    const t = setInterval(() => {
+      api
+        .sortStatus()
+        .then((j) => {
+          setJob(j);
+          changed.current();
+        })
+        .catch(() => undefined);
+    }, 1500);
+    return () => clearInterval(t);
+  }, [job?.active]);
+
+  return (
+    <Section
+      id="workspaces"
+      icon={<CompassIcon size={16} />}
+      title="Workspaces"
+      blurb="Keep the parts of your life apart (a job, a committee, personal) and switch between them at the top of the sidebar."
+      delay={40}
+    >
+      {workspaces.map((w) => (
+        <div key={w.id} className="flex flex-wrap items-start gap-x-3 gap-y-2 py-3.5">
+          <button
+            className="mt-2 flex h-5 w-5 items-center justify-center rounded-full hover:bg-forest/[.08]"
+            aria-label={`Change ${w.name}'s color`}
+            data-tip="Change color"
+            onClick={() =>
+              void act(() =>
+                api.updateWorkspace(w.id, {
+                  color:
+                    WORKSPACE_COLORS[(WORKSPACE_COLORS.indexOf(w.color) + 1) % WORKSPACE_COLORS.length],
+                }),
+              )
+            }
+          >
+            <WorkspaceDot color={w.color} className="h-3 w-3" />
+          </button>
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="flex items-center gap-2">
+              <TextField
+                label={`${w.name} name`}
+                value={w.name}
+                onSave={(v) => v && void act(() => api.updateWorkspace(w.id, { name: v }))}
+                className="w-full font-medium sm:w-56"
+              />
+              <span className="whitespace-nowrap text-hint text-ink-soft">
+                {w.meetings} meeting{w.meetings === 1 ? "" : "s"}
+              </span>
+            </div>
+            <TextField
+              label={`What ${w.name} is about`}
+              value={w.about}
+              onSave={(v) => void act(() => api.updateWorkspace(w.id, { about: v }))}
+              placeholder="What it's about, e.g. “my startup: vaccine cold-chain hardware, investors”"
+              className="w-full"
+            />
+          </div>
+          <button
+            className="icon-btn mt-1 hover:!bg-trail-soft hover:!text-trail-deep"
+            aria-label={`Delete ${w.name}`}
+            data-tip="Delete workspace (its meetings stay)"
+            onClick={() => {
+              if (window.confirm(`Delete the ${w.name} workspace? Its meetings stay, just not in a workspace.`))
+                void act(() => api.deleteWorkspace(w.id));
+            }}
+          >
+            <TrashIcon size={16} />
+          </button>
+        </div>
+      ))}
+      <div className="flex flex-wrap items-center gap-2 py-3.5">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && add()}
+          placeholder={workspaces.length ? "Another workspace" : "e.g. Work, a committee, Personal"}
+          aria-label="New workspace name"
+          className="field min-w-0 flex-1 sm:max-w-xs"
+        />
+        <button className="btn btn-sm btn-soft" onClick={add} disabled={!name.trim()}>
+          <PlusIcon size={16} /> Add
+        </button>
+      </div>
+      {workspaces.length > 0 && (
+        <>
+          <SwitchRow
+            icon={<SparkleIcon size={16} />}
+            label="Sort new meetings automatically"
+            hint="After the notes are written, the summary AI puts each meeting in the workspace that fits (using what you wrote about each), or leaves it out if none does. A workspace named in the title always wins. Recordings started while you're in a workspace go straight into it."
+            checked={auto}
+            onChange={onAuto}
+          />
+          <div className="flex flex-wrap items-center gap-3 py-3.5">
+            <button
+              className="btn btn-sm btn-soft"
+              disabled={!!job?.active}
+              onClick={() =>
+                void api
+                  .sortIntoWorkspaces()
+                  .then(setJob)
+                  .catch((e: Error) => setError(e.message))
+              }
+            >
+              {job?.active ? <Spinner /> : <CompassIcon size={16} />}
+              Sort meetings that aren't in a workspace
+            </button>
+            {job && (
+              <span className="text-hint text-ink-soft">
+                {job.active
+                  ? `Sorting ${job.done ?? 0} of ${job.total ?? 0}…`
+                  : `Sorted ${job.sorted ?? 0} of ${job.total ?? 0}; the rest didn't clearly fit one.`}
+              </span>
+            )}
+          </div>
+        </>
+      )}
+      {error && <p className="pb-3.5 text-hint text-trail-deep">{error}</p>}
+    </Section>
+  );
+}
+
 /** Settings → Updates: which version this is, and checking for and installing a new one. */
 function UpdatesSection({ native }: { native: NativeRecorder | null }) {
   const [error, setError] = useState<string | null>(null);
@@ -666,6 +830,8 @@ const PROVIDER_IDS: ProviderId[] = [
 export default function Settings({
   health,
   native,
+  workspaces,
+  onWorkspacesChanged,
   theme,
   onTheme,
   onChanged,
@@ -823,6 +989,13 @@ export default function Settings({
           />
         </Row>
       </Section>
+
+      <WorkspacesSection
+        workspaces={workspaces}
+        onChanged={onWorkspacesChanged}
+        auto={s.auto_workspace}
+        onAuto={(v) => save({ auto_workspace: v })}
+      />
 
       <Section
         icon={<SparkleIcon size={16} />}

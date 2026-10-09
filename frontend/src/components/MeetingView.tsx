@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { inApp, revealInFinder } from "../api";
-import type { Bookmark, Health, Meeting, Provider, Task } from "../api";
+import type { Bookmark, Health, Meeting, Provider, Task, Workspace } from "../api";
 import {
   formatBytes,
   formatDuration,
@@ -25,6 +25,7 @@ import {
   WaveIcon,
 } from "./icons";
 import { ContourBadge } from "./illustrations";
+import { WorkspacePicker } from "./Workspaces";
 import PipelineStatus from "./PipelineStatus";
 import Summary from "./Summary";
 import Transcript from "./Transcript";
@@ -50,6 +51,8 @@ interface Props {
   onSpeakers: (names: Record<string, string>) => void;
   onToggleTask: (t: Task, done: boolean) => void;
   onError: (msg: string) => void;
+  workspaces: Workspace[];
+  onWorkspace: (id: number | null) => void;
 }
 
 const WORKING = ["recording", "queued", "transcribing", "summarizing"];
@@ -159,6 +162,12 @@ export default function MeetingView({
             <UsersIcon size={16} className="text-ink-faint" />
             {m.has_system ? "You & them" : "One mic"}
           </span>
+          <WorkspacePicker
+            workspaces={on.workspaces}
+            value={m.workspace_id}
+            auto={!!m.workspace_auto}
+            onChange={on.onWorkspace}
+          />
         </div>
 
         <div className="mt-2.5 flex items-start gap-2">

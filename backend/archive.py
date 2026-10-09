@@ -43,6 +43,7 @@ def record(m: dict, audio: dict | None) -> dict:
         "transcript": meeting_text.segments(m),
         "audio": audio,
         "keep_audio": bool(m.get("keep_audio")),
+        "workspace": (db.get_workspace(m["workspace_id"]) or {}).get("name") if m.get("workspace_id") else None,
         "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "app_version": APP_VERSION,
     }
@@ -77,6 +78,9 @@ def restore(data: dict, folder: Path | None) -> int | None:
         speaker_names_json=data.get("speakers") or None, bookmarks_json=data.get("bookmarks") or None,
         qa_json=data.get("qa") or None, status="done" if data.get("summary") else "ready_summarize",
     )
+    if data.get("workspace"):  # the same workspace here, made if it doesn't exist yet
+        space = db.workspace_by_name(data["workspace"])
+        db.update_meeting(meeting_id, workspace_id=space["id"] if space else db.create_workspace(data["workspace"]))
     tasks = data.get("tasks") or []
     db.replace_tasks(meeting_id, [t["text"] for t in tasks])
     for i, t in enumerate(db.tasks_for(meeting_id)):

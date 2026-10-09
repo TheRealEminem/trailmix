@@ -10,6 +10,9 @@ import type {
   NativeRecorder,
   Provider,
   Task,
+  Workspace,
+  WorkspaceFilter,
+  TaskWithMeeting,
 } from "./api";
 import { startRecording } from "./capture";
 import type { ActiveRecording } from "./capture";
@@ -30,6 +33,7 @@ import SetupCard from "./components/SetupCard";
 import Sidebar from "./components/Sidebar";
 import type { View } from "./components/Sidebar";
 import TasksView from "./components/TasksView";
+import { inWorkspace } from "./components/Workspaces";
 import {
   PageHeader,
   Pulse,
@@ -42,6 +46,7 @@ import type { ToastState } from "./components/ui";
 import { useTheme } from "./theme";
 
 const POLL_MS = 2000;
+const WORKSPACE_KEY = "trailmix.workspace";
 const LIVE_POLL_MS = 2000;
 const HEALTH_RETRY_MS = 5000;
 // Statuses where the backend is working (or about to); the rest are resting states that need no polling.
@@ -98,6 +103,16 @@ export default function App() {
   );
   const [quit, setQuit] = useState(false);
   const [meetings, setMeetings] = useState<MeetingListItem[]>([]);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [workspace, setWorkspaceState] = useState<WorkspaceFilter>(() => {
+    try {
+      const saved = localStorage.getItem(WORKSPACE_KEY);
+      return saved === "none" ? "none" : saved && /^\d+$/.test(saved) ? Number(saved) : "all";
+    } catch {
+      return "all";
+    }
+  });
+  const [allTasks, setAllTasks] = useState<TaskWithMeeting[]>([]);
   const [listLoaded, setListLoaded] = useState(false);
   const wide = useWide();
   const [drawer, setDrawer] = useState(false);
@@ -105,7 +120,6 @@ export default function App() {
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [backendDown, setBackendDown] = useState(false);
-  const [openTasks, setOpenTasks] = useState(0);
   const [tab, setTab] = useState<Tab>("summary");
   const [view, setView] = useState<View>("main");
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -153,8 +167,34 @@ export default function App() {
     return () => window.removeEventListener(AUTH_EVENT, onAuth);
   }, []);
 
+  // Which workspace you're in: remembered here, and told to the server so recordings started from the menu bar
+  // or the hotkey go into it too.
+  const setWorkspace = useCallback((w: WorkspaceFilter) => {
+    setWorkspaceState(w);
+    try {
+      localStorage.setItem(WORKSPACE_KEY, String(w));
+    } catch {
+      /* private window */
+    }
+    void api.putSettings({ current_workspace: typeof w === "number" ? w : 0 }).catch(() => undefined);
+  }, []);
+
+  const refreshWorkspaces = useCallback(
+    () =>
+      api
+        .workspaces()
+        .then((ws) => {
+          setWorkspaces(ws);
+          // A workspace that was deleted: back to everything.
+          setWorkspaceState((w) => (typeof w === "number" && !ws.some((x) => x.id === w) ? "all" : w));
+        })
+        .catch(() => undefined),
+    [],
+  );
+
   const refreshList = useCallback(async () => {
     try {
+      void refreshWorkspaces(); // their meeting counts change with the list
       setMeetings(await api.listMeetings());
       setListLoaded(true);
       setBackendDown(false);
@@ -186,7 +226,7 @@ export default function App() {
     () =>
       api
         .tasks()
-        .then((t) => setOpenTasks(t.filter((x) => !x.done).length))
+        .then(setAllTasks)
         .catch(() => undefined),
     [],
   );
@@ -638,8 +678,15 @@ export default function App() {
           onDelete={(m) => void handleDelete(m.id, m.title)}
           view={view}
           onView={goView}
-          openTasks={openTasks}
+          openTasks={
+            allTasks.filter(
+              (t) => !t.done && inWorkspace(workspace, t.workspace_id),
+            ).length
+          }
           opaque={!wide}
+          workspaces={workspaces}
+          workspace={workspace}
+          onWorkspace={setWorkspace}
         />
       </div>
       {drawer && !wide && (
@@ -698,6 +745,8 @@ export default function App() {
             <Settings
               health={health}
               native={native}
+              workspaces={workspaces}
+              onWorkspacesChanged={() => void refreshList()}
               theme={theme.pref}
               onTheme={theme.setPref}
               onChanged={() => void refreshHealth()}
@@ -708,6 +757,7 @@ export default function App() {
             />
           ) : view === "tasks" ? (
             <TasksView
+              workspace={workspace}
               onOpenMeeting={openMeeting}
               onChanged={() => void refreshTasks()}
               onError={fail}
@@ -730,6 +780,7 @@ export default function App() {
               >
                 <AskPanel
                   health={health}
+                  workspaceId={typeof workspace === "number" ? workspace : null}
                   onOpenMeeting={openMeeting}
                   onError={fail}
                 />
@@ -787,6 +838,13 @@ export default function App() {
                 )
               }
               onExport={() => void handleExport()}
+              workspaces={workspaces}
+              onWorkspace={(id) =>
+                void guarded(
+                  () => api.setMeetingWorkspace(meeting.id, id),
+                  meeting.id,
+                ).then(() => refreshList())
+              }
               onConfirm={() =>
                 void guarded(() => api.confirm(meeting.id), meeting.id)
               }
