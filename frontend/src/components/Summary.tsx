@@ -68,6 +68,8 @@ export default function Summary({ meeting, health, onResummarize, onToggleTask }
 
       {meeting.summary ? (
         <SummaryBody summary={meeting.summary} tasks={meeting.tasks} onToggleTask={onToggleTask} />
+      ) : meeting.summary_draft && finishedLines(meeting.summary_draft) ? (
+        <DraftBody draft={meeting.summary_draft} />
       ) : (
         !meeting.summary_error && (
           <div className="py-8 text-center">
@@ -118,21 +120,45 @@ export default function Summary({ meeting, health, onResummarize, onToggleTask }
   );
 }
 
+// Defined once, not per render: a new component each time would rebuild every heading as the draft grows.
+const COMPONENTS = {
+  h2: ({ children }: { children?: ReactNode }) => (
+    <h2>
+      <HeadingIcon>{headingIcon(textOf(children))}</HeadingIcon>
+      {children}
+    </h2>
+  ),
+};
+const PLUGINS = [remarkGfm];
+
 function Markdown({ children }: { children: string }) {
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        h2: ({ children }) => (
-          <h2>
-            <HeadingIcon>{headingIcon(textOf(children))}</HeadingIcon>
-            {children}
-          </h2>
-        ),
-      }}
-    >
+    <ReactMarkdown remarkPlugins={PLUGINS} components={COMPONENTS}>
       {children}
     </ReactMarkdown>
+  );
+}
+
+/** The draft up to its last finished line, so nothing shows half-written. */
+function finishedLines(draft: string): string {
+  return draft.slice(0, draft.lastIndexOf("\n") + 1).trim();
+}
+
+/**
+ * The notes as they're written. Each new paragraph, bullet or heading fades in (.prose-draft); the ones already
+ * on screen stay put, because React keeps them and only adds the new ones. The finished notes replace this.
+ */
+function DraftBody({ draft }: { draft: string }) {
+  return (
+    <div aria-busy="true">
+      <div className="prose-summary prose-draft">
+        <Markdown>{finishedLines(draft)}</Markdown>
+      </div>
+      <p className="mt-4 flex items-center gap-2 text-hint text-ink-soft">
+        <span className="draft-caret" aria-hidden="true" />
+        Still writing. Action items and the title come when it's finished.
+      </p>
+    </div>
   );
 }
 

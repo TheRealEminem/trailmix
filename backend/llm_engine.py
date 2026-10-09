@@ -3,12 +3,15 @@
 Every provider is reduced to one call, generate(provider, cfg, prompt, system) -> text, so summaries,
 titles and Q&A work the same whichever one you pick. `cfg` is settings.get_all().
 """
+import json
 import os
 import re
+from collections.abc import Callable, Iterator
 from urllib.parse import urlparse
 
 import httpx
 
+import meeting_text
 import templates
 
 OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "0")  # "0" = unload right after the last call
@@ -43,6 +46,9 @@ NOTES:
 
 class LLMError(Exception):
     pass
+
+
+OnText = Callable[[str], None] | None  # called with everything written so far, as a reply streams in
 
 
 # ── Provider facts ──────────────────────────────────────────────────────
@@ -147,21 +153,32 @@ def ollama_ram_needed_gb(cfg: dict) -> float:
     return (ollama_model_size_gb(cfg) or 0) * 1.1 + 1.5
 
 
-def _ollama(cfg: dict, prompt: str, system: str | None, keep_alive: str, temperature: float = 0.2) -> str:
+def _ollama(cfg: dict, prompt: str, system: str | None, keep_alive: str, temperature: float = 0.2,
+            on_text: OnText = None) -> str:
     model = model_for("ollama", cfg)
     if not model:
         raise LLMError(f"Ollama isn't reachable at {cfg['ollama_url']} (or has no models installed)")
     body = {
         "model": model,
         "prompt": prompt,
-        "stream": False,
+        "stream": bool(on_text),
         "keep_alive": keep_alive,
         "options": {"num_ctx": OLLAMA_NUM_CTX, "temperature": temperature},
     }
     if system:
         body["system"] = system
-    r = _post(f"{cfg['ollama_url']}/api/generate", json=body)
-    return r.json().get("response") or ""
+    url = f"{cfg['ollama_url']}/api/generate"
+    if not on_text:
+        return _post(url, json=body).json().get("response") or ""
+    text = ""
+    for line in _stream_lines(url, json=body):
+        part = json.loads(line)
+        if part.get("error"):
+            raise LLMError(f"Ollama: {part['error']}")
+        if part.get("response"):
+            text += part["response"]
+            on_text(text)
+    return text
 
 
 # ── Cloud providers ─────────────────────────────────────────────────────
@@ -176,16 +193,49 @@ def _post(url: str, **kw) -> httpx.Response:
     return r
 
 
+def _stream_lines(url: str, **kw) -> Iterator[str]:
+    """The non-empty lines of a streamed reply, failing the same way _post does."""
+    try:
+        with httpx.stream("POST", url, timeout=TIMEOUT, **kw) as r:
+            if r.status_code >= 400:
+                r.read()
+                raise LLMError(f"{urlparse(url).netloc} returned {r.status_code}: {_error_text(r)}")
+            for line in r.iter_lines():
+                if line.strip():
+                    yield line
+    except httpx.HTTPError as e:
+        raise LLMError(f"Couldn't reach {urlparse(url).netloc}: {e}") from e
+
+
+def _sse(url: str, **kw) -> Iterator[dict]:
+    """Server-sent events ("data: {...}" lines) as JSON, up to OpenAI's "data: [DONE]"."""
+    for line in _stream_lines(url, **kw):
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data == "[DONE]":
+            return
+        try:
+            yield json.loads(data)
+        except ValueError:
+            continue
+
+
 def _error_text(r: httpx.Response) -> str:
     try:
-        data = r.json()
-        err = data.get("error", data)
-        return str(err.get("message") if isinstance(err, dict) else err)[:300]
+        return _error_text_of(r.json())
     except ValueError:
         return r.text[:300]
 
 
-def _anthropic(cfg: dict, prompt: str, system: str | None) -> str:
+def _error_text_of(data) -> str:
+    err = data.get("error", data) if isinstance(data, dict) else data
+    if isinstance(err, list) and err:  # Gemini sometimes wraps it in a list
+        err = err[0].get("error", err[0]) if isinstance(err[0], dict) else err[0]
+    return str(err.get("message") if isinstance(err, dict) else err)[:300]
+
+
+def _anthropic(cfg: dict, prompt: str, system: str | None, on_text: OnText = None) -> str:
     import anthropic
 
     client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"], timeout=600, max_retries=2)
@@ -193,10 +243,19 @@ def _anthropic(cfg: dict, prompt: str, system: str | None) -> str:
     params = {"model": model, "max_tokens": MAX_TOKENS, "messages": [{"role": "user", "content": prompt}]}
     if system:
         params["system"] = system
+    # If a safety classifier declines, the API re-runs the request on a suitable model.
+    fallback = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"} if model in _CLAUDE_FALLBACK_MODELS else None
     try:
-        if model in _CLAUDE_FALLBACK_MODELS:
-            # If a safety classifier declines, the API re-runs the request on a suitable model.
-            msg = client.beta.messages.create(**params, betas=["server-side-fallback-2026-07-01"], fallbacks="default")
+        if on_text:
+            manager = client.beta.messages.stream(**params, **fallback) if fallback else client.messages.stream(**params)
+            with manager as stream:
+                text = ""
+                for chunk in stream.text_stream:
+                    text += chunk
+                    on_text(text)
+                msg = stream.get_final_message()  # the reply itself; the streamed text was a preview
+        elif fallback:
+            msg = client.beta.messages.create(**params, **fallback)
         else:
             msg = client.messages.create(**params)
     except anthropic.AuthenticationError as e:
@@ -214,7 +273,8 @@ def _anthropic(cfg: dict, prompt: str, system: str | None) -> str:
     return "".join(b.text for b in msg.content if b.type == "text")
 
 
-def _openai_compatible(base: str, key: str, model: str, prompt: str, system: str | None, pid: str) -> str:
+def _openai_compatible(base: str, key: str, model: str, prompt: str, system: str | None, pid: str,
+                       on_text: OnText = None) -> str:
     messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
     body: dict = {"model": model, "messages": messages}
     if pid == "openai":
@@ -222,6 +282,17 @@ def _openai_compatible(base: str, key: str, model: str, prompt: str, system: str
     elif pid == "deepseek":
         body["max_tokens"] = 8000
     headers = {"Authorization": f"Bearer {key}"} if key else {}
+    if on_text:
+        text = ""
+        for event in _sse(f"{base}/chat/completions", json={**body, "stream": True}, headers=headers):
+            if event.get("error"):
+                raise LLMError(f"{urlparse(base).netloc}: {_error_text_of(event)}")
+            for choice in event.get("choices") or []:
+                piece = (choice.get("delta") or {}).get("content")
+                if piece:
+                    text += piece
+                    on_text(text)
+        return text
     r = _post(f"{base}/chat/completions", json=body, headers=headers)
     try:
         return r.json()["choices"][0]["message"]["content"] or ""
@@ -229,14 +300,27 @@ def _openai_compatible(base: str, key: str, model: str, prompt: str, system: str
         raise LLMError(f"Unexpected response from {base}") from e
 
 
-def _gemini(cfg: dict, prompt: str, system: str | None) -> str:
+def _gemini(cfg: dict, prompt: str, system: str | None, on_text: OnText = None) -> str:
     body: dict = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
     if system:
         body["systemInstruction"] = {"parts": [{"text": system}]}
+    headers = {"x-goog-api-key": cfg["gemini_api_key"]}
+    if on_text:
+        text = ""
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{cfg['gemini_model']}:streamGenerateContent?alt=sse"
+        for event in _sse(url, json=body, headers=headers):
+            if event.get("error"):
+                raise LLMError(f"Gemini: {_error_text_of(event)}")
+            for cand in event.get("candidates") or []:
+                for part in (cand.get("content") or {}).get("parts") or []:
+                    if part.get("text") and not part.get("thought"):
+                        text += part["text"]
+                        on_text(text)
+        return text
     r = _post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{cfg['gemini_model']}:generateContent",
         json=body,
-        headers={"x-goog-api-key": cfg["gemini_api_key"]},
+        headers=headers,
     )
     try:
         parts = r.json()["candidates"][0]["content"]["parts"]
@@ -246,21 +330,24 @@ def _gemini(cfg: dict, prompt: str, system: str | None) -> str:
 
 
 def generate(pid: str, cfg: dict, prompt: str, system: str | None = None, keep_alive: str | None = None,
-             exact: bool = False) -> str:
-    """`exact`: the same answer every time (no sampling) where the provider allows it, for picking from a list."""
+             exact: bool = False, on_text: OnText = None) -> str:
+    """`exact`: the same answer every time (no sampling) where the provider allows it, for picking from a list.
+    `on_text`: stream the reply, calling it with the text so far as it's written."""
     ok, why = configured(pid, cfg)
     if not ok:
         raise LLMError(why)
     if pid == "ollama":
-        text = _ollama(cfg, prompt, system, keep_alive or OLLAMA_KEEP_ALIVE, 0.0 if exact else 0.2)
+        text = _ollama(cfg, prompt, system, keep_alive or OLLAMA_KEEP_ALIVE, 0.0 if exact else 0.2, on_text)
     elif pid == "anthropic":
-        text = _anthropic(cfg, prompt, system)
+        text = _anthropic(cfg, prompt, system, on_text)
     elif pid == "gemini":
-        text = _gemini(cfg, prompt, system)
+        text = _gemini(cfg, prompt, system, on_text)
     elif pid == "custom":
-        text = _openai_compatible(cfg["custom_base_url"], cfg["custom_api_key"], cfg["custom_model"], prompt, system, pid)
+        text = _openai_compatible(cfg["custom_base_url"], cfg["custom_api_key"], cfg["custom_model"], prompt, system, pid,
+                                  on_text)
     else:
-        text = _openai_compatible(PROVIDERS[pid]["base"], cfg[f"{pid}_api_key"], cfg[f"{pid}_model"], prompt, system, pid)
+        text = _openai_compatible(PROVIDERS[pid]["base"], cfg[f"{pid}_api_key"], cfg[f"{pid}_model"], prompt, system, pid,
+                                  on_text)
     text = text.strip()
     if not text:
         raise LLMError(f"{label(pid, cfg)} returned an empty response")
@@ -414,6 +501,35 @@ def _span(part: str) -> str:
     return f"NOTES ON [{stamps[0]}] TO [{stamps[-1]}]" if stamps else "NOTES"
 
 
+def _stamps(part: str) -> tuple[str, str] | None:
+    """The first and last timestamps in a piece of transcript."""
+    stamps = _TIMESTAMP.findall(part)
+    return (stamps[0], stamps[-1]) if stamps else None
+
+
+def _draft_part(span: tuple[str, str] | None, notes: str) -> str:
+    """One part's notes as you see them while the summary is written: under a heading for the stretch of the
+    meeting they cover, with the model's own headings a level down."""
+    heading = f"## Notes on {span[0]} to {span[1]}" if span else "## Notes"
+    return heading + "\n" + re.sub(r"^#{1,3}\s", "### ", tidy(notes), flags=re.M)
+
+
+_LINE_TIME = re.compile(r"^\[(?:(\d+):)?(\d+):(\d\d)\]")
+
+
+def after(transcript: str, seconds: float, overlap: float = 90) -> str:
+    """The transcript from `seconds` on. A turn can run up to 90 s past its timestamp, so the turns that start
+    up to `overlap` seconds before are kept too: a little repeated beats a little lost."""
+    out, keep = [], False
+    for line in transcript.splitlines():
+        t = _LINE_TIME.match(line)
+        if t:
+            keep = int(t.group(1) or 0) * 3600 + int(t.group(2)) * 60 + int(t.group(3)) >= seconds - overlap
+        if keep:
+            out.append(line)
+    return "\n".join(out)
+
+
 def unload(pid: str, cfg: dict) -> None:
     """Lets a local Ollama model go right away instead of when its keep-alive runs out."""
     if pid != "ollama" or OLLAMA_KEEP_ALIVE != "0" or not cfg.get("ollama_url"):
@@ -425,37 +541,67 @@ def unload(pid: str, cfg: dict) -> None:
 
 
 def summarize(transcript: str, cfg: dict, choice: str, template: str, moments: list[str],
-              want_title: bool, about: str = "", minutes: float = 30, on_progress=None) -> tuple[str, str, str | None]:
+              want_title: bool, about: str = "", minutes: float = 30, on_progress=None,
+              on_draft: OnText = None, early_notes: tuple[list[dict], float] | None = None) -> tuple[str, str, str | None]:
     """Returns (summary, provider_used, title). The title is best-effort and never fails the summary.
 
     A transcript too long for the provider's context is summarized in parts first (notes on each part),
-    and the notes are then written up; nothing is ever silently cut off."""
+    and the notes are then written up; nothing is ever silently cut off.
+    `on_draft` gets the notes so far as they're written: each part's notes as they come, then the write-up
+    (which replaces them once it starts). The returned summary is the finished, tidied version.
+    `early_notes`: (notes written during the meeting, the seconds they cover), from live_notes.usable. Used
+    only when the transcript is too long for one go: then only the rest of the meeting needs notes first."""
     if not transcript.strip():
         raise LLMError("Transcript is empty (no speech detected)")
 
     def run(pid: str):
         budget = context_chars(pid, cfg)
         hold = "5m"  # keep a local model loaded between the calls of one summary, then let it unload
+        notes, shown = [], []  # what the write-up reads, and what you watch being written
+
+        def take_notes(parts: list[str], progress: str) -> None:
+            for i, part in enumerate(parts, 1):
+                if on_progress:
+                    on_progress(progress.format(i=i, n=len(parts)))
+                system, prompt = templates.notes_prompt(part, i, len(parts), about)
+                show = None
+                if on_draft:
+                    show = lambda t, part=part: on_draft("\n\n".join(shown + [_draft_part(_stamps(part), t)]))
+                text = tidy(generate(pid, cfg, prompt, system=system, keep_alive=hold, on_text=show))
+                notes.append(f"{_span(part)}:\n{text}")
+                shown.append(_draft_part(_stamps(part), text))
+
         material, from_notes = transcript, False
+        if early_notes and len(transcript) > budget:
+            # Notes written during the meeting (live_notes.py) cover its start: only the rest needs notes now.
+            done, until = early_notes
+            for n in done:
+                span = (meeting_text.fmt(n["start"]), meeting_text.fmt(n["end"]))
+                notes.append(f"NOTES ON [{span[0]}] TO [{span[1]}]:\n{n['text']}")
+                shown.append(_draft_part(span, n["text"]))
+            if on_draft and shown:
+                on_draft("\n\n".join(shown))
+            rest = after(transcript, until)
+            if rest.strip():
+                take_notes(split_lines(rest, budget), "Notes on the rest of the meeting ({i} of {n})")
+            material, from_notes = "\n\n".join(notes), True
         for _ in range(3):  # notes on notes for very long meetings; each round is much shorter than the last
             if len(material) <= budget:
                 break
             parts = split_lines(material, budget)
-            notes = []
-            for i, part in enumerate(parts, 1):
-                if on_progress:
-                    on_progress(f"Summarizing part {i} of {len(parts)}")
-                system, prompt = templates.notes_prompt(part, i, len(parts), about)
-                notes.append(f"{_span(part)}:\n" + tidy(generate(pid, cfg, prompt, system=system, keep_alive=hold)))
+            notes, shown = [], []
+            take_notes(parts, "Summarizing part {i} of {n}")
             material, from_notes = "\n\n".join(notes), True
         material = material[:budget]  # only reached if the notes somehow didn't shrink
         if on_progress and from_notes:
             on_progress("Writing up the notes")
         system, prompt = templates.final_prompt(template, cfg["custom_template"], material, from_notes, moments, about, minutes)
-        summary = tidy(generate(pid, cfg, prompt, system=system, keep_alive=hold))
+        show = (lambda t: on_draft(tidy(t))) if on_draft else None
+        summary = tidy(generate(pid, cfg, prompt, system=system, keep_alive=hold, on_text=show))
         if not _ACTION_HEADING.search(summary):  # small models sometimes forget the one section we rely on
             system, prompt = templates.actions_prompt(material, from_notes, about)
-            actions = tidy(generate(pid, cfg, prompt, system=system, keep_alive=hold))
+            show = (lambda t, before=summary: on_draft(f"{before}\n\n{tidy(t)}")) if on_draft else None
+            actions = tidy(generate(pid, cfg, prompt, system=system, keep_alive=hold, on_text=show))
             summary += "\n\n" + (actions if _ACTION_HEADING.search(actions) else "## Action Items\n- None")
         summary = place_moments(summary, moments)
         if not want_title:

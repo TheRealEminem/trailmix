@@ -26,6 +26,7 @@ import cleanup
 import database as db
 import exporter
 import live
+import live_notes
 import questions
 import llm_engine
 import meeting_text
@@ -42,6 +43,14 @@ _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pipeline")
 
 
 NONE: frozenset[str] = frozenset()
+
+# The notes being written right now, by meeting, so the window can show them as they come. Only in memory:
+# the summary column gets the finished notes, and a restart simply writes them again.
+_drafts: dict[int, str] = {}
+
+
+def draft(meeting_id: int) -> str | None:
+    return _drafts.get(meeting_id)
 
 
 def enqueue(meeting_id: int, go: frozenset[str] = NONE, force: frozenset[str] = NONE) -> None:
@@ -169,6 +178,8 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
             db.update_meeting(meeting_id, status="ready_summarize", wait_reason=None)
             _export(meeting_id, cfg)  # save the transcript now; re-exported with the summary later
             return
+        live_notes.wait_until_idle(meeting_id)  # notes being written as the meeting ended: the summary uses them
+        m = db.get_meeting(meeting_id)
         choice = m["requested_provider"]
         first = llm_engine.chain(choice, cfg)[0]
         if llm_engine.is_local(first, cfg):
@@ -185,9 +196,12 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
                       f"{questions.vocabulary_prompt().replace('Names and terms:', 'Names and terms that may come up, spelled correctly:')}".strip(),
                 minutes=minutes,
                 on_progress=lambda what: db.update_meeting(meeting_id, wait_reason=what),
+                on_draft=lambda text: _drafts.__setitem__(meeting_id, text),
+                early_notes=live_notes.usable(m),
             )
             db.update_meeting(meeting_id, summary=summary, summary_provider=used,
                               summary_model=llm_engine.model_for(used, cfg))
+            _drafts.pop(meeting_id, None)
             db.replace_tasks(meeting_id, meeting_text.action_items(summary))
             if title and db.get_meeting(meeting_id)["title_auto"]:  # you may have renamed it meanwhile
                 db.update_meeting(meeting_id, title=title)
@@ -197,6 +211,8 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
                 log.exception("Couldn't tag or sort meeting %s", meeting_id)
         except llm_engine.LLMError as e:
             db.update_meeting(meeting_id, summary_error=str(e))
+        finally:
+            _drafts.pop(meeting_id, None)
     _export(meeting_id, cfg)
     db.update_meeting(meeting_id, status="done", wait_reason=None)
 

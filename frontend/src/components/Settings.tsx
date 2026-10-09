@@ -5,6 +5,7 @@ import type {
   ExportFormat,
   ExportJob,
   Health,
+  LiveNotesPlan,
   NativeRecorder,
   Upgrades,
   Workspace,
@@ -911,6 +912,84 @@ const PROVIDER_IDS: ProviderId[] = [
   "custom",
 ];
 
+const LIVE_NOTES_OPTIONS: { id: SettingsT["live_notes"]; label: string }[] = [
+  { id: "auto", label: "Automatic" },
+  { id: "on", label: "On" },
+  { id: "off", label: "Off" },
+];
+
+/** Where the power stands right now, for a notes model on this Mac. */
+function powerLine(p: LiveNotesPlan["power"]): { text: string; paused: boolean } {
+  if (!p.battery) return { text: "This Mac runs on mains power, so battery isn't a concern.", paused: false };
+  if (p.plugged_in) return { text: `Right now: plugged in${p.percent !== null ? `, battery at ${p.percent}%` : ""}.`, paused: false };
+  if (p.low_power) return { text: "Right now: Low Power Mode is on, so notes wait until it's off or you plug in.", paused: true };
+  if (p.percent !== null && p.percent < 40)
+    return { text: `Right now: on battery at ${p.percent}%, so notes wait until you plug in.`, paused: true };
+  return {
+    text: `Right now: on battery at ${p.percent ?? "?"}%. Notes still run, and use more battery while they do.`,
+    paused: false,
+  };
+}
+
+/**
+ * Notes during the meeting: Automatic / On / Off, what that means on this Mac right now, and the cost when the
+ * notes model runs here. The engine decides (live_notes.decide); this only explains it.
+ */
+function LiveNotesRow({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT>) => Promise<void> }) {
+  const [plan, setPlan] = useState<LiveNotesPlan | null>(null);
+  const refresh = () =>
+    api
+      .liveNotesPlan()
+      .then(setPlan)
+      .catch(() => setPlan(null));
+  // Again when the notes AI changes elsewhere on this page (choosing here refreshes once it's saved).
+  useEffect(() => void refresh(), [s.summary_provider, s.ollama_model, s.summary_fallback]);
+  const power = plan?.local && plan.on ? powerLine(plan.power) : null;
+
+  return (
+    <div className="py-3.5">
+      <ControlRow
+        icon={<LinesIcon size={16} />}
+        label="Notes during the meeting"
+        hint="Every ten minutes, the notes AI writes notes on what was just said. You see them while you record, and a long meeting's final notes are ready sooner after you stop (about 3 minutes instead of 5 for a 45-minute meeting on a 16 GB Mac)."
+        className="!py-0"
+      />
+      <div className="ml-[52px] mt-3">
+        <Segmented
+          label="Notes during the meeting"
+          size="sm"
+          value={s.live_notes}
+          options={LIVE_NOTES_OPTIONS}
+          onChange={(v) => void save({ live_notes: v }).then(refresh)}
+        />
+      </div>
+      {plan && (
+        <div className="ml-[52px] mt-2.5 space-y-2 text-hint leading-relaxed">
+          <p className={plan.on ? "text-ink" : "text-ink-soft"}>{plan.reason}</p>
+          {plan.warning && (
+            <div className="flex items-start gap-2 rounded-md border border-sun/25 bg-sun-soft/60 px-3 py-2 text-sun-deep">
+              <AlertIcon size={14} className="mt-[3px] shrink-0" />
+              <span>{plan.warning}</span>
+            </div>
+          )}
+          {plan.local && plan.on && (
+            <p className="text-ink-soft">
+              To spare your battery and your call, it pauses on battery below 40%, in Low Power Mode, or when macOS
+              reports critical memory pressure. Anything it skips is written after the meeting, as usual.
+            </p>
+          )}
+          {power && (
+            <p className={`flex items-start gap-1.5 ${power.paused ? "text-sun-deep" : "text-ink-soft"}`}>
+              <PowerIcon size={14} className="mt-[3px] shrink-0" />
+              {power.text}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Settings({
   health,
   native,
@@ -1106,6 +1185,7 @@ export default function Settings({
           checked={s.auto_summarize}
           onChange={(v) => save({ auto_summarize: v })}
         />
+        <LiveNotesRow s={s} save={save} />
         <SwitchRow
           icon={<SparkleIcon size={16} />}
           label="Ask quick questions"
