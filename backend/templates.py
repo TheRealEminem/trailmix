@@ -112,12 +112,15 @@ def _length(minutes: float) -> str:
     return "It was a long meeting: be thorough, and cover every topic that took more than a minute or two."
 
 
-def notes_prompt(chunk: str, part: int, parts: int, about: str) -> tuple[str, str]:
-    """(system, prompt) for notes on one part of a transcript too long to summarize in one go."""
+def notes_prompt(chunk: str, part: int, parts: int | None, about: str) -> tuple[str, str]:
+    """(system, prompt) for notes on one part of a transcript too long to summarize in one go. `parts` is
+    None for notes written during the meeting (live_notes.py), when nobody knows yet how long it will run."""
+    of = f" OF {parts}" if parts else ""
+    where = f"part {part} of {parts}" if parts else f"part {part}, written while the meeting is still going"
     return NOTES_SYSTEM, f"""{about}
-This is part {part} of {parts} of the transcript.
+This is {where} of the transcript.
 
-TRANSCRIPT (PART {part} OF {parts}):
+TRANSCRIPT (PART {part}{of}):
 {chunk}
 
 ---

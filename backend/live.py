@@ -148,6 +148,15 @@ class LiveSession:
     def duration(self) -> float:
         return max(self._written.values()) / SR
 
+    @property
+    def transcribed_until(self) -> float:
+        """How far into the recording the live transcript is complete, in seconds (0 without one)."""
+        if not (self.draft or self.final):
+            return 0.0
+        with self._lock:
+            done = [self._pending_start[ch] for ch in (0, 1) if self._written[ch]]
+        return min(done) / SR if done else 0.0
+
     def write(self, frame: bytes) -> None:
         """frame = 1 channel byte + little-endian int16 PCM."""
         if len(frame) < 3:

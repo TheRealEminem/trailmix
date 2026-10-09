@@ -15,8 +15,11 @@ import {
   LinesIcon,
   MicIcon,
   MonitorIcon,
+  SparkleIcon,
   StopIcon,
 } from "./icons";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { TrailScene } from "./illustrations";
 import LevelMeters from "./LevelMeter";
 import MicPicker from "./MicPicker";
@@ -40,6 +43,8 @@ interface Props {
   onLiveDraft: (v: boolean) => void;
   notice: string | null;
   drafts: DraftLine[];
+  /** The recording as the engine sees it, whichever app captures it (for the notes written during it). */
+  live: LiveRecording | null;
   health: Health | null;
   backendDown: boolean;
   bookmarks: Bookmark[];
@@ -377,6 +382,9 @@ export default function Recorder(p: Props) {
                 stop.
               </p>
             )}
+            {p.live && (p.live.notes.length > 0 || p.live.notes_status) && (
+              <LiveNotes notes={p.live.notes} status={p.live.notes_status} />
+            )}
           </section>
         ) : (
           <section
@@ -472,6 +480,43 @@ export default function Recorder(p: Props) {
           </section>
         )}
       </div>
+    </div>
+  );
+}
+
+const PLUGINS = [remarkGfm];
+
+/** "Notes so far": what the notes AI wrote during the meeting (live_notes.py), newest stretch last. */
+function LiveNotes({ notes, status }: { notes: LiveRecording["notes"]; status: string | null }) {
+  const paused = !!status && /^(Paused|Couldn't)/.test(status);
+  return (
+    <div className="border-t border-line px-5 py-5 sm:px-6">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <SparkleIcon size={16} className="text-forest" />
+          <span className="text-label font-medium">Notes so far</span>
+        </div>
+        {status && (
+          <span className={`flex items-center gap-1.5 text-meta ${paused ? "text-sun-deep" : "text-ink-soft"}`}>
+            {status.startsWith("Writing") && <Spinner className="h-3 w-3" />}
+            {status}
+          </span>
+        )}
+      </div>
+      {notes.length === 0 ? (
+        <p className="text-label text-ink-soft">The first notes come after ten minutes of meeting.</p>
+      ) : (
+        <div data-private="notes" className="prose-summary prose-draft space-y-5 text-label">
+          {notes.map((n) => (
+            <div key={n.start}>
+              <h3>
+                {formatDuration(n.start)} to {formatDuration(n.end)}
+              </h3>
+              <ReactMarkdown remarkPlugins={PLUGINS}>{n.text}</ReactMarkdown>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
