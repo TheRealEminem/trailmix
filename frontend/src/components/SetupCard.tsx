@@ -49,10 +49,13 @@ function Step({
   done,
   title,
   children,
+  personal,
 }: {
   done: boolean;
   title: string;
   children?: React.ReactNode;
+  /** The title has your details in it (your name, workspace names): hidden from problem reports. */
+  personal?: boolean;
 }) {
   return (
     <li className="flex gap-3 py-3">
@@ -67,6 +70,7 @@ function Step({
       <div className="min-w-0 flex-1">
         <div
           className={`text-label font-medium ${done ? "text-ink-soft" : "text-ink"}`}
+          data-private={personal ? "your details" : undefined}
         >
           {title}
         </div>
@@ -255,6 +259,7 @@ export default function SetupCard({
         <Step
           done={nameDone}
           title={nameDone ? `Your name: ${name}` : "Your name"}
+          personal
         >
           Notes and action items use it instead of “You”.
           <div className="mt-2 flex gap-2">
@@ -433,6 +438,7 @@ export default function SetupCard({
                 ? "Workspaces: maybe later"
                 : "Organize into workspaces (optional)"
           }
+          personal
         >
           Keep the parts of your life apart, like your job, a committee and
           personal, and switch between them in the sidebar. Everything starts in

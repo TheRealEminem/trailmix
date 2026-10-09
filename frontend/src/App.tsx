@@ -33,6 +33,7 @@ import SetupCard from "./components/SetupCard";
 import Sidebar from "./components/Sidebar";
 import type { View } from "./components/Sidebar";
 import TasksView from "./components/TasksView";
+import ReportButton from "./components/ReportButton";
 import { inWorkspace } from "./components/Workspaces";
 import {
   PageHeader,
@@ -903,6 +904,16 @@ export default function App() {
       </main>
 
       <Toast toast={toast} onClose={closeToast} />
+      <ReportButton
+        page={
+          view === "main"
+            ? meeting && meeting.id === selectedId
+              ? "Meeting"
+              : "Home"
+            : view.charAt(0).toUpperCase() + view.slice(1)
+        }
+        meetingId={view === "main" && meeting ? meeting.id : null}
+      />
       <TooltipLayer />
       {confirmDialog}
     </div>

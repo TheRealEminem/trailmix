@@ -183,6 +183,11 @@ def imported_ids(source: str) -> dict[str, int]:
         return {r["external_id"]: r["id"] for r in rows}
 
 
+def count_meetings() -> int:
+    with connect() as conn:
+        return conn.execute("SELECT count(*) FROM meetings").fetchone()[0]
+
+
 def list_meetings() -> list[dict]:
     with connect() as conn:
         rows = conn.execute(

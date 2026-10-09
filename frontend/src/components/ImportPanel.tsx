@@ -255,7 +255,7 @@ function GranolaSection({
                   </button>
                 </div>
               </div>
-              <ul className="max-h-80 divide-y divide-line overflow-y-auto">
+              <ul data-private="Granola notes" className="max-h-80 divide-y divide-line overflow-y-auto">
                 {notes.map((n) => (
                   <li key={n.id}>
                     <label

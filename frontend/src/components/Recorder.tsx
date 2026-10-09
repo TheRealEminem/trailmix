@@ -346,6 +346,7 @@ export default function Recorder(p: Props) {
                   </span>
                 </div>
                 <div
+                  data-private="live transcript"
                   ref={draftBox}
                   className="fade-edges-y -mx-1 max-h-80 space-y-2.5 overflow-y-auto px-1 py-1"
                 >

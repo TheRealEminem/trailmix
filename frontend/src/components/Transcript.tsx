@@ -112,7 +112,7 @@ export default function Transcript({ meeting: m, pending, onBookmarks, onSpeaker
   });
 
   return (
-    <div>
+    <div data-private="transcript">
       {/* toolbar */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <span className="text-hint text-ink-soft">

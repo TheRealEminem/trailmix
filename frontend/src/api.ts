@@ -67,6 +67,15 @@ export interface DeviceAdvice {
   notes: string[];
 }
 
+/** A problem report with personal information removed, ready to check and post. */
+export interface ProblemReport {
+  title: string;
+  body: string;
+  url: string;
+  /** The local model that checked it, or null if only patterns and known names did. */
+  model: string | null;
+}
+
 export interface FileImport {
   kind: "recording" | "transcript";
   id: number | null;
@@ -408,6 +417,15 @@ export const api = {
   upgradeNotes: () => request<{ queued: number }>("/upgrades/notes", json("POST")),
   retitle: (id: number) => request<{ title: string }>(`/meetings/${id}/retitle`, json("POST")),
   device: () => request<DeviceAdvice>("/device"),
+  prepareReport: (r: {
+    description: string;
+    screen: string;
+    page: string;
+    include_screen: boolean;
+    include_diagnostics: boolean;
+    blocks: boolean;
+    meeting_id: number | null;
+  }) => request<ProblemReport>("/report", json("POST", r)),
   /** One file as the request body (streamed to disk on the server, however big). */
   importFile: (file: File) =>
     request<FileImport>(

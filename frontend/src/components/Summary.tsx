@@ -55,7 +55,7 @@ export default function Summary({ meeting, health, onResummarize, onToggleTask }
   const canRegenerate = !!meeting.transcript && meeting.status !== "ready_summarize";
 
   return (
-    <div>
+    <div data-private="notes">
       {meeting.summary_error && (
         <div className="mb-6 flex items-start gap-3 rounded-lg border border-trail/20 bg-trail-soft/70 p-4 text-label text-trail-deep">
           <AlertIcon size={18} className="mt-0.5 shrink-0" />
