@@ -21,9 +21,14 @@ export default function ImportPanel({
     <div>
       <PageHeader
         title="Import meetings"
-        subtitle="Bring back meetings you exported from Trailmix, or transcripts from Granola and elsewhere. They become searchable, and you can ask about them and summarize them like any meeting."
+        subtitle="Recordings, transcripts from other meeting apps, Granola, or meetings you exported from Trailmix. They become searchable, and you can ask about them and summarize them like any meeting."
       />
       <div className="space-y-6">
+        <FilesSection
+          onImported={onImported}
+          onOpenMeeting={onOpenMeeting}
+          onError={onError}
+        />
         <TrailmixSection
           onImported={onImported}
           onOpenMeeting={onOpenMeeting}
@@ -498,6 +503,96 @@ function TrailmixSection({ onImported, onOpenMeeting, onError }: Props) {
           onChange={(e) => void upload(e.target.files)}
         />
         {result && <span className="text-label text-forest">{result}</span>}
+      </div>
+    </section>
+  );
+}
+
+const RECORDINGS = ".mp3,.m4a,.wav,.aac,.flac,.ogg,.opus,.oga,.webm,.mp4,.mov,.mkv,.m4v,.avi,.wma,.aif,.aiff,.caf,.amr,.3gp,.mpeg,.mpg";
+const TRANSCRIPTS = ".vtt,.srt,.txt,.docx,.md";
+
+/** Recordings (audio or video) and transcript files from other apps: drop them here, or choose them. */
+function FilesSection({ onImported, onOpenMeeting, onError }: Props) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+  const [over, setOver] = useState(false);
+  const picker = useRef<HTMLInputElement>(null);
+
+  const upload = async (files: File[]) => {
+    if (!files.length) return;
+    setResult(null);
+    const made: number[] = [];
+    let recordings = 0;
+    let skipped = 0;
+    const problems: string[] = [];
+    for (const [i, f] of files.entries()) {
+      setBusy(`${files.length > 1 ? `${i + 1} of ${files.length}: ` : ""}${f.name}`);
+      try {
+        const r = await api.importFile(f);
+        if (r.skipped) skipped++;
+        else if (r.id) {
+          made.push(r.id);
+          if (r.kind === "recording") recordings++;
+        }
+      } catch (e) {
+        problems.push((e as Error).message);
+      }
+    }
+    setBusy(null);
+    if (picker.current) picker.current.value = "";
+    const parts = [];
+    if (made.length) parts.push(`Imported ${made.length} meeting${made.length === 1 ? "" : "s"}.`);
+    if (recordings)
+      parts.push(
+        `${recordings === 1 ? "The recording is" : "Recordings are"} being transcribed now; the notes follow.`,
+      );
+    if (skipped) parts.push(`${skipped} already here, skipped.`);
+    setResult(parts.join(" ") || null);
+    if (problems.length) onError(problems.join(" · "));
+    if (made.length) onImported();
+    if (made.length === 1) onOpenMeeting(made[0]);
+  };
+
+  return (
+    <section
+      className={`panel animate-enter p-5 transition-[box-shadow] sm:p-7 ${over ? "ring-2 ring-forest/40" : ""}`}
+      aria-labelledby="files-import-heading"
+      onDragOver={(e) => {
+        e.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setOver(false);
+        void upload(Array.from(e.dataTransfer.files));
+      }}
+    >
+      <h2 id="files-import-heading" className="font-display text-lead font-semibold">
+        Recordings and transcript files
+      </h2>
+      <p className="mt-1 text-label leading-relaxed text-ink-soft">
+        Drop files here, or choose them. <b className="font-medium text-ink">Audio or video</b> (MP3, M4A, WAV, MP4,
+        MOV and more) is transcribed and summarized like a meeting you recorded: Trailmix keeps only the audio, for
+        30 days unless you keep it forever, and never changes your original file.{" "}
+        <b className="font-medium text-ink">Transcripts</b> from Zoom, Microsoft Teams or Google Meet (VTT), subtitle
+        files (SRT), Otter (TXT or DOCX) or plain text are summarized.
+      </p>
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <button className="btn btn-md btn-primary" onClick={() => picker.current?.click()} disabled={!!busy}>
+          {busy ? <Spinner /> : <DownloadIcon size={16} />}
+          {busy ? "Importing…" : "Choose files…"}
+        </button>
+        <input
+          ref={picker}
+          type="file"
+          multiple
+          hidden
+          accept={`${RECORDINGS},${TRANSCRIPTS}`}
+          onChange={(e) => void upload(Array.from(e.target.files ?? []))}
+        />
+        {busy && <span className="truncate text-label text-ink-soft">{busy}</span>}
+        {!busy && result && <span className="text-label text-forest">{result}</span>}
       </div>
     </section>
   );

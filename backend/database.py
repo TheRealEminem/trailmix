@@ -14,6 +14,8 @@ DB_PATH = DATA_DIR / "trailmix.db"
 # status: recording -> queued -> [ready_transcribe] -> [waiting_confirm] -> transcribing
 #         -> [ready_summarize] -> [waiting_confirm] -> summarizing -> done | error
 # ready_*: waiting for you to start that step (auto mode off); waiting_confirm: not enough free RAM.
+FTS_TABLE = "CREATE VIRTUAL TABLE IF NOT EXISTS meetings_fts USING fts5(title, transcript, summary, tags, tokenize='porter unicode61');"
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meetings (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,7 +57,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
 );
 
 -- Full-text index over what you'd search for; rowid = meetings.id. Kept in sync by update_meeting.
-CREATE VIRTUAL TABLE IF NOT EXISTS meetings_fts USING fts5(title, transcript, summary, tokenize='porter unicode61');
+CREATE VIRTUAL TABLE IF NOT EXISTS meetings_fts USING fts5(title, transcript, summary, tags, tokenize='porter unicode61');
 """
 
 # Columns added after the first release; applied to existing databases on startup.
@@ -82,9 +84,17 @@ _ADDED_COLUMNS = {
     "live_json": "TEXT",                             # final transcript made while recording (live.py), if any
     "workspace_id": "INTEGER",                       # workspaces.id, or NULL: not sorted into one yet
     "workspace_auto": "INTEGER NOT NULL DEFAULT 0",  # Trailmix chose the workspace (you can still change it)
+    # Which model did each job (model_ranks.py knows when a better one could redo it):
+    "transcribed_with": "TEXT",                      # e.g. "whisper-large-v3-turbo, while recording"
+    "summary_model": "TEXT",                         # e.g. "qwen2.5:7b"
+    "workspace_model": "TEXT",                       # the model that sorted it (NULL: by hand or by title)
+    "tags_json": "TEXT",                             # ["vaccine cold chain", "investor pitch", …]
+    "tags_model": "TEXT",
+    "imported_at": "TEXT",                           # when an imported recording came in (its audio's 30 days)
 }
 
-_FTS_FIELDS = ("title", "transcript", "summary")
+_FTS_FIELDS = ("title", "transcript", "summary", "tags_json")
+_FTS_ROW = ("SELECT id, title, coalesce(transcript, ''), coalesce(summary, ''), coalesce(tags_json, '') FROM meetings")
 
 
 def init_db() -> None:
@@ -100,14 +110,14 @@ def init_db() -> None:
                     conn.execute("UPDATE meetings SET transcribed = 1 WHERE transcript IS NOT NULL")
         for (row_id,) in conn.execute("SELECT id FROM meetings WHERE uid IS NULL").fetchall():
             conn.execute("UPDATE meetings SET uid = ? WHERE id = ?", (uuid.uuid4().hex, row_id))
+        if "tags" not in {r[1] for r in conn.execute("PRAGMA table_info(meetings_fts)")}:  # from before tags
+            conn.execute("DROP TABLE meetings_fts")
+            conn.execute(FTS_TABLE)
         indexed = conn.execute("SELECT count(*) FROM meetings_fts").fetchone()[0]
         total = conn.execute("SELECT count(*) FROM meetings").fetchone()[0]
         if indexed != total:  # first run with search, or an index that drifted: rebuild it
             conn.execute("DELETE FROM meetings_fts")
-            conn.execute(
-                "INSERT INTO meetings_fts (rowid, title, transcript, summary) "
-                "SELECT id, title, coalesce(transcript, ''), coalesce(summary, '') FROM meetings"
-            )
+            conn.execute(f"INSERT INTO meetings_fts (rowid, title, transcript, summary, tags) {_FTS_ROW}")
 
 
 @contextmanager
@@ -125,11 +135,8 @@ def connect():
 
 def _reindex(conn, meeting_id: int) -> None:
     conn.execute("DELETE FROM meetings_fts WHERE rowid = ?", (meeting_id,))
-    conn.execute(
-        "INSERT INTO meetings_fts (rowid, title, transcript, summary) "
-        "SELECT id, title, coalesce(transcript, ''), coalesce(summary, '') FROM meetings WHERE id = ?",
-        (meeting_id,),
-    )
+    conn.execute(f"INSERT INTO meetings_fts (rowid, title, transcript, summary, tags) {_FTS_ROW} WHERE id = ?",
+                 (meeting_id,))
 
 
 def create_meeting(title: str, title_auto: bool, workspace_id: int | None = None) -> int:
@@ -218,7 +225,8 @@ def meetings_with_status(*statuses: str) -> list[dict]:
 def meetings_with_audio() -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, created_at, status FROM meetings WHERE audio_dir IS NOT NULL AND audio_deleted = 0 AND keep_audio = 0"
+            "SELECT id, coalesce(imported_at, created_at) AS kept_since, status FROM meetings "
+            "WHERE audio_dir IS NOT NULL AND audio_deleted = 0 AND keep_audio = 0"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -228,8 +236,9 @@ _UPDATABLE = {
     "summary_error", "error", "has_system", "audio_deleted", "segments_json", "transcribed",
     "requested_provider", "requested_template", "title_auto", "draft_json", "exported_paths", "export_error",
     "bookmarks_json", "speaker_names_json", "qa_json", "keep_audio", "audio_dir", "live_json", "workspace_id", "workspace_auto",
+    "transcribed_with", "summary_model", "workspace_model", "tags_json", "tags_model", "imported_at",
 }
-_JSON_FIELDS = {"segments_json", "draft_json", "exported_paths", "bookmarks_json", "speaker_names_json", "qa_json"}
+_JSON_FIELDS = {"tags_json", "segments_json", "draft_json", "exported_paths", "bookmarks_json", "speaker_names_json", "qa_json"}
 
 
 def update_meeting(meeting_id: int, **fields) -> None:
@@ -289,7 +298,7 @@ def search(text: str, limit: int = 30, any_term: bool = False, workspace_id: int
             f"""SELECT m.id, m.title, m.created_at, m.duration_sec, m.status, m.workspace_id,
                        snippet(meetings_fts, -1, '{HIT_START}', '{HIT_END}', '…', 14) AS snippet
                 FROM meetings_fts JOIN meetings m ON m.id = meetings_fts.rowid
-                WHERE meetings_fts MATCH ? {within} ORDER BY bm25(meetings_fts, 5.0, 1.0, 2.0) LIMIT ?""",
+                WHERE meetings_fts MATCH ? {within} ORDER BY bm25(meetings_fts, 5.0, 1.0, 2.0, 3.0) LIMIT ?""",
             (q, *([workspace_id] if workspace_id else []), limit),
         ).fetchall()
     return [dict(r) for r in rows]

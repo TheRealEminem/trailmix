@@ -5,6 +5,13 @@ import SwiftUI
 enum Entry {
     @MainActor
     static func main() {
+        // macOS's spell checker in the window's text fields (red underlines, suggestions on right-click), no
+        // autocorrect. WebKit reads this once, before its first web view, so it's set first thing; turning it
+        // off in Edit → Spelling and Grammar is remembered.
+        UserDefaults.standard.register(defaults: [
+            "WebContinuousSpellCheckingEnabled": true,
+            "WebAutomaticSpellingCorrectionEnabled": false,
+        ])
         let args = CommandLine.arguments
         if args.contains("--self-test") { return SelfTest.run(args) }
         if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count { return Snapshot.render(into: args[i + 1]) }

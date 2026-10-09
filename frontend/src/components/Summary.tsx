@@ -98,6 +98,9 @@ export default function Summary({ meeting, health, onResummarize, onToggleTask }
                 <span className="font-medium text-ink">
                   {health?.providers.find((p) => p.id === meeting.summary_provider)?.label ?? meeting.summary_provider}
                 </span>
+                {meeting.summary_model && meeting.summary_model.toLowerCase() !== meeting.summary_provider.toLowerCase() && (
+                  <span className="font-mono"> · {meeting.summary_model}</span>
+                )}
               </span>
             )}
           </div>

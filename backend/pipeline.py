@@ -137,10 +137,14 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
         if m["audio_deleted"] or not m["audio_dir"]:
             raise RuntimeError("Audio has been deleted, so this meeting can't be transcribed")
         store.compress_pending(m)  # cheap: shrinks ~10x on disk before anything heavy happens
+        had_live = bool(m.get("live_json"))
         done_live = _finish_live(m, cfg)
-        if done_live:
-            _save_transcript(m, *done_live)
+        if done_live:  # transcribed while recording: the accurate model ran once, during the meeting
+            _save_transcript(m, *done_live, made_with=f"{_speech_model(cfg)}, while recording")
             m = db.get_meeting(meeting_id)
+        elif had_live:
+            log.warning("Meeting %s: the transcript made while recording missed a part; transcribing it all again",
+                        meeting_id)
     if not m["transcribed"]:
         if "transcribe" not in go and not cfg["auto_transcribe"]:
             db.update_meeting(meeting_id, status="ready_transcribe", wait_reason=None)
@@ -153,7 +157,7 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
             _gate(meeting_id, "transcribe" in force, mlx_engine.FINAL_MODEL_RAM_GB, "The transcription model")
         db.update_meeting(meeting_id, status="transcribing", wait_reason=None)
         segments, labeled, duration = _transcribe_local(m) if local else _transcribe_remote(m, cfg)
-        _save_transcript(m, segments, labeled, duration)
+        _save_transcript(m, segments, labeled, duration, made_with=f"{_speech_model(cfg)}, after the meeting")
         m = db.get_meeting(meeting_id)
         if store.RETENTION_DAYS == 0:
             store.delete_audio(m)
@@ -180,14 +184,15 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
                 minutes=minutes,
                 on_progress=lambda what: db.update_meeting(meeting_id, wait_reason=what),
             )
-            db.update_meeting(meeting_id, summary=summary, summary_provider=used)
+            db.update_meeting(meeting_id, summary=summary, summary_provider=used,
+                              summary_model=llm_engine.model_for(used, cfg))
             db.replace_tasks(meeting_id, meeting_text.action_items(summary))
             if title and db.get_meeting(meeting_id)["title_auto"]:  # you may have renamed it meanwhile
                 db.update_meeting(meeting_id, title=title)
             try:
-                workspaces.auto_sort(meeting_id, cfg, used)
+                workspaces.after_notes(meeting_id, cfg, used)  # tags, and a workspace if it's in Default
             except Exception:
-                log.exception("Couldn't sort meeting %s into a workspace", meeting_id)
+                log.exception("Couldn't tag or sort meeting %s", meeting_id)
         except llm_engine.LLMError as e:
             db.update_meeting(meeting_id, summary_error=str(e))
     _export(meeting_id, cfg)
@@ -320,11 +325,17 @@ def _label(per_track: dict, tracks: list[str]) -> list[dict]:
     return cleanup.strip_metrics(segments)
 
 
-def _save_transcript(m: dict, segments: list[dict], labeled: bool, duration: float) -> None:
+def _speech_model(cfg: dict) -> str:
+    """The speech model's short name, e.g. "whisper-large-v3-turbo"."""
+    model = mlx_engine.FINAL_MODEL if cfg["transcribe_engine"] == "local" else cfg["transcribe_model"]
+    return model.rsplit("/", 1)[-1].removesuffix("-mlx")
+
+
+def _save_transcript(m: dict, segments: list[dict], labeled: bool, duration: float, made_with: str | None = None) -> None:
     text = "\n".join(_line(s) for s in segments)
     db.update_meeting(
         m["id"], transcript=text, segments_json=json.dumps(segments), transcribed=1,
-        has_system=int(labeled), duration_sec=duration, wait_reason=None,
+        has_system=int(labeled), duration_sec=duration, wait_reason=None, transcribed_with=made_with,
     )
 
 

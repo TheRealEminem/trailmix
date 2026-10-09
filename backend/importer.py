@@ -14,6 +14,10 @@ import httpx
 import database as db
 import pipeline
 
+
+# Where an imported transcript (and notes) came from, as shown in "Transcribed with" and "Notes by".
+SOURCE_NAMES = {"granola": "Granola", "paste": "a pasted transcript", "file": "a transcript file"}
+
 log = logging.getLogger("trailmix")
 
 GRANOLA_API = "https://public-api.granola.ai/v1"
@@ -58,6 +62,8 @@ def save_imported(title: str, when: datetime, segments: list[dict], source: str,
         meeting_id, transcript="\n".join(_line(s) for s in segments), segments_json=segments, transcribed=1,
         has_system=int(labeled), duration_sec=duration, title_auto=int(not title),
         summary=summary or None, summary_provider=source if summary else None,
+        summary_model=SOURCE_NAMES.get(source, source) if summary else None,
+        transcribed_with=SOURCE_NAMES.get(source, source),
         status="done" if summary else "queued",
     )
     if summary:

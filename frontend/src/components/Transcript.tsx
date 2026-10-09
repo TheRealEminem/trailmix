@@ -3,10 +3,9 @@ import type { CSSProperties } from "react";
 import { api } from "../api";
 import type { Bookmark, Health, Meeting, Segment } from "../api";
 import { formatDuration } from "../format";
-import Compare from "./Compare";
-import { CloseIcon, ColumnsIcon, FlagIcon, LinesIcon, PauseIcon, PencilIcon, PlayIcon } from "./icons";
+import { CloseIcon, FlagIcon, LinesIcon, PauseIcon, PencilIcon, PlayIcon } from "./icons";
 import { ContourBadge } from "./illustrations";
-import { CopyButton, Segmented, SpeakerChip } from "./ui";
+import { CopyButton, SpeakerChip } from "./ui";
 
 interface Props {
   meeting: Meeting;
@@ -48,8 +47,7 @@ function SpeakerName({ label, name, onSave }: { label: string; name: string; onS
   );
 }
 
-export default function Transcript({ meeting: m, health, pending, onBookmarks, onSpeakers }: Props) {
-  const [view, setView] = useState<"final" | "compare">("final");
+export default function Transcript({ meeting: m, pending, onBookmarks, onSpeakers }: Props) {
   const audio = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
@@ -61,7 +59,6 @@ export default function Transcript({ meeting: m, health, pending, onBookmarks, o
   const segments: Segment[] = m.segments ?? [];
   const names = m.speaker_names;
   const hasAudio = !m.audio_deleted && m.audio_bytes > 0 && !audioError;
-  const hasCompare = !!m.draft?.length && segments.length > 0;
   const current = playing || time > 0 ? segments.findLastIndex((s) => s.start <= time + 0.05) : -1;
 
   useEffect(() => {
@@ -118,34 +115,13 @@ export default function Transcript({ meeting: m, health, pending, onBookmarks, o
     <div>
       {/* toolbar */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        {hasCompare ? (
-          <Segmented
-            kind="tab"
-            size="sm"
-            label="Transcript view"
-            value={view}
-            onChange={setView}
-            options={[
-              { id: "final", label: "Final transcript", icon: <LinesIcon size={16} /> },
-              { id: "compare", label: "Draft vs final", icon: <ColumnsIcon size={16} /> },
-            ]}
-          />
-        ) : (
-          <span />
-        )}
+        <span className="text-hint text-ink-soft">
+          {m.transcribed_with ? `Transcribed with ${m.transcribed_with}` : ""}
+        </span>
         <CopyButton text={m.transcript} />
       </div>
 
-      {view === "compare" && hasCompare ? (
-        <Compare
-          draft={m.draft!}
-          segments={segments}
-          names={names}
-          liveModel={health?.transcription.live_model ?? "live model"}
-          finalModel={health?.transcription.model ?? "final model"}
-        />
-      ) : (
-        <>
+      <>
           {/* speakers & moments */}
           <div className="inset-surface mb-6 space-y-3 px-4 py-3.5 text-hint text-ink-soft">
             <div className="flex flex-wrap items-center gap-2">
@@ -296,8 +272,7 @@ export default function Transcript({ meeting: m, health, pending, onBookmarks, o
               })}
             </div>
           )}
-        </>
-      )}
+      </>
     </div>
   );
 }

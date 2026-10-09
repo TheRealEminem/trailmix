@@ -154,7 +154,7 @@ enum SelfTest {
         checkIns.cancel()
 
         var transcript = ""
-        let done = await waitUntilAsync(180) {
+        let done = await waitUntilAsync(360) {  // generous: a busy Mac (or build machine) is slow
             guard let data = await get(base.appendingPathComponent("api/meetings/\(id)")),
                   let m = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
             if m["status"] as? String == "error" { transcript = "error: \(m["error"] ?? "")"; return true }

@@ -1,5 +1,6 @@
 """System resource readout and the RAM gate that guards the heavy models."""
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -95,3 +96,43 @@ def check(required_gb: float, what: str) -> str | None:
         return (f"Waiting for memory: macOS reports critical memory pressure and {what} needs about {needed:.1f} GB. "
                 "It starts by itself when that eases. Close some apps, or proceed anyway.")
     return None
+
+
+def chip() -> str:
+    """e.g. "Apple M4" ("" where it can't be read)."""
+    if sys.platform != "darwin":
+        return ""
+    try:
+        return subprocess.run(["/usr/sbin/sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True,
+                              timeout=2).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def device_advice() -> dict:
+    """What this Mac can comfortably do, for setup: {"verdict": "local" | "mixed" | "cloud", "chip", "ram_gb",
+    "disk_free_gb", "notes": [...]}. Local: everything runs well here. Mixed: transcribe here, but a cloud AI
+    will write notes better and faster. Cloud: also short on disk (or memory) for local models."""
+    vm = psutil.virtual_memory()
+    usage = shutil.disk_usage(db.DATA_DIR)
+    ram, free, share = vm.total / GB, usage.free / GB, usage.free / usage.total if usage.total else 1
+    name = chip()
+    notes, verdict = [], "local"
+    if ram < 12:
+        verdict = "mixed"
+        notes.append(f"{ram:.0f} GB of memory is tight for a local AI writing notes next to your call apps. "
+                     "Transcription still runs well here; a cloud AI (Claude, OpenAI or Gemini) will write better notes, faster.")
+    elif ram < 20:
+        notes.append(f"{ram:.0f} GB of memory runs everything locally with a small or mid-sized notes model "
+                     "(about 7B). Bigger models, or a cloud AI, write better notes.")
+    else:
+        notes.append(f"{ram:.0f} GB of memory: room for a larger local notes model (14B or more).")
+    if re.search(r"\bM1\b", name) and ram < 12:
+        notes.append("An M1 with this much memory is slow with local notes models; a cloud AI is the better fit.")
+    if free < 8 or share < SWAP_DISK_FREE:
+        verdict = "cloud"
+        notes.append(f"Only {free:.0f} GB of disk is free. The speech models need about 1.7 GB and a local notes model "
+                     "2 to 9 GB, and macOS needs room to swap. Free up space, or use a cloud AI for notes.")
+    elif free < 20:
+        notes.append(f"{free:.0f} GB of disk free: enough, but keep an eye on it (recordings use about 20 MB an hour).")
+    return {"verdict": verdict, "chip": name, "ram_gb": round(ram), "disk_free_gb": round(free), "notes": notes}
