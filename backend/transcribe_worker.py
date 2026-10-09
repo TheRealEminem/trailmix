@@ -21,7 +21,7 @@ def emit(**msg) -> None:
     print("TRAILMIX:" + json.dumps(msg), flush=True)
 
 
-def main(folder: Path) -> None:
+def main(folder: Path, vocabulary: str = "") -> None:
     tracks = {}
     for name in store.TRACKS.values():
         audio = store.load_track(folder, name)
@@ -33,7 +33,7 @@ def main(folder: Path) -> None:
         regions = vad.speech_regions(audio)
         segments = []
         for i, (a, b) in enumerate(regions):
-            for seg in mlx_engine.run(audio[a:b], mlx_engine.FINAL_MODEL):
+            for seg in mlx_engine.run(audio[a:b], mlx_engine.FINAL_MODEL, vocabulary or None):
                 segments.append({**seg, "start": seg["start"] + a / SR, "end": seg["end"] + a / SR})
             emit(progress=[name, i + 1, len(regions)])
         emit(track=name, segments=segments)
@@ -41,4 +41,4 @@ def main(folder: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]))
+    main(Path(sys.argv[1]), sys.argv[2] if len(sys.argv) > 2 else "")

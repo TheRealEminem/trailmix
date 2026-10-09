@@ -28,6 +28,8 @@ interface Props {
   workspaces: Workspace[];
   workspace: WorkspaceFilter;
   onWorkspace: (w: WorkspaceFilter) => void;
+  /** Meeting id → questions waiting for you. */
+  questions: Record<string, number>;
 }
 
 /** Renders a search snippet, turning the … markers into highlights. */
@@ -73,6 +75,7 @@ function MeetingRow({
   onSelect,
   onDelete,
   space,
+  asks,
 }: {
   m: MeetingListItem;
   active: boolean;
@@ -80,6 +83,8 @@ function MeetingRow({
   onDelete: () => void;
   /** Shown when looking at all meetings: which workspace this one is in. */
   space?: Workspace;
+  /** Questions about it waiting for you. */
+  asks?: number;
 }) {
   const busy = m.status === "recording";
   return (
@@ -99,7 +104,15 @@ function MeetingRow({
             ·
           </span>
           <span className="tabular-nums">{formatDuration(m.duration_sec)}</span>
-          <span className="ml-auto">
+          <span className="ml-auto flex items-center gap-1.5">
+            {asks ? (
+              <span
+                className="flex h-4 min-w-4 items-center justify-center rounded-full bg-sun-soft px-1 text-caption font-semibold text-sun-deep"
+                data-tip={`${asks} quick question${asks === 1 ? "" : "s"} about this meeting`}
+              >
+                ?
+              </span>
+            ) : null}
             <StatusChip status={m.status} />
           </span>
         </div>
@@ -134,6 +147,7 @@ export default function Sidebar({
   workspaces,
   workspace,
   onWorkspace,
+  questions,
 }: Props) {
   const meetings = everyMeeting.filter((m) => inWorkspace(workspace, m.workspace_id));
   const spaceOf = (id: number | null) => (workspace === "all" && id ? workspaces.find((w) => w.id === id) : undefined);
@@ -330,6 +344,7 @@ export default function Sidebar({
                     onSelect={() => onSelect(m.id)}
                     onDelete={() => onDelete(m)}
                     space={spaceOf(m.workspace_id)}
+                    asks={questions[String(m.id)]}
                   />
                 ))}
               </div>

@@ -27,6 +27,7 @@ import {
 import { ContourBadge } from "./illustrations";
 import { WorkspacePicker } from "./Workspaces";
 import PipelineStatus from "./PipelineStatus";
+import Questions from "./Questions";
 import Summary from "./Summary";
 import Transcript from "./Transcript";
 import { Segmented, Spinner, Switch } from "./ui";
@@ -55,6 +56,8 @@ interface Props {
   onWorkspace: (id: number | null) => void;
   /** A new title from the notes. */
   onRetitle: () => Promise<void>;
+  /** Something about the meeting changed (e.g. a question was answered): reload it. */
+  onChanged: () => void;
 }
 
 const WORKING = ["recording", "queued", "transcribing", "summarizing"];
@@ -233,6 +236,12 @@ export default function MeetingView({
           </div>
         )}
       </header>
+
+      <Questions
+        meetingId={m.id}
+        version={`${m.status}:${(m.summary ?? "").length}`}
+        onAnswered={on.onChanged}
+      />
 
       {m.status !== "done" && (
         <PipelineStatus

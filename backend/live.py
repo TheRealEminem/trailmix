@@ -20,6 +20,7 @@ import audio_store as store
 import database as db
 import mlx_engine
 import models
+import questions
 import transcribe_remote
 import vad
 
@@ -121,6 +122,7 @@ class LiveSession:
         self.final_complete = True  # False once any chunk was skipped: then the pipeline redoes it all
         self._step_lock = threading.Lock()  # one draft_step at a time; finish() waits for the running one
         self._context = {0: "", 1: ""}  # the latest words on each track, for the next chunk's model call
+        self._vocab = questions.vocabulary_prompt()[:300]  # names and terms you confirmed: spelled right
         warm_up(cfg, now=True)  # if it isn't loaded yet, start now rather than at the first words
         self.folder = folder
         folder.mkdir(parents=True, exist_ok=True)
@@ -248,12 +250,12 @@ class LiveSession:
                 continue
             try:
                 if self.final:
-                    found = self._final_text(chunk, self._context[ch])
+                    found = self._final_text(chunk, f"{self._vocab} {self._context[ch]}".strip())
                     off = start / SR
                     self.final_segments[ch] += [{**s, "start": s["start"] + off, "end": s["end"] + off} for s in found]
                     segs = mlx_engine.filter_hallucinations([{**s} for s in found])
                 else:
-                    segs = self._draft_text(chunk, self._context[ch])
+                    segs = self._draft_text(chunk, f"{self._vocab} {self._context[ch]}".strip())
             except transcribe_remote.RemoteError as e:
                 self.final_complete = False
                 out.append({"type": "status", "message": f"Live draft paused: {e}"})
