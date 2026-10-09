@@ -170,6 +170,8 @@ export interface Settings {
   transcribe_model: string;
   transcribe_live_model: string;
   live_final: boolean;
+  /** Notes written during the meeting (see LiveNotesPlan) */
+  live_notes: "auto" | "on" | "off";
   auto_export: boolean;
   export_dir: string;
   export_formats: ExportFormat[];
@@ -190,6 +192,8 @@ export interface Meeting extends MeetingListItem {
   summary: string | null;
   summary_provider: string | null;
   summary_error: string | null;
+  /** The notes so far, while they're being written (null otherwise). */
+  summary_draft: string | null;
   error: string | null;
   audio_bytes: number;
   audio_deleted: boolean;
@@ -251,6 +255,22 @@ export interface LiveRecording {
   draft: boolean;
   drafts: DraftLine[];
   bookmarks: Bookmark[];
+  /** Notes written during the meeting so far, each on a stretch of it */
+  notes: { start: number; end: number; text: string }[];
+  /** e.g. "Next notes at 20:00", "Paused on battery at 32%. They catch up after the meeting." */
+  notes_status: string | null;
+}
+
+/** Whether notes are written during meetings with your settings, and why. */
+export interface LiveNotesPlan {
+  on: boolean;
+  /** the notes AI runs on this Mac (so memory and battery matter) */
+  local: boolean;
+  reason: string;
+  warning: string | null;
+  ram_gb: number;
+  model_gb: number;
+  power: { battery: boolean; plugged_in: boolean; percent: number | null; low_power: boolean };
 }
 
 export interface SystemInfo {
@@ -453,6 +473,7 @@ export const api = {
     return `${proto}://${location.host}/api/meetings/${id}/stream?draft=${draft ? 1 : 0}&client=web`;
   },
   live: () => request<LiveRecording[]>("/live"),
+  liveNotesPlan: () => request<LiveNotesPlan>("/live-notes"),
   nativeRecorder: () => request<NativeRecorder>("/recorder"),
   ollama: () => request<OllamaStatus>("/ollama"),
   granolaNotes: () => request<{ notes: GranolaNote[] }>("/import/granola/notes"),

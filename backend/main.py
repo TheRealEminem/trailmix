@@ -32,6 +32,7 @@ import archive
 import exporter
 import importer
 import live
+import live_notes
 import llm_engine
 import meeting_text
 import mlx_engine
@@ -77,6 +78,7 @@ def _exit_with_parent() -> None:
 
 
 WARM_EVERY_S = 15
+LIVE_NOTES_EVERY_S = 10
 
 
 async def _warm_loop():
@@ -98,6 +100,18 @@ async def _warm_loop():
         await asyncio.sleep(WARM_EVERY_S)
 
 
+async def _live_notes_loop():
+    """Notes during the meeting (live_notes.py): checks every few seconds whether a recording has ten new
+    minutes of transcript to take notes on."""
+    while True:
+        try:
+            if live.active_count():
+                await run_in_threadpool(live_notes.tick)
+        except Exception:
+            log.exception("Notes during the meeting failed")
+        await asyncio.sleep(LIVE_NOTES_EVERY_S)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _exit_with_parent()
@@ -107,7 +121,9 @@ async def lifespan(_: FastAPI):
     pipeline.recover_unfinished()
     sweeper = asyncio.create_task(_sweep_loop())
     warmer = asyncio.create_task(_warm_loop()) if os.getenv("TRAILMIX_WARM") != "0" else None
+    note_taker = asyncio.create_task(_live_notes_loop())
     yield
+    note_taker.cancel()
     sweeper.cancel()
     if warmer:
         warmer.cancel()
@@ -199,7 +215,7 @@ def _get_or_404(meeting_id: int) -> dict:
 
 def _present(m: dict) -> dict:
     """Public shape of a meeting: hides file paths, adds parsed fields and audio info."""
-    hidden = ("audio_path", "audio_dir", "segments_json", "requested_provider", "draft_json", "exported_paths", "live_json",
+    hidden = ("audio_path", "audio_dir", "segments_json", "requested_provider", "draft_json", "exported_paths", "live_json", "live_notes_json",
               "tags_json",
               "bookmarks_json", "speaker_names_json", "qa_json")
     out = {k: v for k, v in m.items() if k not in hidden}
@@ -211,6 +227,7 @@ def _present(m: dict) -> dict:
     out["speaker_names"] = meeting_text.speaker_names(m, cfg)
     out["qa"] = json.loads(m["qa_json"]) if m.get("qa_json") else []
     out["tasks"] = db.tasks_for(m["id"])
+    out["summary_draft"] = None if m["summary"] else pipeline.draft(m["id"])  # the notes so far, while they're written
     out["title_auto"] = bool(m["title_auto"])
     out["audio_bytes"] = store.audio_bytes(m)
     out["audio_expires_at"] = store.expires_at(m)
@@ -745,8 +762,14 @@ def live_recordings():
     out = []
     for session in live.sessions():
         meeting = db.get_meeting(session.meeting_id)
-        out.append(session.describe(meeting["title"] if meeting else "Recording"))
+        out.append({**session.describe(meeting["title"] if meeting else "Recording"), **live_notes.status(session.meeting_id)})
     return out
+
+
+@app.get("/api/live-notes")
+def live_notes_plan():
+    """Whether notes are written during meetings with your settings, why, and this Mac's power and memory."""
+    return live_notes.decide(settings.get_all())
 
 
 def _live_or_409(meeting_id: int) -> live.LiveSession:

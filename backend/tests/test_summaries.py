@@ -43,7 +43,7 @@ def test_instructions_come_after_the_transcript():
 def test_long_transcripts_are_summarized_in_parts(monkeypatch):
     calls = []
 
-    def fake_generate(pid, cfg, prompt, system=None, keep_alive=None):
+    def fake_generate(pid, cfg, prompt, system=None, keep_alive=None, on_text=None):
         calls.append(prompt)
         return "## Overview\nNotes.\n\n## Action Items\n- None" if "TRANSCRIPT (PART" not in prompt else "- point"
 
@@ -57,6 +57,66 @@ def test_long_transcripts_are_summarized_in_parts(monkeypatch):
     assert len(calls) > 2 and all(len(c) < 5000 + 3000 for c in calls)
     final = calls[-1]
     assert "NOTES ON [00:00] TO [" in final and "PART" not in final.split("---")[0]
+
+
+def test_the_draft_shows_each_part_as_written_then_the_write_up(monkeypatch):
+    def fake_generate(pid, cfg, prompt, system=None, keep_alive=None, on_text=None):
+        reply = "- a point\n- another point" if "TRANSCRIPT (PART" in prompt else "## Overview\nWe met.\n\n## Action Items\n- None"
+        for end in range(1, len(reply) + 1):  # streamed a character at a time
+            on_text(reply[:end])
+        return reply
+
+    monkeypatch.setattr(llm_engine, "generate", fake_generate)
+    monkeypatch.setattr(llm_engine, "unload", lambda pid, cfg: None)
+    monkeypatch.setattr(llm_engine, "context_chars", lambda pid, cfg: 5000)
+    drafts = []
+    cfg = {"summary_provider": "ollama", "summary_fallback": "none", "custom_template": ""}
+    transcript = "\n".join(f"[{i // 60:02d}:{i % 60:02d}] You: " + "word " * 30 for i in range(400))
+    summary, _, _ = llm_engine.summarize(transcript, cfg, "auto", "general", [], want_title=False, on_draft=drafts.append)
+
+    part_notes = [d for d in drafts if d.startswith("## Notes on")]
+    assert part_notes[0].startswith("## Notes on 00:00 to ") and "PART" not in part_notes[-1]
+    assert part_notes[-1].count("## Notes on") > 1  # earlier parts stay while the next one is written
+    assert drafts[-1] == summary  # then the write-up, which ends as the finished notes
+
+
+def test_ollama_streams_its_reply(monkeypatch):
+    lines = ['{"response":"## Over"}', '{"response":"view\\nWe met."}', '{"response":"","done":true}']
+    monkeypatch.setattr(llm_engine, "_stream_lines", lambda url, **kw: iter(lines))
+    monkeypatch.setattr(llm_engine, "model_for", lambda pid, cfg: "qwen2.5:7b")
+    seen = []
+    text = llm_engine._ollama({"ollama_url": "http://x"}, "p", None, "0", on_text=seen.append)
+    assert text == "## Overview\nWe met." and seen == ["## Over", "## Overview\nWe met."]
+
+
+def test_ollama_stream_errors_fail_the_call(monkeypatch):
+    monkeypatch.setattr(llm_engine, "_stream_lines", lambda url, **kw: iter(['{"error":"model ran out of memory"}']))
+    monkeypatch.setattr(llm_engine, "model_for", lambda pid, cfg: "qwen2.5:7b")
+    try:
+        llm_engine._ollama({"ollama_url": "http://x"}, "p", None, "0", on_text=lambda t: None)
+    except llm_engine.LLMError as e:
+        assert "out of memory" in str(e)
+    else:
+        raise AssertionError("expected an LLMError")
+
+
+def test_openai_compatible_streams_server_sent_events(monkeypatch):
+    lines = [': keep-alive', 'data: {"choices":[{"delta":{"role":"assistant"}}]}',
+             'data: {"choices":[{"delta":{"content":"Hello"}}]}', 'data: {"choices":[{"delta":{"content":" there"}}]}',
+             'data: [DONE]', 'data: {"choices":[{"delta":{"content":"ignored"}}]}']
+    monkeypatch.setattr(llm_engine, "_stream_lines", lambda url, **kw: iter(lines))
+    seen = []
+    text = llm_engine._openai_compatible("http://x/v1", "", "m", "p", None, "custom", on_text=seen.append)
+    assert text == "Hello there" and seen == ["Hello", "Hello there"]
+
+
+def test_gemini_streams_and_skips_thoughts(monkeypatch):
+    lines = ['data: {"candidates":[{"content":{"parts":[{"text":"pondering","thought":true}]}}]}',
+             'data: {"candidates":[{"content":{"parts":[{"text":"## Overview"}]}}]}',
+             'data: {"candidates":[{"content":{"parts":[{"text":"\\nWe met."}]}}]}']
+    monkeypatch.setattr(llm_engine, "_stream_lines", lambda url, **kw: iter(lines))
+    text = llm_engine._gemini({"gemini_api_key": "k", "gemini_model": "g"}, "p", None, on_text=lambda t: None)
+    assert text == "## Overview\nWe met."
 
 
 def test_missing_action_items_are_asked_for(monkeypatch):

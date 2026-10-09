@@ -599,6 +599,31 @@ textarea::placeholder {
   @apply text-forest underline decoration-forest/30 underline-offset-2;
 }
 
+/* Notes appearing as they're written: each new block fades up into place. */
+.prose-draft > *,
+.prose-draft li {
+  animation: draft-in 500ms var(--ease-out) both;
+}
+.draft-caret {
+  @apply inline-block h-2 w-2 rounded-full bg-forest;
+  animation: draft-pulse 1.2s ease-in-out infinite;
+}
+@keyframes draft-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes draft-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

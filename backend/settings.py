@@ -55,6 +55,7 @@ DEFAULTS = {
     "transcribe_model": "whisper-1",
     "transcribe_live_model": "",        # empty = same as transcribe_model
     "live_final": _ROOMY,               # transcribe with the accurate model while recording (see live.py)
+    "live_notes": "auto",               # notes written during the meeting: auto | on | off (live_notes.py)
     # Import
     "granola_api_key": "",              # grn_… from Granola → Settings → Connectors → API keys (Business plan)
     # Export
@@ -78,6 +79,7 @@ CHOICES = {
     "summary_provider": ("ollama", "anthropic", "openai", "gemini", "deepseek", "custom"),
     "summary_fallback": ("none", "ollama", "anthropic", "openai", "gemini", "deepseek", "custom"),
     "transcribe_engine": ("local", "remote"),
+    "live_notes": ("auto", "on", "off"),
 }
 
 

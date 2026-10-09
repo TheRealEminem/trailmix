@@ -47,6 +47,7 @@ import type { ToastState } from "./components/ui";
 import { useTheme } from "./theme";
 
 const POLL_MS = 2000;
+const DRAFT_POLL_MS = 700; // while the open meeting's notes are being written, so they come in smoothly
 const WORKSPACE_KEY = "trailmix.workspace";
 const LIVE_POLL_MS = 2000;
 const HEALTH_RETRY_MS = 5000;
@@ -143,6 +144,8 @@ export default function App() {
   const recRef = useRef<ActiveRecording | null>(null);
   // A recording another app is capturing (normally the menu bar helper). Followed by polling /api/live.
   const [remote, setRemote] = useState<LiveRecording | null>(null);
+  // This window's own recording as the engine sees it (for the notes written during it).
+  const [ownLive, setOwnLive] = useState<LiveRecording | null>(null);
   // The menu bar recorder, if it's running: then Record records through it (both sides of any call, no picker).
   const [native, setNative] = useState<NativeRecorder | null>(null);
   const [remoteStopping, setRemoteStopping] = useState(false);
@@ -276,14 +279,19 @@ export default function App() {
 
   // Poll while anything is recording / queued / processing.
   const anyActive = meetings.some((m) => isActive(m.status));
+  const writing = meeting?.status === "summarizing" && meeting.id === selectedId;
   useEffect(() => {
     if (!anyActive) return;
-    const t = setInterval(() => {
-      void refreshList();
-      if (selectedId !== null) void refreshSelected(selectedId);
-    }, POLL_MS);
+    let tick = 0;
+    const t = setInterval(
+      () => {
+        if (!writing || tick++ % 3 === 0) void refreshList(); // the list needn't keep up with the notes
+        if (selectedId !== null) void refreshSelected(selectedId);
+      },
+      writing ? DRAFT_POLL_MS : POLL_MS,
+    );
     return () => clearInterval(t);
-  }, [anyActive, selectedId, refreshList, refreshSelected]);
+  }, [anyActive, writing, selectedId, refreshList, refreshSelected]);
 
   useEffect(() => {
     if (rec) {
@@ -325,6 +333,7 @@ export default function App() {
         if (!alive) return;
         const other =
           all.find((l) => l.id !== recRef.current?.meetingId) ?? null;
+        setOwnLive(all.find((l) => l.id === recRef.current?.meetingId) ?? null);
         remoteAt.current = Date.now();
         remoteRef.current = other;
         setRemote(other);
@@ -823,6 +832,7 @@ export default function App() {
               <Recorder
                 rec={rec}
                 remote={rec ? null : remote}
+                live={rec ? ownLive : remote}
                 native={native}
                 elapsed={elapsed}
                 starting={starting}
