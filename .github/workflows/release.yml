@@ -38,12 +38,23 @@ jobs:
             dist/*.sha256
       - name: "Smoke test: a fresh install"
         run: scripts/smoke-test.sh dist/Trailmix.app
+      # The current release's disk image comes from the cache when an earlier run already fetched it, so these
+      # tests add one download per release to its count on GitHub, not one per run: the counts stay about people.
+      - name: Which release is current
+        id: stable
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName 2>/dev/null || echo none)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: previous/Trailmix-arm64.dmg
+          key: current-release-dmg-${{ steps.stable.outputs.tag }}
       - name: "Smoke test: updating from the current release"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p previous
-          if gh release download --repo "$GITHUB_REPOSITORY" --pattern 'Trailmix-arm64.dmg' --dir previous; then
+          if [ -f previous/Trailmix-arm64.dmg ] || gh release download --repo "$GITHUB_REPOSITORY" --pattern 'Trailmix-arm64.dmg' --dir previous; then
             scripts/smoke-test.sh dist/Trailmix.app dist/Trailmix-*-arm64.dmg previous/Trailmix-arm64.dmg
           else
             echo "No earlier release to update from"
