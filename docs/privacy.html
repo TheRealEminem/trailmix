@@ -13,11 +13,13 @@
     :root {
       --bg: #f8f7f2; --surface: #ffffff; --ink: #1d2a24; --soft: #5b6a62; --line: #e4e2d8;
       --forest: #236347; --forest-hover: #194d37; --forest-soft: #dce9de; --trail: #e86636; --sun: #f5b83a;
+      --bg-top: #fcfbf8; --contour: rgba(35, 99, 71, 0.07); --glow-green: rgba(35, 99, 71, 0.07); --glow-warm: rgba(245, 184, 58, 0.13); --glow-orange: rgba(232, 102, 54, 0.05);
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
         --bg: #111814; --surface: #18211c; --ink: #e9eee9; --soft: #a3b1a8; --line: #26332c;
         --forest: #4fa27a; --forest-hover: #63b58c; --forest-soft: #1d3127; --trail: #ee7445; --sun: #f2be4e;
+        --bg-top: #16201b; --contour: rgba(200, 230, 210, 0.06); --glow-green: rgba(79, 162, 122, 0.12); --glow-warm: rgba(242, 190, 78, 0.06); --glow-orange: rgba(238, 116, 69, 0.05);
       }
     }
     * { box-sizing: border-box; }
@@ -59,6 +61,14 @@
     details { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 20px; margin-bottom: 10px; }
     summary { cursor: pointer; font-weight: 600; }
     details p { color: var(--soft); margin: 10px 0 0; }
+    /* The app's backdrop: a soft gradient, two faint glows and watermark-faint contour lines */
+    .ambient { position: fixed; inset: 0; z-index: -1; pointer-events: none;
+      background: radial-gradient(34% 26% at 60% 4%, var(--glow-warm), transparent 72%),
+        radial-gradient(26% 22% at 82% 12%, var(--glow-orange), transparent 70%),
+        radial-gradient(55% 50% at 64% 62%, var(--glow-green), transparent 70%),
+        linear-gradient(180deg, var(--bg-top) 0%, var(--bg) 42%); }
+    .ambient::after { content: ""; position: absolute; inset: 0; background: var(--contour);
+      -webkit-mask: url(assets/contours.svg) center / cover no-repeat; mask: url(assets/contours.svg) center / cover no-repeat; }
     footer { color: var(--soft); font-size: 14px; padding: 56px 0 40px; text-align: center; }
     @media (max-width: 560px) { .step { padding-left: 22px; padding-top: 66px; } .hero { padding-top: 24px; } }
       .doc { max-width: 720px; margin: 0 auto; padding: 8px 0 0; }
@@ -74,6 +84,7 @@
   <script data-goatcounter="https://trailmix.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
 </head>
 <body>
+  <div class="ambient" aria-hidden="true"></div>
   <div class="wrap">
     <header>
       <a class="brand" href="./"><img src="assets/logo.svg" alt="" />Trailmix</a>
