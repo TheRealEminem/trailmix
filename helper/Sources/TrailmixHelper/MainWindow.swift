@@ -252,6 +252,7 @@ final class MainWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKNavigationDe
         submenu("Help", [
             item("Check for Updates…", #selector(MainWindow.checkForUpdates), "", target: MainWindow.shared),
             item("Update Settings", #selector(MainWindow.openUpdates), "", target: MainWindow.shared),
+            item("Go Back to the Previous Version…", #selector(MainWindow.openUpdates), "", target: MainWindow.shared),
             .separator(),
             item("\(name) Website", #selector(MainWindow.openWebsite), "", target: MainWindow.shared),
             item("Report a Problem…", #selector(MainWindow.reportProblem), "", target: MainWindow.shared),

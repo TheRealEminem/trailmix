@@ -341,6 +341,12 @@ export interface UpdateInfo {
   checked_at?: number | null;
   beta?: boolean;
   prerelease?: boolean;
+  /** the version Go back installs, if there is one */
+  previous?: string | null;
+  /** a version you went back from: not offered until a newer one exists */
+  skipped?: string | null;
+  /** the download/install under way is going back */
+  going_back?: boolean;
 }
 
 export interface SoundCheckResult {
@@ -496,6 +502,8 @@ export const api = {
   startNativeRecorder: () => request<{ ok: true }>("/recorder/start", json("POST")),
   installUpdate: () => request<{ ok: true }>("/recorder/update", json("POST")),
   checkForUpdate: () => request<{ ok: true }>("/recorder/check-update", json("POST")),
+  goBack: () => request<{ ok: true }>("/recorder/go-back", json("POST")),
+  unskipUpdate: () => request<{ ok: true }>("/recorder/unskip-update", json("POST")),
   setBetaUpdates: (on: boolean) => request<{ ok: true }>("/recorder/beta-updates", json("POST", { on })),
   setOpenAtLogin: (on: boolean) => request<{ ok: true }>("/recorder/open-at-login", json("POST", { on })),
   soundCheck: () => request<{ ok: true }>("/recorder/sound-check", json("POST")),

@@ -53,6 +53,7 @@ import {
   Skeleton,
   Spinner,
   SwitchRow,
+  useConfirm,
 } from "./ui";
 
 interface Props {
@@ -513,6 +514,7 @@ function UpgradesSection({ organize, onChanged }: { organize: ReturnType<typeof 
 
 /** Settings → Updates: which version this is, and checking for and installing a new one. */
 function UpdatesSection({ native }: { native: NativeRecorder | null }) {
+  const [confirm, confirmDialog] = useConfirm();
   const [error, setError] = useState<string | null>(null);
   const [asked, setAsked] = useState(false);
   const [beta, setBeta] = useState<boolean | null>(null); // until the recorder reports the change
@@ -548,10 +550,12 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
   else if (u.state === "downloading")
     status = `Downloading Trailmix ${u.version}${u.progress != null ? ` · ${Math.round(u.progress * 100)}%` : "…"}`;
   else if (u.state === "installing")
-    status = `Installing Trailmix ${u.version}. It restarts in a moment…`;
+    status = `${u.going_back ? "Going back to" : "Installing"} Trailmix ${u.version}. It restarts in a moment…`;
   else if (u.state === "failed")
     status = (
-      <span className="text-trail-deep">Couldn't update: {u.error}</span>
+      <span className="text-trail-deep">
+        {u.going_back ? "Couldn't go back" : "Couldn't update"}: {u.error}
+      </span>
     );
   else if (u.state === "checking") status = "Checking for updates…";
   else if (u.state === "offline")
@@ -609,6 +613,38 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
           )}
         </div>
       )}
+      {u?.skipped && (
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-3.5 text-hint text-ink-soft">
+          <span>
+            Skipping {u.skipped}, the version you went back from. You'll be offered the next one.
+          </span>
+          <button className="btn btn-sm btn-ghost" onClick={() => act(api.unskipUpdate)}>
+            Offer {u.skipped} again
+          </button>
+        </div>
+      )}
+      {u?.previous && (
+        <Row
+          label={`Go back to ${u.previous}`}
+          hint="If this version lets you down: installs the previous one, checked the same way as an update, and skips this one until a newer version comes out. Your meetings and settings stay."
+        >
+          <button
+            className="btn btn-sm btn-soft"
+            disabled={busy || u.state === "checking"}
+            onClick={async () => {
+              const ok = await confirm({
+                title: `Go back to Trailmix ${u.previous}?`,
+                body: `Trailmix ${u.current} is replaced with ${u.previous} and restarts, which takes about a minute. Your meetings, notes and settings stay. Please report what went wrong with the button in the corner first, so it gets fixed.`,
+                confirmLabel: `Go back to ${u.previous}`,
+                tone: "primary",
+              });
+              if (ok) act(api.goBack);
+            }}
+          >
+            Go back
+          </button>
+        </Row>
+      )}
       {u && (
         <SwitchRow
           icon={<SparkleIcon size={16} />}
@@ -622,6 +658,7 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
         />
       )}
       {error && <p className="pb-3.5 text-hint text-trail-deep">{error}</p>}
+      {confirmDialog}
     </Section>
   );
 }

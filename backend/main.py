@@ -115,6 +115,11 @@ async def _live_notes_loop():
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _exit_with_parent()
+    try:
+        if copy := db.back_up_for(archive.APP_VERSION):  # before this version changes the database
+            log.info("Backed up the database to %s", copy)
+    except Exception:
+        log.exception("Couldn't back up the database before starting this version")
     db.init_db()
     models.prefetch()
     file_import.clear_leftovers()  # temporary copies from an import the last run didn't finish
@@ -500,6 +505,25 @@ def recorder_beta_updates(body: OpenAtLogin):
 def recorder_check_update():
     """Ask Trailmix.app to look for a new version now (the answer arrives with its next check-in)."""
     if not recorder.request("check-update"):
+        raise HTTPException(409, "The menu bar recorder isn't running")
+    return {"ok": True}
+
+
+@app.post("/api/recorder/go-back", status_code=202)
+def recorder_go_back():
+    """Install the version before this one (Settings → Updates → Go back), and skip this one until a newer
+    version comes out. Meetings stay: the database works with the older version."""
+    if live.active_count():
+        raise HTTPException(409, "Finish the recording first, then go back")
+    if not recorder.request("go-back"):
+        raise HTTPException(409, "The menu bar recorder isn't running")
+    return {"ok": True}
+
+
+@app.post("/api/recorder/unskip-update", status_code=202)
+def recorder_unskip_update():
+    """Offer the version you went back from again."""
+    if not recorder.request("unskip-update"):
         raise HTTPException(409, "The menu bar recorder isn't running")
     return {"ok": True}
 
