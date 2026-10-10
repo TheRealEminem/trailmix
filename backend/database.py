@@ -121,6 +121,35 @@ def init_db() -> None:
             conn.execute(f"INSERT INTO meetings_fts (rowid, title, transcript, summary, tags) {_FTS_ROW}")
 
 
+BACKUP_DIR = DATA_DIR / "backups"
+KEEP_BACKUPS = 3
+
+
+def back_up_for(version: str) -> Path | None:
+    """The first time a version of Trailmix starts, a copy of the database as the previous version left it,
+    before this one changes anything: if an update lets you down, going back (or restoring) never costs you
+    meetings. Keeps the newest three. Returns the copy, or None when there was nothing new to back up."""
+    marker = DATA_DIR / "last-version"
+    last = marker.read_text().strip() if marker.exists() else ""
+    if last == version or not DB_PATH.exists():
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(version)
+        return None
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    target = BACKUP_DIR / f"trailmix-{last or 'earlier'}-before-{version}.db"
+    src, dst = sqlite3.connect(DB_PATH), sqlite3.connect(target)
+    try:
+        src.backup(dst)  # consistent even mid-write, unlike copying the file
+    finally:
+        dst.close()
+        src.close()
+    others = sorted((p for p in BACKUP_DIR.glob("trailmix-*.db") if p != target), key=lambda p: p.stat().st_mtime)
+    for old in others[:max(0, len(others) - (KEEP_BACKUPS - 1))]:  # this one, plus the newest two before it
+        old.unlink()
+    marker.write_text(version)
+    return target
+
+
 @contextmanager
 def connect():
     """Short-lived connection per operation; safe across FastAPI's worker threads."""

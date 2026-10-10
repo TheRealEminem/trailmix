@@ -26,8 +26,26 @@ final class Updater: ObservableObject {
 
     @Published private(set) var state: State = .idle
     private var latest: Release?
+    /// The version to go back to if this one lets you down (Settings → Updates → Go back).
+    private(set) var previous: Release?
     private var timer: Timer?
     private(set) var checkedAt: Date?
+
+    /// The version this one replaced, remembered when an update installs (older versions didn't, so without it
+    /// the release just below this one is offered).
+    private static var replacedVersion: String? {
+        get { UserDefaults.standard.string(forKey: "previousVersion") }
+        set { UserDefaults.standard.set(newValue, forKey: "previousVersion") }
+    }
+
+    /// A version you went back from: not offered again until a newer one comes out.
+    var skipped: String? {
+        get { UserDefaults.standard.string(forKey: "skipVersion") }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "skipVersion")
+            Task { await check() }
+        }
+    }
 
     struct Release {
         let version: String
@@ -58,6 +76,13 @@ final class Updater: ObservableObject {
                                 : "https://api.github.com/repos/\(repo)/releases/latest")
     }
 
+    /// All recent releases, for finding the one to go back to: TRAILMIX_RELEASES_URL (tests), else GitHub's list.
+    private var releasesFeed: URL? {
+        if let override = ProcessInfo.processInfo.environment["TRAILMIX_RELEASES_URL"] { return URL(string: override) }
+        guard let repo = Self.repo else { return nil }
+        return URL(string: "https://api.github.com/repos/\(repo)/releases?per_page=30")
+    }
+
     private static var repo: String? {
         (Bundle.main.object(forInfoDictionaryKey: "TrailmixUpdateRepo") as? String).flatMap { $0.isEmpty ? nil : $0 }
     }
@@ -85,7 +110,9 @@ final class Updater: ObservableObject {
     var report: [String: Any]? {
         guard Self.enabled else { return nil }
         var out: [String: Any] = ["current": Self.current, "checked_at": checkedAt.map { $0.timeIntervalSince1970 } ?? NSNull(),
-                                  "beta": beta, "prerelease": latest?.prerelease ?? false]
+                                  "beta": beta, "prerelease": latest?.prerelease ?? false,
+                                  "previous": previous?.version ?? NSNull(), "skipped": skipped ?? NSNull(),
+                                  "going_back": goingBack]
         switch state {
         case .idle: out["state"] = "idle"
         case .checking: out["state"] = "checking"
@@ -116,20 +143,52 @@ final class Updater: ObservableObject {
             return
         }
         checkedAt = Date()
-        let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
+        await findPrevious()
+        // A version you went back from stays skipped; a newer one than it is offered as usual.
+        if let skip = skipped, !Self.isNewer(String(tag.trimmingPrefix("v")), than: skip) {
+            latest = nil
+            state = .upToDate
+            return
+        }
+        guard let release = Self.release(json), Self.isNewer(release.version, than: Self.current) else {
+            latest = nil
+            state = .upToDate
+            return
+        }
+        latest = release
+        state = .available(release.version)
+    }
+
+    /// A release from GitHub's JSON, if it has a disk image for this Mac.
+    static func release(_ json: [String: Any]) -> Release? {
+        guard let tag = json["tag_name"] as? String else { return nil }
+        let version = String(tag.trimmingPrefix("v"))
         let assets = (json["assets"] as? [[String: Any]]) ?? []
         func asset(_ suffix: String) -> URL? {
             assets.first { ($0["name"] as? String)?.hasSuffix(suffix) == true && ($0["name"] as? String)?.contains(version) == true }
                 .flatMap { $0["browser_download_url"] as? String }.flatMap(URL.init(string:))
         }
-        guard Self.isNewer(version, than: Self.current), let dmg = asset("-arm64.dmg") else {
-            latest = nil
-            state = .upToDate
-            return
-        }
-        latest = Release(version: version, notes: (json["html_url"] as? String).flatMap(URL.init(string:)), dmg: dmg,
-                         checksum: asset("-arm64.dmg.sha256"), prerelease: json["prerelease"] as? Bool ?? false)
-        state = .available(version)
+        guard let dmg = asset("-arm64.dmg") else { return nil }
+        return Release(version: version, notes: (json["html_url"] as? String).flatMap(URL.init(string:)), dmg: dmg,
+                       checksum: asset("-arm64.dmg.sha256"), prerelease: json["prerelease"] as? Bool ?? false)
+    }
+
+    /// The release to go back to: the one this version replaced if it's still published, else the newest
+    /// one older than this (a pre-release only with beta updates on).
+    private func findPrevious() async {
+        guard let feed = releasesFeed else { return }
+        var request = URLRequest(url: feed)
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let list = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else { return }
+        previous = Self.previous(in: list, current: Self.current, replaced: Self.replacedVersion, beta: beta)
+    }
+
+    static func previous(in list: [[String: Any]], current: String, replaced: String?, beta: Bool) -> Release? {
+        let older = list.filter { $0["draft"] as? Bool != true }.compactMap(release).filter { isNewer(current, than: $0.version) }
+        if let replaced, let same = older.first(where: { $0.version == replaced }) { return same }
+        return older.filter { beta || !$0.prerelease }.max { isNewer($1.version, than: $0.version) }
     }
 
     /// The release to offer from GitHub's answer: one release ("latest"), or a list (beta updates) from which
@@ -156,6 +215,22 @@ final class Updater: ObservableObject {
 
     func install() {
         guard let release = latest else { return }
+        install(release, goingBack: false)
+    }
+
+    /// Settings → Updates → Go back: installs the previous version the same checked way, and skips this one
+    /// until a newer version comes out. Your meetings stay (the database works with the older version too).
+    func goBack() {
+        guard let release = previous else {
+            state = .failed("There's no earlier version to go back to.")
+            return
+        }
+        install(release, goingBack: true)
+    }
+
+    private(set) var goingBack = false
+
+    private func install(_ release: Release, goingBack: Bool) {
         if case .downloading = state { return }
         if case .installing = state { return }
         if HelperModel.shared.phase != .idle || HelperModel.shared.other != nil {
@@ -167,6 +242,7 @@ final class Updater: ObservableObject {
             state = .failed("Move Trailmix to your Applications folder first; it can't update itself where it is now.")
             return
         }
+        self.goingBack = goingBack
         state = .downloading(release.version, nil)
         Task {
             do {
@@ -174,8 +250,15 @@ final class Updater: ObservableObject {
                 state = .installing(release.version)
                 let fresh = try await Self.unpack(image, next: app)
                 try Self.swap(app, with: fresh)
+                if goingBack {
+                    UserDefaults.standard.set(Self.current, forKey: "skipVersion")  // don't offer the one you left
+                    Self.replacedVersion = nil
+                } else {
+                    Self.replacedVersion = Self.current
+                }
                 Self.relaunch(app)
             } catch {
+                self.goingBack = false
                 state = .failed((error as? CaptureError)?.message ?? error.localizedDescription)
             }
         }
