@@ -42,6 +42,7 @@ import pipeline
 import recorder
 import resources
 import settings
+import telemetry
 import templates
 import model_ranks
 import workspaces
@@ -60,6 +61,17 @@ async def _sweep_loop():
         await run_in_threadpool(store.sweep_expired)
         await run_in_threadpool(model_ranks.refresh)  # newer model rankings from the Trailmix site, once a day
         await asyncio.sleep(SWEEP_INTERVAL_S)
+
+
+async def _stats_loop():
+    """The once-a-day anonymous usage summary (telemetry.py); checked hourly so it goes out on any day
+    Trailmix is open."""
+    while True:
+        try:
+            await run_in_threadpool(telemetry.daily)
+        except Exception:
+            log.exception("Usage stats failed")
+        await asyncio.sleep(3600)
 
 
 def _exit_with_parent() -> None:
@@ -115,19 +127,23 @@ async def _live_notes_loop():
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _exit_with_parent()
+    before = db.last_run_version()
     try:
         if copy := db.back_up_for(archive.APP_VERSION):  # before this version changes the database
             log.info("Backed up the database to %s", copy)
     except Exception:
         log.exception("Couldn't back up the database before starting this version")
     db.init_db()
+    telemetry.version_changed(before, archive.APP_VERSION)
     models.prefetch()
     file_import.clear_leftovers()  # temporary copies from an import the last run didn't finish
     pipeline.recover_unfinished()
     sweeper = asyncio.create_task(_sweep_loop())
     warmer = asyncio.create_task(_warm_loop()) if os.getenv("TRAILMIX_WARM") != "0" else None
     note_taker = asyncio.create_task(_live_notes_loop())
+    stats = asyncio.create_task(_stats_loop())
     yield
+    stats.cancel()
     note_taker.cancel()
     sweeper.cancel()
     if warmer:
@@ -788,6 +804,15 @@ def live_recordings():
         meeting = db.get_meeting(session.meeting_id)
         out.append({**session.describe(meeting["title"] if meeting else "Recording"), **live_notes.status(session.meeting_id)})
     return out
+
+
+@app.get("/api/stats")
+def stats_info():
+    """Anonymous usage stats: whether they're on, the latest events exactly as sent, and what today's summary
+    contains (Settings → Privacy → See what's sent)."""
+    cfg = settings.get_all()
+    return {"available": telemetry.available(), "on": telemetry.enabled(cfg), "recent": telemetry.recent(),
+            "daily": {**telemetry._base(), **telemetry.daily_properties(cfg)}}
 
 
 @app.get("/api/live-notes")

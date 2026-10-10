@@ -56,6 +56,11 @@ DEFAULTS = {
     "transcribe_live_model": "",        # empty = same as transcribe_model
     "live_final": _ROOMY,               # transcribe with the accurate model while recording (see live.py)
     "live_notes": "auto",               # notes written during the meeting: auto | on | off (live_notes.py)
+    # Anonymous usage stats (telemetry.py): on by default, sent only once you've seen the choice
+    "share_stats": True,
+    "stats_notice_seen": False,
+    "install_id": "",                   # random; a new one each time stats are turned back on
+    "stats_last_daily": "",             # the day the daily summary was last sent
     # Import
     "granola_api_key": "",              # grn_… from Granola → Settings → Connectors → API keys (Business plan)
     # Export
@@ -128,6 +133,8 @@ def update(changes: dict) -> dict:
             raise ValueError(f"{key} must be one of {', '.join(CHOICES[key])}")
         if key == "export_formats" and any(f not in ("pdf", "docx", "odt", "md", "txt") for f in value):
             raise ValueError("export_formats can include pdf, docx, odt, md and txt")
+    if changes.get("share_stats") is False:
+        changes["install_id"] = ""  # turning stats back on later starts a new, unconnected ID
     if "export_dir" in changes:
         folder = Path(changes["export_dir"]).expanduser()
         if not folder.is_absolute():

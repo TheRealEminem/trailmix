@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trailmix · Privacy policy</title>
+  <meta name="description" content="What Trailmix keeps on your computer, the anonymous usage stats it can send, and how to turn them off." />
+  <link rel="icon" href="assets/logo.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Geist:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f8f7f2; --surface: #ffffff; --ink: #1d2a24; --soft: #5b6a62; --line: #e4e2d8;
+      --forest: #236347; --forest-hover: #194d37; --forest-soft: #dce9de; --trail: #e86636; --sun: #f5b83a;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #111814; --surface: #18211c; --ink: #e9eee9; --soft: #a3b1a8; --line: #26332c;
+        --forest: #4fa27a; --forest-hover: #63b58c; --forest-soft: #1d3127; --trail: #ee7445; --sun: #f2be4e;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.6 Geist, -apple-system, system-ui, sans-serif; }
+    a { color: var(--forest); }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 22px 0; }
+    .brand { display: flex; align-items: center; gap: 10px; font: 600 22px Fraunces, serif; color: var(--ink); text-decoration: none; }
+    .brand img { width: 34px; height: 34px; }
+    .gh { color: var(--soft); text-decoration: none; font-weight: 500; }
+    .hero { padding: 48px 0 28px; text-align: center; }
+    h1 { font: 600 clamp(38px, 6vw, 64px)/1.05 Fraunces, serif; letter-spacing: -0.02em; margin: 0 auto 18px; max-width: 13ch; }
+    .lead { color: var(--soft); font-size: 19px; max-width: 40rem; margin: 0 auto 30px; }
+    .cta { display: inline-flex; align-items: center; gap: 10px; background: var(--forest); color: #fff; text-decoration: none; font-weight: 600;
+      padding: 15px 26px; border-radius: 14px; font-size: 18px; box-shadow: 0 6px 20px rgba(35, 99, 71, .25); }
+    .cta:hover { background: var(--forest-hover); }
+    .cta svg { width: 20px; height: 20px; }
+    .meta { color: var(--soft); font-size: 14px; margin-top: 12px; }
+    .shot { margin: 40px auto 0; max-width: 980px; border-radius: 18px; overflow: hidden; border: 1px solid var(--line);
+      box-shadow: 0 30px 80px rgba(0, 0, 0, .25); }
+    .shot img { display: block; width: 100%; height: auto; }
+    section { padding: 56px 0 8px; }
+    h2 { font: 600 32px/1.15 Fraunces, serif; margin: 0 0 8px; letter-spacing: -0.01em; }
+    .sub { color: var(--soft); margin: 0 0 26px; }
+    .steps { display: grid; gap: 16px; counter-reset: step; }
+    .step { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 22px 24px 22px 74px; position: relative; }
+    .step::before { counter-increment: step; content: counter(step); position: absolute; left: 22px; top: 20px; width: 34px; height: 34px;
+      border-radius: 50%; background: var(--forest-soft); color: var(--forest); font-weight: 600; display: grid; place-items: center; }
+    .step h3 { margin: 0 0 6px; font-size: 18px; }
+    .step p, .step ol { margin: 6px 0 0; color: var(--soft); }
+    .step ol { padding-left: 20px; }
+    .step li { margin: 3px 0; }
+    b { color: var(--ink); font-weight: 600; }
+    .why { font-size: 14px; border-left: 3px solid var(--sun); padding-left: 12px; margin-top: 12px !important; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; }
+    .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 20px 22px; }
+    .card h3 { margin: 0 0 6px; font-size: 17px; }
+    .card p { margin: 0; color: var(--soft); font-size: 15.5px; }
+    details { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 20px; margin-bottom: 10px; }
+    summary { cursor: pointer; font-weight: 600; }
+    details p { color: var(--soft); margin: 10px 0 0; }
+    footer { color: var(--soft); font-size: 14px; padding: 56px 0 40px; text-align: center; }
+    @media (max-width: 560px) { .step { padding-left: 22px; padding-top: 66px; } .hero { padding-top: 24px; } }
+      .doc { max-width: 720px; margin: 0 auto; padding: 8px 0 0; }
+    .doc h1 { font: 600 clamp(34px, 5vw, 48px)/1.1 Fraunces, serif; text-align: left; max-width: none; margin: 18px 0 6px; }
+    .doc h2 { font-size: 24px; margin: 38px 0 8px; }
+    .doc p, .doc li { color: var(--soft); }
+    .doc ul { padding-left: 22px; }
+    .doc li { margin: 4px 0; }
+    .short { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px 22px; margin-top: 18px; }
+    .short p { margin: 6px 0; }
+    .updated { font-size: 14px; }
+  </style>
+  <script data-goatcounter="https://trailmix.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <a class="brand" href="./"><img src="assets/logo.svg" alt="" />Trailmix</a>
+      <a class="gh" href="https://github.com/TheRealEminem/trailmix">GitHub</a>
+    </header>
+    <main class="doc">
+      <h1>Privacy policy</h1>
+      <p class="updated">Last updated October 10, 2026</p>
+
+      <div class="short">
+        <p><b>The short version.</b> Your meetings, notes, transcripts and recordings stay on your computer unless you
+        send them somewhere yourself. Trailmix sends a few anonymous usage stats once a day, so it can support the
+        computers people actually use. They never include anything from your meetings, your name or your files, and you
+        can turn them off at any time.</p>
+      </div>
+
+      <h2>What stays on your computer</h2>
+      <p>Everything Trailmix records or writes is kept on your computer, in Trailmix's own folder: recordings,
+      transcripts, notes, action items, names, workspaces, tags, your answers to its quick questions, and your settings
+      (including any API keys you add). Transcription runs on your computer, and so do the notes when you use a local AI
+      model through Ollama. Recordings are deleted after 30 days unless you choose to keep one.</p>
+
+      <h2>Anonymous usage stats</h2>
+      <p>Trailmix is free. To decide which computers and set-ups to support, it sends a few anonymous stats. They're on
+      by default, and Trailmix asks before sending anything: the first time you open it, there's a box to untick. You can
+      turn them off at any time in <b>Settings → Privacy</b>, where <b>See what's sent</b> shows the data exactly as it
+      goes out.</p>
+      <p><b>What's sent:</b></p>
+      <ul>
+        <li>Once a day: the Trailmix version; your operating system and version; your kind of computer (chip, number of
+        cores, memory, disk size and free space, rounded); which main features are on; which AI writes your notes (for
+        example "Ollama, qwen2.5:7b" or "Claude"); and rough counts of meetings and workspaces, in ranges like "6–20".</li>
+        <li>After a meeting is processed: its length (rounded to 5 minutes), whether it was recorded or imported, how long
+        transcription and notes took, and which AI wrote the notes.</li>
+        <li>When processing fails: the stage and the kind of error, never the error message, because messages can
+        contain names or file paths.</li>
+        <li>When Trailmix updates, or you go back to an earlier version: the two version numbers.</li>
+      </ul>
+      <p><b>What's never sent:</b> anything from your meetings (titles, notes, transcripts, names, workspaces, tags,
+      recordings), your name, your API keys, file names or paths, or the addresses of your servers.</p>
+      <p><b>How it's kept anonymous:</b> each copy of Trailmix uses a random ID, not linked to you, your account or your
+      computer's identity; turning the stats off forgets it, and turning them back on starts a new one. The stats are
+      stored with <a href="https://posthog.com">PostHog</a>, an analytics service, as anonymous events: no personal
+      profile is built, no location is looked up, and IP addresses are discarded. They're kept no longer than needed to
+      support Trailmix, and at most two years.</p>
+
+      <h2>What Trailmix connects to</h2>
+      <ul>
+        <li><b>GitHub</b>, to check for updates, download them, and fetch an updated ranking of AI models from this
+        website. GitHub sees your IP address, as with any website.</li>
+        <li><b>Hugging Face</b>, once, to download the speech models; and <b>Ollama</b>'s library if you download a local
+        AI model through Trailmix.</li>
+        <li><b>A cloud AI you add</b> (such as Claude, OpenAI, Gemini or DeepSeek). If you choose one to write your notes,
+        your transcript is sent to it for that, under that company's own privacy policy. Trailmix never adds one for you.</li>
+        <li><b>Your own transcription server</b>, if you set one up, which receives your recordings.</li>
+        <li><b>Problem reports</b> are only sent if you post them: Trailmix removes personal information on your computer,
+        shows you the report, and you post it yourself as a public issue on GitHub.</li>
+      </ul>
+
+      <h2>This website</h2>
+      <p>This website counts visits with <a href="https://www.goatcounter.com">GoatCounter</a>: no cookies, no personal
+      data, and no tracking across sites. It's hosted on GitHub Pages, which, like any web host, sees your IP address.</p>
+
+      <h2>Your choices</h2>
+      <p>You can turn the usage stats off at any time in Settings → Privacy. Because they're anonymous, past stats can't
+      be traced back to you or your copy of Trailmix once the ID is forgotten. Where the law gives you rights over your
+      data (for example in the EU or UK), the stats are sent on the basis of a legitimate interest in keeping Trailmix
+      working on people's computers, and you can object at any time by turning them off.</p>
+
+      <h2>Changes and questions</h2>
+      <p>If this policy changes, the new version is posted here with a new date, and anything that changes what Trailmix
+      sends is described in that version's release notes. For questions, <a href="https://github.com/TheRealEminem/trailmix/issues/new">open an
+      issue on GitHub</a>.</p>
+    </main>
+    <footer>Trailmix is free and open source (AGPL-3.0) · <a href="./">Home</a> · <a href="https://github.com/TheRealEminem/trailmix">Source on GitHub</a></footer>
+  </div>
+</body>
+</html>

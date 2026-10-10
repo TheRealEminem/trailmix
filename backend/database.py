@@ -125,6 +125,12 @@ BACKUP_DIR = DATA_DIR / "backups"
 KEEP_BACKUPS = 3
 
 
+def last_run_version() -> str:
+    """The version of Trailmix that last started ("" before backups existed, or on a fresh install)."""
+    marker = DATA_DIR / "last-version"
+    return marker.read_text().strip() if marker.exists() else ""
+
+
 def back_up_for(version: str) -> Path | None:
     """The first time a version of Trailmix starts, a copy of the database as the previous version left it,
     before this one changes anything: if an update lets you down, going back (or restoring) never costs you
