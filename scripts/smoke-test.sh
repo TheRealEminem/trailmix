@@ -10,7 +10,8 @@
 # landed. The rest then runs on the updated app and the old version's data:
 #   the menu bar recorder's checks (TrailmixHelper --self-test: hotkeys, marks, live draft, stop from the
 #   window), then Record clicked in the real window right after a restart, a transcript made while
-#   recording, and the window running the current web app rather than a cached one.
+#   recording, and the window running the current web app rather than a cached one. Last, it goes back to the
+#   previous version (Settings → Updates → Go back) and checks that version opens the meetings the new one left.
 # Speech comes from `say`; transcription uses the small whisper-tiny model so it's quick.
 set -euo pipefail
 
@@ -136,7 +137,8 @@ EOF
   UNDER_TEST="$T/Applications/Trailmix.app"
 fi
 
-log "Starting $(version_of "$UNDER_TEST")'s engine"
+NEW_VERSION_LABEL=$(version_of "$UNDER_TEST")
+log "Starting $NEW_VERSION_LABEL's engine"
 start_engine "$UNDER_TEST"
 SERVED=$(curl -s "$URL/" | grep -o 'assets/index-[A-Za-z0-9_-]*\.js' | head -1)
 [ -f "$UNDER_TEST/Contents/Resources/ui/$SERVED" ] || fail "the engine at $URL isn't this app's (it serves $SERVED)"
@@ -153,5 +155,53 @@ log "The recorder and the window, end to end"
 env -i "${ENV[@]}" "$UNDER_TEST/Contents/MacOS/Trailmix" --self-test "$URL" "$T/me.wav" "$T/them.wav" \
   || fail "the app's own checks failed (above)"
 
+count_meetings() { curl -s "$URL/api/meetings" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d if isinstance(d, list) else d["meetings"]))'; }
+
+if [ -n "$OLD_DMG" ]; then
+  log "Going back to $OLD_VERSION the way you would: Settings → Updates → Go back"
+  MEETINGS_BEFORE=$(count_meetings) || fail "couldn't count the meetings"
+  stop_engine
+  # The stand-in for GitHub now lists both versions, as GitHub does.
+  cp "$OLD_DMG" "$T/feed/Trailmix-$OLD_VERSION-arm64.dmg"
+  (cd "$T/feed" && shasum -a 256 "Trailmix-$OLD_VERSION-arm64.dmg" >"Trailmix-$OLD_VERSION-arm64.dmg.sha256")
+  cat >"$T/feed/releases.json" <<EOF
+[$(cat "$T/feed/latest.json"),
+ {"tag_name": "v$OLD_VERSION", "prerelease": false, "draft": false, "html_url": "http://127.0.0.1:$FEED_PORT/",
+  "assets": [
+   {"name": "Trailmix-$OLD_VERSION-arm64.dmg", "browser_download_url": "http://127.0.0.1:$FEED_PORT/Trailmix-$OLD_VERSION-arm64.dmg"},
+   {"name": "Trailmix-$OLD_VERSION-arm64.dmg.sha256", "browser_download_url": "http://127.0.0.1:$FEED_PORT/Trailmix-$OLD_VERSION-arm64.dmg.sha256"}]}]
+EOF
+  env -i "${ENV[@]}" TRAILMIX_UPDATE_URL="http://127.0.0.1:$FEED_PORT/latest.json" \
+    TRAILMIX_RELEASES_URL="http://127.0.0.1:$FEED_PORT/releases.json" TRAILMIX_UPDATE_DELAY=2 \
+    TRAILMIX_UPDATE_NO_RELAUNCH=1 "$UNDER_TEST/Contents/MacOS/Trailmix" >>"$T/new-app.log" 2>&1 &
+  NEW_APP=$!
+  PIDS+=("$NEW_APP")
+  wait_for_server
+  for i in $(seq 1 60); do
+    curl -s "$URL/api/recorder" | grep -q "\"previous\":\"$OLD_VERSION\"" && break
+    [ $((i % 10)) = 5 ] && curl -s -o /dev/null -X POST "$URL/api/recorder/check-update"
+    sleep 1
+  done
+  if ! curl -s "$URL/api/recorder" | grep -q "\"previous\":\"$OLD_VERSION\""; then
+    echo "It reports: $(curl -s "$URL/api/recorder")" >&2
+    echo "--- its log" >&2; tail -20 "$T/new-app.log" >&2
+    fail "it never offered to go back to $OLD_VERSION"
+  fi
+  curl -sf -X POST "$URL/api/recorder/go-back" >/dev/null || fail "couldn't ask it to go back"
+  for _ in $(seq 1 180); do kill -0 "$NEW_APP" 2>/dev/null || break; sleep 1; done
+  kill -0 "$NEW_APP" 2>/dev/null && fail "going back didn't finish (still running after 3 minutes)"
+  GOT=$(version_of "$UNDER_TEST")
+  [ "$GOT" = "$OLD_VERSION" ] || fail "after going back, Trailmix.app is $GOT, not $OLD_VERSION"
+  codesign --verify --strict "$UNDER_TEST" || fail "the version it went back to has a broken signature"
+  stop_engine
+
+  log "$OLD_VERSION opens the meetings $NEW_VERSION left"
+  start_engine "$UNDER_TEST"
+  MEETINGS_AFTER=$(count_meetings) || fail "$OLD_VERSION couldn't list the meetings"
+  [ "$MEETINGS_AFTER" = "$MEETINGS_BEFORE" ] || fail "$OLD_VERSION sees $MEETINGS_AFTER meetings; $NEW_VERSION had $MEETINGS_BEFORE"
+  echo "went back $NEW_VERSION -> $GOT, with all $MEETINGS_AFTER meetings"
+  stop_engine
+fi
+
 echo
-echo "SMOKE TEST PASSED ($(version_of "$UNDER_TEST")${OLD_DMG:+, updated from $OLD_VERSION})"
+echo "SMOKE TEST PASSED ($NEW_VERSION_LABEL${OLD_DMG:+, updated from $OLD_VERSION and back again})"

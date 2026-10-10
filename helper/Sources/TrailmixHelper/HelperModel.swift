@@ -141,6 +141,8 @@ final class HelperModel: ObservableObject {
         }
         if commands.contains("update") { Updater.shared.install() }
         if commands.contains("check-update") { Task { await Updater.shared.check(manual: true) } }
+        if commands.contains("go-back") { Updater.shared.goBack() }
+        if commands.contains("unskip-update") { Updater.shared.skipped = nil }
         if commands.contains("beta-updates") { Updater.shared.beta = true }
         if commands.contains("no-beta-updates") { Updater.shared.beta = false }
         if commands.contains("open-at-login") { prefs.openAtLogin = true }
