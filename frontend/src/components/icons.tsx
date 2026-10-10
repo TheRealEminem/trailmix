@@ -4,6 +4,9 @@ import {
   ArrowUp,
   AudioLines,
   Backpack,
+  BarChart3,
+  BatteryMedium,
+  ShieldCheck,
   CalendarDays,
   Check,
   ChevronDown,
@@ -97,6 +100,9 @@ export const CheckSquareIcon = icon(ListChecks);
 export const MoonIcon = icon(Moon);
 export const KeyIcon = icon(KeyRound);
 export const PowerIcon = icon(Power);
+export const BatteryIcon = icon(BatteryMedium);
+export const ChartIcon = icon(BarChart3);
+export const ShieldIcon = icon(ShieldCheck);
 export const CloudIcon = icon(Cloud);
 export const LaptopIcon = icon(Laptop);
 export const MenuIcon = icon(Menu);

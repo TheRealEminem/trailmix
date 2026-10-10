@@ -30,6 +30,7 @@ import ImportPanel from "./components/ImportPanel";
 import ModelsBanner from "./components/ModelsBanner";
 import UpdateBanner from "./components/UpdateBanner";
 import SetupCard from "./components/SetupCard";
+import StatsNotice from "./components/StatsNotice";
 import Sidebar from "./components/Sidebar";
 import type { View } from "./components/Sidebar";
 import TasksView from "./components/TasksView";
@@ -805,6 +806,7 @@ export default function App() {
             </div>
           ) : showRecorder ? (
             <>
+              {!rec && !remote && <StatsNotice />}
               {!rec && !remote && (
                 <SetupCard
                   health={health}

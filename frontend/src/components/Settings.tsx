@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { api, inApp } from "../api";
+import { api, inApp, PRIVACY_POLICY } from "../api";
 import type {
   ExportFormat,
   ExportJob,
   Health,
   LiveNotesPlan,
+  StatsInfo,
   NativeRecorder,
   Upgrades,
   Workspace,
@@ -17,6 +18,9 @@ import type { ThemePref } from "../theme";
 import {
   AlertIcon,
   BackpackIcon,
+  BatteryIcon,
+  ChartIcon,
+  ShieldIcon,
   CheckIcon,
   ChevronDownIcon,
   CloseIcon,
@@ -513,6 +517,68 @@ function UpgradesSection({ organize, onChanged }: { organize: ReturnType<typeof 
 }
 
 /** Settings → Updates: which version this is, and checking for and installing a new one. */
+/** Settings → Privacy: the anonymous usage stats switch, and exactly what they contain. */
+function PrivacySection({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT>) => Promise<void> }) {
+  const [info, setInfo] = useState<StatsInfo | null>(null);
+  const [show, setShow] = useState(false);
+  const load = () => api.stats().then(setInfo).catch(() => setInfo(null));
+  useEffect(() => void load(), [s.share_stats]);
+  return (
+    <Section
+      id="privacy"
+      icon={<ShieldIcon size={16} />}
+      title="Privacy"
+      blurb="Your meetings, notes and recordings stay on this Mac unless you send them somewhere yourself (a cloud AI you add, an export, a problem report)."
+      delay={280}
+    >
+      {info && !info.available ? (
+        <p className="py-3.5 text-hint text-ink-soft">This copy of Trailmix doesn't send usage stats.</p>
+      ) : (
+        <>
+          <SwitchRow
+            icon={<ChartIcon size={16} />}
+            label="Share anonymous usage stats"
+            hint="Once a day: the app version, your kind of computer (chip, memory, disk space, rounded), which features are on and which AI writes your notes; per meeting, how long it was and how long processing took; and which kinds of error happened. Never anything from your meetings, your name or your files. It helps decide which computers and set-ups to support."
+            checked={s.share_stats}
+            onChange={(v) => void save({ share_stats: v, stats_notice_seen: true })}
+          />
+          <div className="flex flex-wrap items-center gap-2 py-3.5">
+            <button className="btn btn-sm btn-ghost" onClick={() => setShow(!show)} aria-expanded={show}>
+              <ChevronDownIcon size={16} className={`transition-transform ${show ? "rotate-180" : ""}`} />
+              See what's sent
+            </button>
+            <a className="btn btn-sm btn-ghost" href={PRIVACY_POLICY} target="_blank" rel="noreferrer">
+              Privacy policy
+            </a>
+          </div>
+          <Collapse open={show}>
+            {info && (
+              <div className="space-y-3 pb-4">
+                <p className="text-hint text-ink-soft">
+                  {s.share_stats
+                    ? "Today's summary, exactly as it's sent:"
+                    : "Stats are off, so nothing is sent. This is what today's summary would contain:"}
+                </p>
+                <pre className="max-h-64 overflow-auto rounded-md bg-surface-subtle p-3 font-mono text-meta leading-relaxed text-ink-soft">
+                  {JSON.stringify(info.daily, null, 2)}
+                </pre>
+                {info.recent.length > 0 && (
+                  <>
+                    <p className="text-hint text-ink-soft">Sent since Trailmix started, newest last:</p>
+                    <pre className="max-h-64 overflow-auto rounded-md bg-surface-subtle p-3 font-mono text-meta leading-relaxed text-ink-soft">
+                      {info.recent.map((e) => `${e.at}  ${e.event}  ${JSON.stringify(e.properties)}`).join("\n")}
+                    </pre>
+                  </>
+                )}
+              </div>
+            )}
+          </Collapse>
+        </>
+      )}
+    </Section>
+  );
+}
+
 function UpdatesSection({ native }: { native: NativeRecorder | null }) {
   const [confirm, confirmDialog] = useConfirm();
   const [error, setError] = useState<string | null>(null);
@@ -649,7 +715,7 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
         <SwitchRow
           icon={<SparkleIcon size={16} />}
           label="Beta updates"
-          hint="Get new versions a few days early, to try them out; they may have rough edges. A beta reaches everyone after 3 days unless someone reports it blocks them. Report problems with the button in the bottom corner: personal information is removed on your Mac, and you check the report before posting it on GitHub. Trailmix sends nothing in the background."
+          hint="Get new versions a few days early, to try them out; they may have rough edges. A beta reaches everyone after 3 days unless someone reports it blocks them. Report problems with the button in the bottom corner: personal information is removed on your Mac, and you check the report before posting it on GitHub."
           checked={beta ?? !!u.beta}
           onChange={(v) => {
             setBeta(v);
@@ -1017,7 +1083,7 @@ function LiveNotesRow({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT>)
           )}
           {power && (
             <p className={`flex items-start gap-1.5 ${power.paused ? "text-sun-deep" : "text-ink-soft"}`}>
-              <PowerIcon size={14} className="mt-[3px] shrink-0" />
+              <BatteryIcon size={14} className="mt-[3px] shrink-0" />
               {power.text}
             </p>
           )}
@@ -1608,6 +1674,7 @@ export default function Settings({
       </Section>
 
       <UpdatesSection native={native} />
+      <PrivacySection s={s} save={save} />
 
       <Section
         icon={<PowerIcon size={16} />}
