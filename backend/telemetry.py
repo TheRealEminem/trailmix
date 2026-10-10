@@ -35,8 +35,9 @@ import settings
 
 log = logging.getLogger("trailmix.telemetry")
 
-# PostHog project API key: public by design (it can only send events, not read them).
-KEY = os.getenv("TRAILMIX_POSTHOG_KEY", "")
+# PostHog project API key: public by design (it can only send events, not read them). US region; the project
+# discards IP addresses.
+KEY = os.getenv("TRAILMIX_POSTHOG_KEY", "phc_prvN9BcvAcMJUZrU92e37P2DLfgMzDvZu8SDCvUSkSmp")
 HOST = os.getenv("TRAILMIX_POSTHOG_HOST", "https://us.i.posthog.com")  # tests point it elsewhere
 GB = 1024**3
 
