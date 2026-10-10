@@ -34,6 +34,7 @@ import mlx_engine
 import models
 import resources
 import settings
+import telemetry
 import transcribe_remote
 import vad
 import workspaces
@@ -74,7 +75,9 @@ def _run(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> None:
         _run_stages(meeting_id, go, force)
     except Exception as e:  # never let one bad meeting kill the worker
         log.exception("Pipeline failed for meeting %s", meeting_id)
+        stage = (db.get_meeting(meeting_id) or {}).get("status")
         db.update_meeting(meeting_id, status="error", wait_reason=None, error=str(e))
+        telemetry.send("processing_failed", {"stage": stage, "error_type": type(e).__name__})  # never the message
 
 
 def _wait_for_recording_to_end(meeting_id: int) -> None:
@@ -142,6 +145,8 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
     if not m:
         return
     cfg = settings.get_all()
+    stats: dict = {}  # for the anonymous usage stats (telemetry.py): durations and choices, nothing said
+    started = time.monotonic()
 
     if not m["transcribed"]:
         if m["audio_deleted"] or not m["audio_dir"]:
@@ -151,6 +156,7 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
         done_live = _finish_live(m, cfg)
         if done_live:  # transcribed while recording: the accurate model ran once, during the meeting
             _save_transcript(m, *done_live, made_with=f"{_speech_model(cfg)}, while recording")
+            stats.update(transcribed="while recording", transcribe_seconds=round(time.monotonic() - started))
             m = db.get_meeting(meeting_id)
         elif had_live:
             log.warning("Meeting %s: the transcript made while recording missed a part; transcribing it all again",
@@ -166,8 +172,10 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
             _wait_for_recording_to_end(meeting_id)
             _gate(meeting_id, "transcribe" in force, mlx_engine.FINAL_MODEL_RAM_GB, "The transcription model")
         db.update_meeting(meeting_id, status="transcribing", wait_reason=None)
+        began = time.monotonic()
         segments, labeled, duration = _transcribe_local(m) if local else _transcribe_remote(m, cfg)
         _save_transcript(m, segments, labeled, duration, made_with=f"{_speech_model(cfg)}, after the meeting")
+        stats.update(transcribed="after the meeting", transcribe_seconds=round(time.monotonic() - began))
         m = db.get_meeting(meeting_id)
         if store.RETENTION_DAYS == 0:
             store.delete_audio(m)
@@ -186,6 +194,8 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
             _wait_for_recording_to_end(meeting_id)
             _gate(meeting_id, "summarize" in force, llm_engine.ollama_ram_needed_gb(cfg), "The summarization model")
         db.update_meeting(meeting_id, status="summarizing", wait_reason=None, summary_error=None)
+        began = time.monotonic()
+        early = live_notes.usable(m)
         try:
             minutes = (m["duration_sec"] or 0) / 60
             summary, used, title = llm_engine.summarize(
@@ -197,11 +207,14 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
                 minutes=minutes,
                 on_progress=lambda what: db.update_meeting(meeting_id, wait_reason=what),
                 on_draft=lambda text: _drafts.__setitem__(meeting_id, text),
-                early_notes=live_notes.usable(m),
+                early_notes=early,
             )
             db.update_meeting(meeting_id, summary=summary, summary_provider=used,
                               summary_model=llm_engine.model_for(used, cfg))
             _drafts.pop(meeting_id, None)
+            stats.update(notes="written", notes_seconds=round(time.monotonic() - began), notes_provider=used,
+                         notes_model=llm_engine.model_for(used, cfg) if used != "custom" else "custom",
+                         notes_from_meeting_notes=bool(early) and len(m["transcript"] or "") > llm_engine.context_chars(used, cfg))
             db.replace_tasks(meeting_id, meeting_text.action_items(summary))
             if title and db.get_meeting(meeting_id)["title_auto"]:  # you may have renamed it meanwhile
                 db.update_meeting(meeting_id, title=title)
@@ -211,10 +224,17 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
                 log.exception("Couldn't tag or sort meeting %s", meeting_id)
         except llm_engine.LLMError as e:
             db.update_meeting(meeting_id, summary_error=str(e))
+            stats.update(notes="failed", notes_provider=llm_engine.chain(choice, cfg)[0])
         finally:
             _drafts.pop(meeting_id, None)
     _export(meeting_id, cfg)
     db.update_meeting(meeting_id, status="done", wait_reason=None)
+    if stats:
+        m = db.get_meeting(meeting_id) or m
+        telemetry.send("meeting_processed", {
+            **stats, "minutes": int(round((m["duration_sec"] or 0) / 60 / 5) * 5),
+            "source": "imported" if m.get("imported_at") else "recorded",
+        }, cfg)
 
 
 def _transcribe_local(m: dict) -> tuple[list[dict], bool, float]:

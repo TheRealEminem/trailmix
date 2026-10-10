@@ -172,6 +172,9 @@ export interface Settings {
   live_final: boolean;
   /** Notes written during the meeting (see LiveNotesPlan) */
   live_notes: "auto" | "on" | "off";
+  /** Anonymous usage stats (on by default; sent only once the choice was seen) */
+  share_stats: boolean;
+  stats_notice_seen: boolean;
   auto_export: boolean;
   export_dir: string;
   export_formats: ExportFormat[];
@@ -260,6 +263,17 @@ export interface LiveRecording {
   /** e.g. "Next notes at 20:00", "Paused on battery at 32%. They catch up after the meeting." */
   notes_status: string | null;
 }
+
+/** Anonymous usage stats: on or off, the latest events as sent, and today's summary. */
+export interface StatsInfo {
+  /** this build has somewhere to send them */
+  available: boolean;
+  on: boolean;
+  recent: { event: string; at: string; properties: Record<string, unknown> }[];
+  daily: Record<string, unknown>;
+}
+
+export const PRIVACY_POLICY = "https://therealeminem.github.io/trailmix/privacy.html";
 
 /** Whether notes are written during meetings with your settings, and why. */
 export interface LiveNotesPlan {
@@ -480,6 +494,7 @@ export const api = {
   },
   live: () => request<LiveRecording[]>("/live"),
   liveNotesPlan: () => request<LiveNotesPlan>("/live-notes"),
+  stats: () => request<StatsInfo>("/stats"),
   nativeRecorder: () => request<NativeRecorder>("/recorder"),
   ollama: () => request<OllamaStatus>("/ollama"),
   granolaNotes: () => request<{ notes: GranolaNote[] }>("/import/granola/notes"),
