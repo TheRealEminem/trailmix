@@ -128,3 +128,19 @@ def test_answering_over_the_api(fresh_db, ai):
     assert client.get("/api/questions").json() == {str(mid): 1}
     assert client.post(f"/api/questions/{got[0]['id']}", json={"value": "Dana"}).status_code == 200
     assert client.get(f"/api/meetings/{mid}/questions").json() == []
+
+
+def test_spellings_are_seeded_from_your_name_workspaces_and_people(fresh_db, ai):
+    db.create_workspace("Cinder Labs", about="Sales for CinderCap, our B2G cold-chain product, and the CESAC board.")
+    mid = meeting("## Overview\nWe met.")
+    db.update_meeting(mid, speaker_names_json={"Them": "Priya Nair"})
+    assert questions.seeded() == ["Dale", "Cinder Labs", "CinderCap", "B2G", "CESAC", "Priya Nair"]
+    assert "CinderCap" in questions.vocabulary_prompt() and "Dale" in questions.vocabulary_prompt()
+
+
+def test_a_known_spelling_is_never_questioned(fresh_db, ai):
+    db.create_workspace("Cinder Labs", about="Sales for CinderCap.")
+    ai["terms"] = "CinderCap → CoolCap"
+    mid = meeting("## Overview\nThe CinderCap pitch went well.", "The CinderCap pitch went well.", has_system=False)
+    questions.ask_about(mid, CFG)
+    assert "term" not in by_kind(mid)

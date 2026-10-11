@@ -64,8 +64,20 @@ def is_local(pid: str, cfg: dict) -> bool:
     return (urlparse(cfg["ollama_url"]).hostname or "") in ("localhost", "127.0.0.1", "::1")
 
 
+def runs_here(pid: str, cfg: dict) -> bool:
+    """The model runs on this computer: Ollama, or an OpenAI-compatible server, at a local address."""
+    if pid == "ollama":
+        return is_local(pid, cfg)
+    if pid == "custom":
+        return (urlparse(cfg["custom_base_url"]).hostname or "") in ("localhost", "127.0.0.1", "::1")
+    return False
+
+
 def configured(pid: str, cfg: dict) -> tuple[bool, str]:
     """(ready, reason-if-not). Cheap: never makes a network call except for Ollama's tag list."""
+    if cfg.get("lockdown") and not runs_here(pid, cfg):
+        return False, (f"Lockdown mode is on, so {label(pid, cfg)} can't be used: only AI on this computer can write "
+                       "notes (Settings → Privacy)")
     if pid == "ollama":
         return (True, "") if _ollama_tags(cfg) else (False, f"Ollama isn't reachable at {cfg['ollama_url']} (or has no models)")
     if pid == "custom":
@@ -492,6 +504,34 @@ def place_moments(summary: str, moments: list[str]) -> str:
         return f"{summary}\n\n{section}"
     before, after = "\n".join(lines[:at]).rstrip(), "\n".join(lines[at:])
     return f"{before}\n\n{section}\n\n{after}" if before else f"{section}\n\n{after}"
+_WORD = re.compile(r"[A-Za-z]+|\d[\d,.]*\d|\d")
+_COMMON = set("""the and for with that this from have about what when were they them their there would could
+should which while into your just like want also some more most than then been being will idea think liked""".split())
+
+
+def _reflected(note: str, summary: str) -> bool:
+    """Whether the notes cover a typed note: at least half its telling words (numbers, names, longer words)."""
+    text = meeting_text._URL.sub(" ", re.sub(r"^\[[\d:]+\]\s*", "", note))  # links are checked on their own
+    words = {w.lower() for w in _WORD.findall(text)}
+    telling = {w for w in words if (len(w) > 4 or any(c.isdigit() for c in w)) and w not in _COMMON}
+    if not telling:
+        return True
+    lower = summary.lower()
+    return sum(w in lower for w in telling) * 2 >= len(telling)
+
+
+def keep_mine(summary: str, mine: list[str]) -> str:
+    """Nothing you typed gets lost: notes the model didn't work in go under "Your Notes" word for word, and any
+    link still missing goes under "Links"."""
+    left_out = [re.sub(r"^\[[\d:]+\]\s*", "", n) for n in mine if not _reflected(n, summary)]
+    if left_out:
+        summary = f"{summary.rstrip()}\n\n## Your Notes\n" + "\n".join(f"- {n}" for n in left_out)
+    missing = [u for u in meeting_text.links(list(mine)) if u not in summary]
+    if missing:
+        summary = f"{summary.rstrip()}\n\n## Links\n" + "\n".join(f"- {u}" for u in missing)
+    return summary
+
+
 _TIMESTAMP = re.compile(r"^\[(\d+(?::\d\d)+)\]", re.M)
 
 
@@ -542,7 +582,8 @@ def unload(pid: str, cfg: dict) -> None:
 
 def summarize(transcript: str, cfg: dict, choice: str, template: str, moments: list[str],
               want_title: bool, about: str = "", minutes: float = 30, on_progress=None,
-              on_draft: OnText = None, early_notes: tuple[list[dict], float] | None = None) -> tuple[str, str, str | None]:
+              on_draft: OnText = None, early_notes: tuple[list[dict], float] | None = None,
+              mine: list[str] = ()) -> tuple[str, str, str | None]:
     """Returns (summary, provider_used, title). The title is best-effort and never fails the summary.
 
     A transcript too long for the provider's context is summarized in parts first (notes on each part),
@@ -595,7 +636,8 @@ def summarize(transcript: str, cfg: dict, choice: str, template: str, moments: l
         material = material[:budget]  # only reached if the notes somehow didn't shrink
         if on_progress and from_notes:
             on_progress("Writing up the notes")
-        system, prompt = templates.final_prompt(template, cfg["custom_template"], material, from_notes, moments, about, minutes)
+        system, prompt = templates.final_prompt(template, cfg["custom_template"], material, from_notes, moments, about, minutes,
+                                                mine)
         show = (lambda t: on_draft(tidy(t))) if on_draft else None
         summary = tidy(generate(pid, cfg, prompt, system=system, keep_alive=hold, on_text=show))
         if not _ACTION_HEADING.search(summary):  # small models sometimes forget the one section we rely on
@@ -604,6 +646,7 @@ def summarize(transcript: str, cfg: dict, choice: str, template: str, moments: l
             actions = tidy(generate(pid, cfg, prompt, system=system, keep_alive=hold, on_text=show))
             summary += "\n\n" + (actions if _ACTION_HEADING.search(actions) else "## Action Items\n- None")
         summary = place_moments(summary, moments)
+        summary = keep_mine(summary, mine)
         if not want_title:
             unload(pid, cfg)
         title = None

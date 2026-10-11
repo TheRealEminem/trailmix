@@ -15,6 +15,7 @@ import {
   LinesIcon,
   MicIcon,
   MonitorIcon,
+  PencilIcon,
   SparkleIcon,
   StopIcon,
 } from "./icons";
@@ -23,6 +24,7 @@ import remarkGfm from "remark-gfm";
 import { TrailScene } from "./illustrations";
 import LevelMeters from "./LevelMeter";
 import MicPicker from "./MicPicker";
+import MyNotes from "./MyNotes";
 import SoundCheck from "./SoundCheck";
 import { ControlRow, Pulse, SpeakerChip, Spinner, SwitchRow } from "./ui";
 
@@ -202,6 +204,7 @@ export default function Recorder(p: Props) {
   const liveDraft = p.remote && !p.rec ? p.remote.draft : p.liveDraft;
   const draftBox = useRef<HTMLDivElement>(null);
   const remote = p.health?.transcription.engine === "remote";
+  const finalLive = !!p.health?.transcription.live_final;
 
   // Press M (while this window is focused) to flag the current moment.
   useEffect(() => {
@@ -259,9 +262,9 @@ export default function Recorder(p: Props) {
         </h1>
         <p className="hero-sub mt-3">
           {helper
-            ? "The menu bar helper is recording. Press M to flag a moment; the accurate transcript is made when you stop."
+            ? `The menu bar helper is recording. Press M to flag a moment${finalLive ? "." : "; the accurate transcript is made when you stop."}`
             : recording
-              ? "Trailmix is listening. Press M to flag a moment; the accurate transcript is made when you stop."
+              ? `Trailmix is listening. Press M to flag a moment${finalLive ? "." : "; the accurate transcript is made when you stop."}`
               : `Trailmix quietly records, transcribes, and organizes your conversations${remote ? "." : " locally."}`}
         </p>
       </div>
@@ -341,13 +344,19 @@ export default function Recorder(p: Props) {
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <LinesIcon size={16} className="text-forest" />
-                    <span className="text-label font-medium">Live draft</span>
-                    <span className="chip bg-surface-subtle text-ink-soft">
-                      rough
+                    <span className="text-label font-medium">
+                      {finalLive ? "Live transcript" : "Live draft"}
                     </span>
+                    {!finalLive && (
+                      <span className="chip bg-surface-subtle text-ink-soft">
+                        rough
+                      </span>
+                    )}
                   </div>
                   <span className="text-meta text-ink-soft">
-                    The accurate transcript is made after you stop
+                    {finalLive
+                      ? "Made by the accurate model as you talk"
+                      : "The accurate transcript is made after you stop"}
                   </span>
                 </div>
                 <div
@@ -381,6 +390,18 @@ export default function Recorder(p: Props) {
                 Recording to disk. The transcript and summary are made after you
                 stop.
               </p>
+            )}
+            {p.live && (
+              <div className="border-t border-line px-5 py-5 sm:px-6">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <PencilIcon size={16} className="text-forest" />
+                    <span className="text-label font-medium">Your notes</span>
+                  </div>
+                  <span className="text-meta text-ink-soft">Worked into the meeting's notes, links and all</span>
+                </div>
+                <MyNotes meetingId={p.live.id} notes={p.live.my_notes} live />
+              </div>
             )}
             {p.live && (p.live.notes.length > 0 || p.live.notes_status) && (
               <LiveNotes notes={p.live.notes} status={p.live.notes_status} />

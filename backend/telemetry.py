@@ -50,7 +50,7 @@ def available() -> bool:
 
 
 def enabled(cfg: dict) -> bool:
-    return available() and bool(cfg["share_stats"]) and bool(cfg["stats_notice_seen"])
+    return available() and bool(cfg["share_stats"]) and bool(cfg["stats_notice_seen"]) and not cfg.get("lockdown")
 
 
 def _install_id(cfg: dict) -> str:

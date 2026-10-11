@@ -29,6 +29,8 @@ export interface Workspace {
   about: string;
   position: number;
   meetings: number;
+  /** The note style for its meetings ("" = the default in Settings). */
+  template: string;
 }
 
 /** Which meetings you're looking at: all of them, one workspace, or the ones in none yet. */
@@ -175,6 +177,10 @@ export interface Settings {
   /** Anonymous usage stats (on by default; sent only once the choice was seen) */
   share_stats: boolean;
   stats_notice_seen: boolean;
+  /** Lockdown mode: nothing leaves this computer */
+  lockdown: boolean;
+  /** the version whose "What's new" was last closed ("" = never) */
+  whats_new_seen: string;
   auto_export: boolean;
   export_dir: string;
   export_formats: ExportFormat[];
@@ -214,6 +220,8 @@ export interface Meeting extends MeetingListItem {
   export_error: string | null;
   title_auto: boolean;
   bookmarks: Bookmark[];
+  /** Notes you typed; `t` is seconds into the recording (null when added afterwards). */
+  my_notes: MyNote[];
   speaker_names: Record<string, string>;
   qa: QA[];
   tasks: Task[];
@@ -237,12 +245,21 @@ export interface Health {
     live_model: string;
     url: string | null;
     local_available: boolean;
+    /** the accurate model transcribes while recording, so the live transcript is the final one */
+    live_final: boolean;
   };
+  /** This copy of Trailmix, e.g. "0.14.0" ("dev" from source) */
+  version: string;
   templates: { id: string; name: string }[];
   providers: { id: ProviderId; label: string; kind: "local" | "cloud" | "custom" }[];
   audio_retention_days: number;
   auth: boolean;
   recording: boolean;
+}
+
+export interface MyNote {
+  t: number | null;
+  text: string;
 }
 
 /** A recording in progress, whichever app is capturing it. */
@@ -258,6 +275,7 @@ export interface LiveRecording {
   draft: boolean;
   drafts: DraftLine[];
   bookmarks: Bookmark[];
+  my_notes: MyNote[];
   /** Notes written during the meeting so far, each on a stretch of it */
   notes: { start: number; end: number; text: string }[];
   /** e.g. "Next notes at 20:00", "Paused on battery at 32%. They catch up after the meeting." */
@@ -341,6 +359,8 @@ export interface NativeRecorder {
   shortcut_record?: string;
   shortcut_mark?: string;
   open_at_login?: boolean | null;
+  /** "Zoom call started. Record it?" */
+  call_reminders?: boolean;
   update?: UpdateInfo | null;
 }
 
@@ -361,6 +381,8 @@ export interface UpdateInfo {
   skipped?: string | null;
   /** the download/install under way is going back */
   going_back?: boolean;
+  /** Lockdown mode: no automatic checks (checking by hand still works) */
+  lockdown?: boolean;
 }
 
 export interface SoundCheckResult {
@@ -457,7 +479,7 @@ export const api = {
   workspaces: () => request<Workspace[]>("/workspaces"),
   createWorkspace: (w: { name: string; color?: WorkspaceColor; about?: string }) =>
     request<Workspace>("/workspaces", json("POST", w)),
-  updateWorkspace: (id: number, w: Partial<Pick<Workspace, "name" | "color" | "about" | "position">>) =>
+  updateWorkspace: (id: number, w: Partial<Pick<Workspace, "name" | "color" | "about" | "position" | "template">>) =>
     request<Workspace>(`/workspaces/${id}`, json("PATCH", w)),
   deleteWorkspace: (id: number) => request<{ ok: true }>(`/workspaces/${id}`, json("DELETE")),
   setMeetingWorkspace: (id: number, workspace_id: number | null) =>
@@ -495,6 +517,10 @@ export const api = {
   live: () => request<LiveRecording[]>("/live"),
   liveNotesPlan: () => request<LiveNotesPlan>("/live-notes"),
   stats: () => request<StatsInfo>("/stats"),
+  lockdown: () => request<{ on: boolean }>("/lockdown"),
+  vocabulary: () => request<{ learned: string[]; seeded: string[] }>("/vocabulary"),
+  addMyNote: (id: number, text: string) => request<MyNote[]>(`/meetings/${id}/my-notes`, json("POST", { text })),
+  setMyNotes: (id: number, notes: MyNote[]) => request<MyNote[]>(`/meetings/${id}/my-notes`, json("PUT", { notes })),
   nativeRecorder: () => request<NativeRecorder>("/recorder"),
   ollama: () => request<OllamaStatus>("/ollama"),
   granolaNotes: () => request<{ notes: GranolaNote[] }>("/import/granola/notes"),
@@ -521,6 +547,7 @@ export const api = {
   unskipUpdate: () => request<{ ok: true }>("/recorder/unskip-update", json("POST")),
   setBetaUpdates: (on: boolean) => request<{ ok: true }>("/recorder/beta-updates", json("POST", { on })),
   setOpenAtLogin: (on: boolean) => request<{ ok: true }>("/recorder/open-at-login", json("POST", { on })),
+  setCallReminders: (on: boolean) => request<{ ok: true }>("/recorder/call-reminders", json("POST", { on })),
   soundCheck: () => request<{ ok: true }>("/recorder/sound-check", json("POST")),
   markLive: (id: number, note = "") => request<Bookmark>(`/meetings/${id}/mark`, json("POST", { note })),
   stopLive: (id: number) => request<{ ok: true }>(`/meetings/${id}/stop`, json("POST")),

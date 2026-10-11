@@ -18,6 +18,9 @@ enum Entry {
         if args.contains("--list-audio") { return SelfTest.listAudio() }
         if args.contains("--capture-test") { return SelfTest.captureTest(args) }
         if args.contains("--window-test") { return SelfTest.windowTest(args) }
+        if let i = args.firstIndex(of: "--reminder-preview"), i + 1 < args.count {
+            return CallReminder.preview(into: args[i + 1], stop: args.contains("--stop"))
+        }
         TrailmixHelperApp.main()
     }
 }
@@ -32,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let model = HelperModel.shared
             model.begin()
             Updater.shared.begin()
+            CallReminder.shared.begin()
             guard Bundled.isBundled else { return }
             if atLogin {
                 Task { await model.startServerIfNeeded() }

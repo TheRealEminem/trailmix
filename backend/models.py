@@ -92,8 +92,20 @@ def _run(job: _Job) -> None:
         job.done.set()
 
 
+def _locked() -> bool:
+    import settings
+
+    return settings.locked()
+
+
+LOCKED = "Lockdown mode is on, so the speech model can't be downloaded. Turn it off in Settings → Privacy to download it once"
+
+
 def start(repo: str) -> None:
-    """Begins downloading in the background (does nothing if it's installed or already on its way)."""
+    """Begins downloading in the background (does nothing if it's installed or already on its way, or in
+    Lockdown mode)."""
+    if _locked():
+        return
     with _lock:
         job = _jobs.get(repo)
         if job and not job.done.is_set():
@@ -116,6 +128,8 @@ def ensure(repo: str, on_progress=None) -> None:
     """Blocks until the model is installed, downloading it if need be. Raises RuntimeError if that fails."""
     if not mlx_engine.available() or installed(repo):
         return
+    if _locked():
+        raise RuntimeError(LOCKED)
     start(repo)
     job = _jobs[repo]
     while not job.done.wait(1.0):
@@ -129,6 +143,8 @@ def require(repo: str) -> None:
     """For work that can't wait (a live draft): start the download and say so, without blocking."""
     if not mlx_engine.available() or installed(repo):
         return
+    if _locked():
+        raise NotReady(LOCKED + ".")
     start(repo)
     p = progress(repo)
     raise NotReady("Live draft starts once the speech model has downloaded" + (f" ({p:.0%})." if p is not None else "."))
