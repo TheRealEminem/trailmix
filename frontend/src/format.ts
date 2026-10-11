@@ -25,7 +25,9 @@ export function formatTime(iso: string): string {
 }
 
 export function formatLongDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  const d = new Date(iso);
+  const year = d.getFullYear() === new Date().getFullYear() ? undefined : "numeric";
+  return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year });
 }
 
 /** Sidebar group heading for a meeting date. */

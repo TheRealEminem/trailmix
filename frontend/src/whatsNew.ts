@@ -9,6 +9,20 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.14.1",
+    items: [
+      {
+        title: "Change a meeting's date",
+        body: "Click the date at the top of a meeting to move it to when it really happened. Not sure when that was? “Find the date” has the AI look for clues in what was said.",
+      },
+      {
+        title: "Captions from YouTube and Google Drive",
+        body: "Transcripts with the time on its own line above the words now import cleanly, joined into one paragraph per speaker, and the date box no longer defaults to tomorrow.",
+        where: "Import",
+      },
+    ],
+  },
+  {
     version: "0.14.0",
     items: [
       {
