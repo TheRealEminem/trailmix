@@ -281,6 +281,7 @@ _UPDATABLE = {
     "requested_provider", "requested_template", "title_auto", "draft_json", "exported_paths", "export_error",
     "bookmarks_json", "speaker_names_json", "qa_json", "keep_audio", "audio_dir", "live_json", "workspace_id", "workspace_auto",
     "live_notes_json", "my_notes_json", "transcribed_with", "summary_model", "workspace_model", "tags_json", "tags_model", "imported_at",
+    "created_at",
 }
 _JSON_FIELDS = {"my_notes_json", "live_notes_json", "tags_json", "segments_json", "draft_json", "exported_paths", "bookmarks_json", "speaker_names_json", "qa_json"}
 

@@ -203,3 +203,27 @@ def test_regenerating_a_title_from_the_notes(fresh_db, ai, monkeypatch):
     ai["answer"] = "Title: Housing code amendment postponed"
     got = TestClient(main.app).post(f"/api/meetings/{mid}/retitle").json()
     assert got["title"] == db.get_meeting(mid)["title"] == "Housing code amendment postponed"
+
+
+def test_moving_a_meeting_to_another_date(fresh_db, ai, monkeypatch):
+    import main
+    import settings
+
+    monkeypatch.setattr(settings, "get_all", lambda: {**settings.DEFAULTS, **CFG})
+    mid = meeting("CEPAC work plan", "## Overview\nWork plan for 2026.")
+    arrived = db.get_meeting(mid)["created_at"]
+    db.update_meeting(mid, transcript="[0:42] a study session on December 15th\n[1:10] the work plan for 2026")
+    client = TestClient(main.app)
+
+    assert client.patch(f"/api/meetings/{mid}", json={"created_at": "2025-11-17T18:30:00-08:00"}).status_code == 200
+    assert db.get_meeting(mid)["created_at"] == "2025-11-18T02:30:00.000Z"
+    assert db.get_meeting(mid)["title"] == "CEPAC work plan"  # a date change leaves the title alone
+    assert db.get_meeting(mid)["imported_at"] == arrived  # its audio's 30 days don't restart from the new date
+    assert client.patch(f"/api/meetings/{mid}", json={"created_at": "2099-01-01"}).status_code == 422
+    assert client.patch(f"/api/meetings/{mid}", json={"created_at": "last Tuesday"}).status_code == 422
+
+    ai["answer"] = '{"date": "2025-11-17", "sure_of": "month", "why": "A December 15th study session is coming up."}'
+    got = client.post(f"/api/meetings/{mid}/guess-date").json()
+    assert got["date"] == "2025-11-17" and got["sure_of"] == "month"
+    assert "December 15th" in ai["prompts"][-1]
+    assert db.get_meeting(mid)["created_at"] == "2025-11-18T02:30:00.000Z"  # only a suggestion

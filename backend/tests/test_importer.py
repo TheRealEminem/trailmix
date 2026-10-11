@@ -24,6 +24,39 @@ def test_plain_text_stays_unlabeled():
     assert len(segs) == 2 and all(s["speaker"] is None for s in segs)
 
 
+def test_captions_with_times_above_the_words():
+    """YouTube and Google Drive transcripts: "0:04" on its own line, then the words; ">>" where someone new talks."""
+    text = """0:04
+And we have John here
+0:08
+>> and Maya, a potential member. She's a student
+0:15
+at SOU and has shown an interest.
+0:19
+>> Thanks. Shall we approve the minutes?
+1:02:03
+>> Second.
+1:02:05
+>> Okay: done."""
+    segs = importer.parse_text(text)
+    assert [s["start"] for s in segs] == [4, 8, 19, 3723, 3725]
+    assert segs[1]["text"] == "and Maya, a potential member. She's a student at SOU and has shown an interest."
+    assert all(s["speaker"] is None for s in segs[:4])
+    assert all("0:" not in s["text"] for s in segs)  # the times aren't read as words
+    assert segs[1]["end"] <= segs[2]["start"]
+    assert segs[-1]["end"] < 3735  # its length comes from the times, not from counting lines
+
+
+def test_long_caption_turns_are_split():
+    lines = []
+    for i in range(40):
+        lines += [f"{i // 6}:{i * 10 % 60:02d}", (">> " if i % 20 == 0 else "") + "word " * 12]
+    lines += ["9:00", ">> one", "9:05", ">> two"]
+    segs = importer.parse_text("\n".join(lines))
+    assert all(len(s["text"]) <= importer.TURN_MAX_CHARS + 70 for s in segs)
+    assert len(segs) > 4
+
+
 def test_granola_api_items_map_to_you_and_them():
     items = [
         {"speaker": {"source": "microphone", "attribution": "me"}, "text": "Hello", "start_time": "2026-01-27T15:30:00Z", "end_time": "2026-01-27T15:30:02Z"},

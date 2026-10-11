@@ -347,6 +347,13 @@ const json = (method: string, body?: unknown): RequestInit => ({
   body: body === undefined ? undefined : JSON.stringify(body),
 });
 
+export interface DateGuess {
+  /** "YYYY-MM-DD", or null when nothing in the transcript says. */
+  date: string | null;
+  sure_of: "day" | "month" | "year" | null;
+  why: string;
+}
+
 /** Trailmix's menu bar recorder, when it's running and checking in with this server. */
 export interface NativeRecorder {
   available: boolean;
@@ -553,6 +560,11 @@ export const api = {
   stopLive: (id: number) => request<{ ok: true }>(`/meetings/${id}/stop`, json("POST")),
   audioUrl: (id: number) => `/api/meetings/${id}/audio`,
   renameMeeting: (id: number, title: string) => request<{ ok: true }>(`/meetings/${id}`, json("PATCH", { title })),
+  /** Moves a meeting to when it really happened (an ISO time). */
+  setMeetingDate: (id: number, createdAt: string) =>
+    request<{ ok: true }>(`/meetings/${id}`, json("PATCH", { created_at: createdAt })),
+  /** The AI's guess at when a meeting happened, from what was said in it (nothing changes). */
+  guessDate: (id: number) => request<DateGuess>(`/meetings/${id}/guess-date`, json("POST")),
   setSpeakers: (id: number, names: Record<string, string>) =>
     request<Record<string, string>>(`/meetings/${id}/speakers`, json("PUT", names)),
   setBookmarks: (id: number, bookmarks: Bookmark[]) =>

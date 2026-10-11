@@ -88,34 +88,75 @@ def _seconds(stamp: str) -> float:
     return parts[0] * 3600 + parts[1] * 60 + parts[2]
 
 
-def parse_text(text: str, my_names: set[str] = frozenset()) -> list[dict]:
-    """Segments from a transcript as text: "Me: …" / "Them: …" (Granola's Copy transcript), "Name: …", and
-    optional [mm:ss] timestamps. "Me"/"You" (or your name) become You, anyone else Them. A line without a
-    speaker continues the one before it (wrapped text); a transcript with no speakers at all stays
-    unlabeled, one line per segment. Lines without times are spaced out by their length."""
-    me = _ME | {n.lower() for n in my_names if n}
-    segments: list[dict] = []
-    clock = 0.0
-    for raw in text.splitlines():
+_BARE_STAMP = re.compile(r"^\s*\[?(\d{1,2}(?::\d{2}){1,2})\]?\s*$")
+_TURN = re.compile(r"^\s*>>+\s*")  # captions (YouTube, Google Drive) mark a new speaker with ">>"
+TURN_MAX_CHARS = 700  # a long monologue is still split, so its timestamps stay useful
+
+
+def _stamps_above(lines: list[str]) -> list[str]:
+    """Captions copied from YouTube or Google Drive put each time on its own line ("0:04", then the words):
+    joined into "[0:04] the words"."""
+    out: list[str] = []
+    waiting = None
+    for raw in lines:
         line = raw.strip()
         if not line:
             continue
-        stamp, speaker, said = None, None, line
-        found = _SPEAKER_LINE.match(line)
-        if found and len(found.group(2).split()) <= 4:
-            stamp, who, said = found.group(1), found.group(2).strip(), found.group(3).strip()
-            speaker = "You" if who.lower() in me else "Them"
-        elif (timed := _TIME_ONLY.match(line)):
-            stamp, said = timed.group(1), timed.group(2).strip()
-        if speaker is None and stamp is None and segments and segments[-1]["speaker"]:
-            segments[-1]["text"] += " " + said  # wrapped text
-            segments[-1]["end"] = round(segments[-1]["end"] + len(said.split()) / WORDS_PER_SECOND, 2)
-            clock = segments[-1]["end"]
+        if bare := _BARE_STAMP.match(line):
+            waiting = bare.group(1)
             continue
+        out.append(f"[{waiting}] {line}" if waiting else line)
+        waiting = None
+    return out
+
+
+def _turn_starts(line: str) -> bool:
+    timed = _TIME_ONLY.match(line)
+    return bool(_TURN.match(timed.group(2) if timed else line))
+
+
+def parse_text(text: str, my_names: set[str] = frozenset()) -> list[dict]:
+    """Segments from a transcript as text: "Me: …" / "Them: …" (Granola's Copy transcript), "Name: …", and
+    optional [mm:ss] timestamps (also on a line of their own, above the words). "Me"/"You" (or your name)
+    become You, anyone else Them. A line without a speaker continues the one before it (wrapped text); a
+    transcript with no speakers at all stays unlabeled, one line per segment, unless ">>" marks where each
+    speaker starts (captions): then the lines between are joined into turns. Lines without times are spaced
+    out by their length."""
+    me = _ME | {n.lower() for n in my_names if n}
+    lines = _stamps_above(text.splitlines())
+    turns = sum(map(_turn_starts, lines)) >= 3
+    segments: list[dict] = []
+    clock = 0.0
+    for line in lines:
+        stamp, speaker, said = None, None, line
+        if timed := _TIME_ONLY.match(line):
+            stamp, said = timed.group(1), timed.group(2).strip()
+        new_turn = bool(_TURN.match(said))
+        said = _TURN.sub("", said).strip()
+        if not said:
+            continue
+        # In captions, only the start of a turn can name its speaker ("so the plan: …" mid-turn is just words).
+        found = _SPEAKER_LINE.match(said) if new_turn or not turns else None
+        if found and len(found.group(2).split()) <= 4:
+            who, said = found.group(2).strip(), found.group(3).strip()
+            speaker = "You" if who.lower() in me else "Them"
+        last = segments[-1] if segments else None
+        wrapped = last and speaker is None and stamp is None and last["speaker"]
+        same_turn = last and turns and not new_turn and speaker is None
+        if wrapped or (same_turn and len(last["text"]) < TURN_MAX_CHARS):
+            last["text"] += " " + said
+            begin = max(last["end"], _seconds(stamp)) if stamp else last["end"]
+            last["end"] = clock = round(begin + len(said.split()) / WORDS_PER_SECOND, 2)
+            continue
+        if same_turn:
+            speaker = last["speaker"]  # a long turn, split: still the same person
         start = _seconds(stamp) if stamp else clock
         end = start + max(1.0, len(said.split()) / WORDS_PER_SECOND)
         segments.append({"start": round(start, 2), "end": round(end, 2), "speaker": speaker, "text": said})
         clock = end
+    for a, b in zip(segments, segments[1:]):  # a turn ends where the next one begins
+        if a["start"] <= b["start"] < a["end"]:
+            a["end"] = b["start"]
     return segments
 
 

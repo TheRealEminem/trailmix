@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket
@@ -34,6 +34,7 @@ import importer
 import live
 import live_notes
 import llm_engine
+import meeting_date
 import meeting_text
 import mlx_engine
 import models
@@ -188,7 +189,8 @@ class MeetingWorkspace(BaseModel):
 
 
 class MeetingPatch(BaseModel):
-    title: str
+    title: str | None = None
+    created_at: str | None = None  # when it happened: ISO, with the time zone (a plain date is local midnight)
 
 
 class SettingsPatch(BaseModel):
@@ -920,14 +922,44 @@ async def stop_live(meeting_id: int):
 
 
 @app.patch("/api/meetings/{meeting_id}")
-def rename_meeting(meeting_id: int, body: MeetingPatch):
-    _get_or_404(meeting_id)
-    title = body.title.strip()
-    if not title:
-        raise HTTPException(422, "Title cannot be empty")
-    db.update_meeting(meeting_id, title=title, title_auto=0)  # a hand-picked title is never overwritten
-    _reexport(meeting_id)
+def edit_meeting(meeting_id: int, body: MeetingPatch):
+    """Renames a meeting, or moves it to when it really happened (an imported one often has no date)."""
+    m = _get_or_404(meeting_id)
+    fields = {}
+    if body.title is not None:
+        title = body.title.strip()
+        if not title:
+            raise HTTPException(422, "Title cannot be empty")
+        fields.update(title=title, title_auto=0)  # a hand-picked title is never overwritten
+    if body.created_at is not None:
+        when = importer._parse_time(body.created_at.strip())
+        if not when:
+            raise HTTPException(422, "That isn't a date Trailmix can read")
+        if when.tzinfo is None:
+            when = when.astimezone()  # a plain date or time means local time
+        if not datetime(1990, 1, 1, tzinfo=timezone.utc) <= when <= datetime.now(timezone.utc) + timedelta(days=2):
+            raise HTTPException(422, "Pick a date that isn't in the future")
+        fields["created_at"] = importer._iso(when)
+        if not m.get("imported_at"):  # its audio's 30 days still count from when it came in, not the new date
+            fields["imported_at"] = m["created_at"]
+    if fields:
+        db.update_meeting(meeting_id, **fields)
+        _reexport(meeting_id)
     return {"ok": True}
+
+
+@app.post("/api/meetings/{meeting_id}/guess-date")
+def guess_date(meeting_id: int):
+    """The AI reads the transcript for clues to when the meeting happened. Only a suggestion: nothing changes."""
+    m = _get_or_404(meeting_id)
+    if not m["transcript"]:
+        raise HTTPException(409, "This meeting has no transcript to read")
+    cfg = settings.get_all()
+    _local_llm_paused(cfg)
+    try:
+        return meeting_date.guess(m, cfg)
+    except llm_engine.LLMError as e:
+        raise HTTPException(502, str(e))
 
 
 @app.put("/api/meetings/{meeting_id}/speakers")

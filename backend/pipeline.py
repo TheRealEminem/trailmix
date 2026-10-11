@@ -234,7 +234,7 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
         m = db.get_meeting(meeting_id) or m
         telemetry.send("meeting_processed", {
             **stats, "minutes": int(round((m["duration_sec"] or 0) / 60 / 5) * 5),
-            "source": "imported" if m.get("imported_at") else "recorded",
+            "source": "imported" if m.get("source") or m.get("imported_at") else "recorded",
         }, cfg)
 
 
