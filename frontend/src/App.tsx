@@ -865,6 +865,10 @@ export default function App() {
               tab={tab}
               onTab={setTab}
               onRename={(t) => void handleRename(t)}
+              onDate={async (iso) => {
+                await api.setMeetingDate(meeting.id, iso);
+                await Promise.all([refreshList(), refreshSelected(meeting.id)]);
+              }}
               onDelete={() => void handleDelete(meeting.id, meeting.title)}
               onDeleteAudio={() => void handleDeleteAudio()}
               onRetranscribe={() => void handleRetranscribe()}

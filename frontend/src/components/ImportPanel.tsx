@@ -314,7 +314,10 @@ function GranolaSection({
 function PasteSection({ onImported, onOpenMeeting, onError }: Props) {
   const [text, setText] = useState("");
   const [title, setTitle] = useState("");
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(() => {
+    const d = new Date(); // today here (toISOString would give the date in UTC: tomorrow, in the evening)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
   const [busy, setBusy] = useState(false);
   const [dropped, setDropped] = useState<string | null>(null);
   const files = useRef<HTMLInputElement>(null);
@@ -376,7 +379,8 @@ function PasteSection({ onImported, onOpenMeeting, onError }: Props) {
         Works with any Granola plan: open a meeting in Granola, click the
         transcript, then <b className="text-ink">Copy transcript</b>, and paste
         it here. Lines like “Me: …” and “Them: …” (or names) become You and
-        Them. You can also drop .txt or .md files onto this box.
+        Them. Captions copied from YouTube or Google Drive work too. You can
+        also drop .txt or .md files onto this box.
       </p>
       <div className="mt-4 flex flex-wrap gap-3">
         <input

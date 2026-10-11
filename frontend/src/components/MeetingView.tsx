@@ -4,16 +4,11 @@ import { inApp, revealInFinder } from "../api";
 import type { Bookmark, Health, Meeting, Provider, Task, Workspace } from "../api";
 import {
   formatBytes,
-  formatDuration,
-  formatLongDate,
-  formatTime,
   tildePath,
 } from "../format";
 import AskPanel from "./AskPanel";
 import {
-  CalendarIcon,
   ChatIcon,
-  ClockIcon,
   ExportIcon,
   FolderIcon,
   LinesIcon,
@@ -28,6 +23,7 @@ import { ContourBadge } from "./illustrations";
 import { WorkspacePicker } from "./Workspaces";
 import PipelineStatus from "./PipelineStatus";
 import Questions from "./Questions";
+import MeetingDate from "./MeetingDate";
 import MyNotes from "./MyNotes";
 import Summary from "./Summary";
 import Transcript from "./Transcript";
@@ -41,6 +37,8 @@ interface Props {
   tab: Tab;
   onTab: (t: Tab) => void;
   onRename: (title: string) => void;
+  /** Moves the meeting to another date and time (ISO); throws if the server says no. */
+  onDate: (iso: string) => Promise<void>;
   onDelete: () => void;
   onDeleteAudio: () => void;
   onRetranscribe: () => void;
@@ -175,14 +173,7 @@ export default function MeetingView({
     <div key={m.id}>
       <header className="mb-8 animate-enter">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-hint text-ink-soft">
-          <span className="inline-flex items-center gap-1.5">
-            <CalendarIcon size={16} className="text-ink-faint" />
-            {formatLongDate(m.created_at)}
-          </span>
-          <span className="inline-flex items-center gap-1.5 tabular-nums">
-            <ClockIcon size={16} className="text-ink-faint" />
-            {formatTime(m.created_at)} · {formatDuration(m.duration_sec)}
-          </span>
+          <MeetingDate meeting={m} onSave={on.onDate} />
           <span className="inline-flex items-center gap-1.5">
             <UsersIcon size={16} className="text-ink-faint" />
             {m.has_system ? "You & them" : "One mic"}
