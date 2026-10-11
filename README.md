@@ -1,17 +1,10 @@
 # Trailmix
 
-Local-first meeting recorder, transcriber, and summarizer.
-
-- **Capture:** the browser streams your mic and (optionally) a shared tab's audio to the backend as **two separate tracks** (AudioWorklet → WebSocket, 16 kHz mono PCM). Nothing is buffered in the browser.
-- **Live draft:** while recording, a small Whisper model (`whisper-base`) transcribes in ~3–12 s chunks (cut at pauses) so you get a rough running overview. Optional — untick "Live draft" for the lightest footprint.
-- **Final transcript:** after you stop, the large model (`whisper-large-v3-turbo`) transcribes each track over its speech regions only, in a **separate process** that exits when done, so its memory is fully returned to macOS. Mic = **You**, meeting audio = **Them**. With a single source (in person) segments are unlabeled.
-- **Summary:** only after the transcription process has exited does a local Ollama model load, and it unloads right after (`keep_alive: 0`). Or use Claude, OpenAI, Gemini, DeepSeek or any OpenAI-compatible API, with an optional fallback.
-- **Two-step approval:** transcript and summary are separate steps. Under **Settings → Automatic mode** you can switch each to auto or manual (manual = the meeting waits for a "Generate transcript" / "Generate summary" button). Settings are stored in the backend database.
-- **Auto-title:** after the summary, the same model names the meeting; meetings you rename yourself are never retitled.
-- **Export:** optional auto-export of the summary and/or transcript to a folder as Markdown, plain text or JSON (one document, or separate files). "Export now" in any meeting uses the same options.
-- **Draft vs final:** the live draft is kept, and *Transcript → Draft vs final* shows it next to the final transcript with the differences highlighted.
-- **Microphone picker:** choose the input device on the record screen (remembered in the browser); handy when an iPhone or headset grabs the system default.
-- **RAM gate:** before each heavy stage that runs on this machine, the backend checks free RAM; if it's below the model's needs + headroom, the meeting waits as "Needs OK" until you press *Proceed anyway*. Heavy stages also never start while a recording is in progress.
+Local-first meeting recorder, transcriber and note-taker for the Mac. Record any call: the menu bar app captures
+your microphone and the other side as separate tracks, the accurate speech model transcribes while you talk, and
+the notes (summary, decisions, action items, a title, tags and a workspace) follow within about a minute of
+stopping, written by a local model through Ollama or a cloud AI you choose. Your meetings stay on your computer
+unless you send them somewhere. The full specs are under [Features](#features).
 
 ## Install (Mac)
 

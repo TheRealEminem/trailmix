@@ -37,10 +37,15 @@ export default function ReportButton({ page, meetingId }: { page: string; meetin
   const [title, setTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [lockdown, setLockdown] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
 
   const start = () => {
     setScreen(screenText()); // before the panel covers anything
+    api
+      .lockdown()
+      .then((l) => setLockdown(l.on))
+      .catch(() => undefined);
     setReport(null);
     setError(null);
     setOpen(true);
@@ -198,9 +203,15 @@ export default function ReportButton({ page, meetingId }: { page: string; meetin
                   >
                     <CopyIcon size={16} /> {copied ? "Copied" : "Copy"}
                   </button>
-                  <a className="btn btn-md btn-primary" href={url} target="_blank" rel="noreferrer" onClick={close}>
-                    Post on GitHub
-                  </a>
+                  {lockdown ? (
+                    <span className="self-center text-hint text-ink-soft">
+                      Lockdown mode is on: copy it and post it yourself if you like.
+                    </span>
+                  ) : (
+                    <a className="btn btn-md btn-primary" href={url} target="_blank" rel="noreferrer" onClick={close}>
+                      Post on GitHub
+                    </a>
+                  )}
                 </div>
               </>
             )}

@@ -20,7 +20,8 @@ def check_in(info: dict) -> list[str]:
     global _info, _seen_at
     with _lock:
         _info = {k: info.get(k) for k in ("mic", "source", "machine", "version", "mic_allowed", "sound_check",
-                                     "shortcut_record", "shortcut_mark", "open_at_login", "update", "call_app")}
+                                     "shortcut_record", "shortcut_mark", "open_at_login", "update", "call_app",
+                                     "call_reminders")}
         _seen_at = time.monotonic()
         out, _commands[:] = list(_commands), []
     return out

@@ -48,6 +48,11 @@ def transcribe(audio: np.ndarray, base_url: str, api_key: str, model: str, langu
     """Returns [{start, end, text}] relative to the start of `audio`."""
     if not base_url:
         raise RemoteError("No transcription endpoint is set (Settings → Transcription)")
+    import settings
+
+    if settings.locked() and not settings.on_this_computer(base_url):
+        raise RemoteError("Lockdown mode is on, so recordings can't go to a transcription server elsewhere "
+                          "(Settings → Privacy)")
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     wav = to_wav(audio)
     duration = len(audio) / SR

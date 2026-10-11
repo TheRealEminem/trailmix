@@ -112,7 +112,8 @@ final class Updater: ObservableObject {
         var out: [String: Any] = ["current": Self.current, "checked_at": checkedAt.map { $0.timeIntervalSince1970 } ?? NSNull(),
                                   "beta": beta, "prerelease": latest?.prerelease ?? false,
                                   "previous": previous?.version ?? NSNull(), "skipped": skipped ?? NSNull(),
-                                  "going_back": goingBack]
+                                  "going_back": goingBack,
+                                  "lockdown": UserDefaults.standard.bool(forKey: "lockdown")]
         switch state {
         case .idle: out["state"] = "idle"
         case .checking: out["state"] = "checking"
@@ -129,6 +130,8 @@ final class Updater: ObservableObject {
     /// Looks for a new version. `manual`: you asked (Help → Check for Updates…), so show "Checking…" meanwhile.
     func check(manual: Bool = false) async {
         guard let feed else { return }
+        // Lockdown mode: nothing leaves this computer on its own; checking by hand still works.
+        if !manual, UserDefaults.standard.bool(forKey: "lockdown") { return }
         if case .downloading = state { return }
         if case .installing = state { return }
         if manual, latest == nil { state = .checking }

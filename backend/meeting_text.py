@@ -18,6 +18,24 @@ def segments(m: dict) -> list[dict]:
     return json.loads(m["segments_json"]) if m.get("segments_json") else []
 
 
+def my_notes(m: dict) -> list[dict]:
+    """The notes you typed: [{"t": seconds into the recording or None, "text"}]."""
+    return json.loads(m["my_notes_json"]) if m.get("my_notes_json") else []
+
+
+def my_notes_lines(m: dict) -> list[str]:
+    """Your notes as the notes AI reads them: "[12:34] text", or just the text when typed afterwards."""
+    return [(f"[{fmt(n['t'])}] " if n.get("t") is not None else "") + n["text"].strip()
+            for n in my_notes(m) if n.get("text", "").strip()]
+
+
+_URL = re.compile(r"https?://[^\s<>()\[\]]+[^\s<>()\[\].,;:!?'\"]")
+
+
+def links(texts: list[str]) -> list[str]:
+    return list(dict.fromkeys(u for t in texts for u in _URL.findall(t)))
+
+
 def bookmarks(m: dict) -> list[dict]:
     return json.loads(m["bookmarks_json"]) if m.get("bookmarks_json") else []
 

@@ -43,6 +43,9 @@ final class Prefs: ObservableObject {
     @Published var toggleShortcut: Shortcut { didSet { save(toggleShortcut, "toggleShortcut") } }
     @Published var markShortcut: Shortcut { didSet { save(markShortcut, "markShortcut") } }
     @Published var token: String { didSet { Keychain.set(token, account: "access-token") } }
+    /// "Zoom call started. Record it?" (CallReminder), and the apps you said not to ask about.
+    @Published var callReminders: Bool { didSet { defaults.set(callReminders, forKey: "callReminders") } }
+    @Published var mutedCallApps: [String] { didSet { defaults.set(mutedCallApps, forKey: "mutedCallApps") } }
 
     private init() {
         server = defaults.string(forKey: "server") ?? Prefs.bundledServer
@@ -53,6 +56,8 @@ final class Prefs: ObservableObject {
         toggleShortcut = Prefs.load("toggleShortcut", defaults) ?? .toggleDefault
         markShortcut = Prefs.load("markShortcut", defaults) ?? .markDefault
         token = Keychain.get(account: "access-token") ?? ""
+        callReminders = defaults.object(forKey: "callReminders") as? Bool ?? true
+        mutedCallApps = defaults.stringArray(forKey: "mutedCallApps") ?? []
     }
 
     private func save(_ shortcut: Shortcut, _ key: String) {

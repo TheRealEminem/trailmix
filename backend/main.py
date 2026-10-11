@@ -180,6 +180,7 @@ class WorkspaceBody(BaseModel):
     color: str | None = None
     about: str | None = None
     position: int | None = None
+    template: str | None = None  # the note style for its meetings ("" = the default in Settings)
 
 
 class MeetingWorkspace(BaseModel):
@@ -217,6 +218,15 @@ class MarkRequest(BaseModel):
     note: str = ""
 
 
+class MyNote(BaseModel):
+    text: str
+    t: float | None = None  # seconds into the recording; None for notes added afterwards
+
+
+class MyNotes(BaseModel):
+    notes: list[MyNote]
+
+
 class BookmarksPut(BaseModel):
     bookmarks: list[Bookmark]
 
@@ -236,7 +246,7 @@ def _get_or_404(meeting_id: int) -> dict:
 
 def _present(m: dict) -> dict:
     """Public shape of a meeting: hides file paths, adds parsed fields and audio info."""
-    hidden = ("audio_path", "audio_dir", "segments_json", "requested_provider", "draft_json", "exported_paths", "live_json", "live_notes_json",
+    hidden = ("audio_path", "audio_dir", "segments_json", "requested_provider", "draft_json", "exported_paths", "live_json", "live_notes_json", "my_notes_json",
               "tags_json",
               "bookmarks_json", "speaker_names_json", "qa_json")
     out = {k: v for k, v in m.items() if k not in hidden}
@@ -245,6 +255,7 @@ def _present(m: dict) -> dict:
     out["tags"] = json.loads(m["tags_json"]) if m.get("tags_json") else []
     out["exported_paths"] = json.loads(m["exported_paths"]) if m.get("exported_paths") else []
     out["bookmarks"] = meeting_text.bookmarks(m)
+    out["my_notes"] = meeting_text.my_notes(m)
     out["speaker_names"] = meeting_text.speaker_names(m, cfg)
     out["qa"] = json.loads(m["qa_json"]) if m.get("qa_json") else []
     out["tasks"] = db.tasks_for(m["id"])
@@ -307,6 +318,9 @@ class RecorderCheckIn(BaseModel):
     shortcut_mark: str = ""
     open_at_login: bool | None = None
     update: dict | None = None
+    call_app: str | None = None  # a call app using audio right now (the speech model gets ready)
+    call_reminders: bool | None = None
+    lockdown: bool | None = None  # the recorder's copy of Lockdown mode (it skips update checks)
 
 
 class OpenAtLogin(BaseModel):
@@ -316,7 +330,11 @@ class OpenAtLogin(BaseModel):
 @app.post("/api/recorder/check-in")
 def recorder_check_in(body: RecorderCheckIn):
     """The menu bar app, about once a second: what it would record, and any commands for it."""
-    return {"commands": recorder.check_in(body.model_dump())}
+    commands = recorder.check_in(body.model_dump())
+    want = settings.locked()
+    if body.lockdown is not None and body.lockdown != want:  # keep the recorder's copy in step
+        commands.append("lockdown" if want else "no-lockdown")
+    return {"commands": commands}
 
 
 @app.get("/api/recorder")
@@ -475,6 +493,8 @@ def ollama_install():
     """Download, check and install Ollama (the Mac app), or open it if it's installed but not running."""
     if sys.platform != "darwin":
         raise HTTPException(409, "Installing Ollama from here only works on a Mac")
+    if settings.locked():
+        raise HTTPException(409, f"{settings.LOCKDOWN}, so Ollama can't be downloaded")
     if not ollama_setup.start_install(settings.get_all()):
         raise HTTPException(409, "Ollama is already being installed")
     return ollama_setup.status(settings.get_all())
@@ -483,6 +503,8 @@ def ollama_install():
 @app.post("/api/ollama/pull", status_code=202)
 def ollama_pull(body: PullRequest):
     cfg = settings.get_all()
+    if settings.locked(cfg):
+        raise HTTPException(409, f"{settings.LOCKDOWN}, so AI models can't be downloaded")
     model = body.model.strip() or ollama_setup.recommended()
     if not ollama_setup.status(cfg)["reachable"]:
         raise HTTPException(409, "Ollama isn't running. Install it from ollama.com, open it, and try again.")
@@ -495,6 +517,14 @@ def ollama_pull(body: PullRequest):
 def recorder_open_at_login(body: OpenAtLogin):
     """Start Trailmix (and its menu bar recorder) when you log in to your Mac, or stop doing so."""
     if not recorder.request("open-at-login" if body.on else "no-open-at-login"):
+        raise HTTPException(409, "The menu bar recorder isn't running")
+    return {"ok": True}
+
+
+@app.post("/api/recorder/call-reminders", status_code=202)
+def recorder_call_reminders(body: OpenAtLogin):
+    """"Zoom call started. Record it?": on (which also forgets the apps you said not to ask about) or off."""
+    if not recorder.request("call-reminders" if body.on else "no-call-reminders"):
         raise HTTPException(409, "The menu bar recorder isn't running")
     return {"ok": True}
 
@@ -569,6 +599,8 @@ def speech_models():
 @app.post("/api/models/download")
 def download_models():
     """Start (or retry) downloading any missing local speech model."""
+    if settings.locked():
+        raise HTTPException(409, f"{settings.LOCKDOWN}, so speech models can't be downloaded")
     models.prefetch()
     return models.status()
 
@@ -627,7 +659,9 @@ def health():
             if remote else (mlx_engine.FINAL_MODEL if cfg["live_final"] else mlx_engine.LIVE_MODEL),
             "url": cfg["transcribe_url"] if remote else None,
             "local_available": mlx_engine.available(),
+            "live_final": cfg["live_final"],  # the transcript made while recording is the final one
         },
+        "version": archive.APP_VERSION,
         "templates": templates.listing(),
         "providers": [{"id": p, "label": llm_engine.label(p, cfg), "kind": v["kind"]} for p, v in llm_engine.PROVIDERS.items()],
         "audio_retention_days": store.RETENTION_DAYS,
@@ -802,8 +836,23 @@ def live_recordings():
     out = []
     for session in live.sessions():
         meeting = db.get_meeting(session.meeting_id)
-        out.append({**session.describe(meeting["title"] if meeting else "Recording"), **live_notes.status(session.meeting_id)})
+        out.append({**session.describe(meeting["title"] if meeting else "Recording"), **live_notes.status(session.meeting_id),
+                    "my_notes": meeting_text.my_notes(meeting) if meeting else []})
     return out
+
+
+@app.get("/api/vocabulary")
+def vocabulary_info():
+    """Names and terms the models spell your way: the ones you added or confirmed (editable in Settings) and the
+    ones Trailmix takes from your name, workspaces and the people you've named."""
+    learned = questions.vocabulary()
+    have = {w.lower() for w in learned}
+    return {"learned": learned, "seeded": [w for w in questions.seeded() if w.lower() not in have]}
+
+
+@app.get("/api/lockdown")
+def lockdown_info():
+    return {"on": settings.locked()}
 
 
 @app.get("/api/stats")
@@ -826,6 +875,28 @@ def _live_or_409(meeting_id: int) -> live.LiveSession:
     if not session:
         raise HTTPException(409, "That meeting isn't recording")
     return session
+
+
+@app.post("/api/meetings/{meeting_id}/my-notes")
+def add_my_note(meeting_id: int, body: MyNote):
+    """A note you typed. While recording it's stamped with the moment; the notes AI works it into the notes."""
+    m = _get_or_404(meeting_id)
+    text = body.text.strip()[:4000]
+    if not text:
+        raise HTTPException(422, "Type something first")
+    session = live.get(meeting_id)
+    notes = meeting_text.my_notes(m) + [{"t": round(session.duration, 1) if session else None, "text": text}]
+    db.update_meeting(meeting_id, my_notes_json=notes)
+    return notes
+
+
+@app.put("/api/meetings/{meeting_id}/my-notes")
+def replace_my_notes(meeting_id: int, body: MyNotes):
+    """Your notes after editing or deleting some. Regenerate rewrites the notes with them."""
+    _get_or_404(meeting_id)
+    notes = [{"t": n.t, "text": n.text.strip()[:4000]} for n in body.notes if n.text.strip()]
+    db.update_meeting(meeting_id, my_notes_json=notes or None)
+    return notes
 
 
 @app.post("/api/meetings/{meeting_id}/mark")
@@ -1003,8 +1074,11 @@ def update_workspace(workspace_id: int, body: WorkspaceBody):
         raise HTTPException(409, f"There's already a workspace called {name}")
     if body.color is not None and body.color not in db.WORKSPACE_COLORS:
         raise HTTPException(422, "Unknown color")
+    if body.template and body.template not in templates.TEMPLATES:
+        raise HTTPException(422, "Unknown note style")
     db.update_workspace(workspace_id, name=name, color=body.color,
-                        about=body.about.strip()[:500] if body.about is not None else None, position=body.position)
+                        about=body.about.strip()[:500] if body.about is not None else None, position=body.position,
+                        template=body.template)
     return db.get_workspace(workspace_id)
 
 

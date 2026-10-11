@@ -53,7 +53,9 @@ def _load() -> dict:
 def refresh() -> None:
     """Fetches the latest list from the Trailmix site (at most once a day; quietly does nothing offline)."""
     global _ranks, _fetched_at
-    if time.time() - _fetched_at < REFRESH_S:
+    import settings
+
+    if time.time() - _fetched_at < REFRESH_S or settings.locked():
         return
     _fetched_at = time.time()
     try:

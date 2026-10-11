@@ -83,6 +83,7 @@ _ADDED_COLUMNS = {
     "keep_audio": "INTEGER NOT NULL DEFAULT 0",      # "Keep forever": exempt from the audio clean-up, archived
     "live_json": "TEXT",                             # final transcript made while recording (live.py), if any
     "live_notes_json": "TEXT",                       # notes written during the meeting (live_notes.py), if any
+    "my_notes_json": "TEXT",                         # notes you typed: [{"t": seconds or null, "text"}]
     "workspace_id": "INTEGER",                       # workspaces.id, or NULL: not sorted into one yet
     "workspace_auto": "INTEGER NOT NULL DEFAULT 0",  # Trailmix chose the workspace (you can still change it)
     # Which model did each job (model_ranks.py knows when a better one could redo it):
@@ -103,6 +104,8 @@ def init_db() -> None:
     AUDIO_DIR.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.executescript(SCHEMA)
+        if "template" not in {r["name"] for r in conn.execute("PRAGMA table_info(workspaces)")}:
+            conn.execute("ALTER TABLE workspaces ADD COLUMN template TEXT NOT NULL DEFAULT ''")  # its note style
         have = {r["name"] for r in conn.execute("PRAGMA table_info(meetings)")}
         for name, decl in _ADDED_COLUMNS.items():
             if name not in have:
@@ -277,9 +280,9 @@ _UPDATABLE = {
     "summary_error", "error", "has_system", "audio_deleted", "segments_json", "transcribed",
     "requested_provider", "requested_template", "title_auto", "draft_json", "exported_paths", "export_error",
     "bookmarks_json", "speaker_names_json", "qa_json", "keep_audio", "audio_dir", "live_json", "workspace_id", "workspace_auto",
-    "live_notes_json", "transcribed_with", "summary_model", "workspace_model", "tags_json", "tags_model", "imported_at",
+    "live_notes_json", "my_notes_json", "transcribed_with", "summary_model", "workspace_model", "tags_json", "tags_model", "imported_at",
 }
-_JSON_FIELDS = {"live_notes_json", "tags_json", "segments_json", "draft_json", "exported_paths", "bookmarks_json", "speaker_names_json", "qa_json"}
+_JSON_FIELDS = {"my_notes_json", "live_notes_json", "tags_json", "segments_json", "draft_json", "exported_paths", "bookmarks_json", "speaker_names_json", "qa_json"}
 
 
 def update_meeting(meeting_id: int, **fields) -> None:
@@ -427,7 +430,7 @@ def create_workspace(name: str, color: str = "", about: str = "") -> int:
 
 
 def update_workspace(workspace_id: int, **fields) -> None:
-    allowed = {k: v for k, v in fields.items() if k in ("name", "color", "about", "position") and v is not None}
+    allowed = {k: v for k, v in fields.items() if k in ("name", "color", "about", "position", "template") and v is not None}
     if not allowed:
         return
     with connect() as conn:
