@@ -4,7 +4,7 @@ the recording when it's alongside).
 
     {"format": "trailmix-meeting", "version": 1, "uid": …, "title": …, "created_at": …, "duration_sec": …,
      "speakers": {"You": "Mark", "Them": "Dana"}, "summary": "## Overview…", "tasks": [{"text", "done"}],
-     "bookmarks": [{"t", "note"}], "qa": […], "transcript": [{"start", "end", "speaker", "text"}],
+     "bookmarks": [{"t", "note"}], "my_notes": [{"t", "text"}], "qa": […], "transcript": [{"start", "end", "speaker", "text"}],
      "audio": {"recording": "Recording.ogg", "tracks": {"mic": "Tracks/You.ogg", "system": "Tracks/Them.ogg"}}}
 """
 import json
@@ -43,6 +43,7 @@ def record(m: dict, audio: dict | None) -> dict:
         "template": m.get("requested_template"),
         "tasks": [{"text": t["text"], "done": bool(t["done"])} for t in db.tasks_for(m["id"])],
         "bookmarks": meeting_text.bookmarks(m),
+        "my_notes": meeting_text.my_notes(m),
         "qa": json.loads(m["qa_json"]) if m.get("qa_json") else [],
         "transcript": meeting_text.segments(m),
         "audio": audio,
@@ -82,6 +83,7 @@ def restore(data: dict, folder: Path | None) -> int | None:
         summary_model=data.get("summary_model"), transcribed_with=data.get("transcribed_with"),
         tags_json=data.get("tags") or None, tags_model=data.get("tags_model"),
         speaker_names_json=data.get("speakers") or None, bookmarks_json=data.get("bookmarks") or None,
+        my_notes_json=data.get("my_notes") or None,
         qa_json=data.get("qa") or None, status="done" if data.get("summary") else "ready_summarize",
     )
     if data.get("workspace"):  # the same workspace here, made if it doesn't exist yet

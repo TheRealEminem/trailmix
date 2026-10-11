@@ -462,6 +462,9 @@ private struct SettingsPanel: View {
             SettingRow("Start / stop") { ShortcutField(shortcut: $prefs.toggleShortcut, model: model) }
             SettingRow("Mark moment") { ShortcutField(shortcut: $prefs.markShortcut, model: model) }
             SettingRow("Sounds") { Toggle("Sounds", isOn: $prefs.sounds).toggleStyle(.switch).controlSize(.mini) }
+            SettingRow("Call reminders") {
+                Toggle("Remind me to record calls", isOn: $prefs.callReminders).toggleStyle(.switch).controlSize(.mini)
+            }
             SettingRow("Open at login") {
                 Toggle("Open at login", isOn: Binding(get: { prefs.openAtLogin }, set: { prefs.openAtLogin = $0 }))
                     .toggleStyle(.switch)

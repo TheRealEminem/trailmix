@@ -31,6 +31,7 @@ import ModelsBanner from "./components/ModelsBanner";
 import UpdateBanner from "./components/UpdateBanner";
 import SetupCard from "./components/SetupCard";
 import StatsNotice from "./components/StatsNotice";
+import WhatsNew from "./components/WhatsNew";
 import Sidebar from "./components/Sidebar";
 import type { View } from "./components/Sidebar";
 import TasksView from "./components/TasksView";
@@ -807,6 +808,7 @@ export default function App() {
           ) : showRecorder ? (
             <>
               {!rec && !remote && <StatsNotice />}
+              {!rec && !remote && <WhatsNew health={health} />}
               {!rec && !remote && (
                 <SetupCard
                   health={health}

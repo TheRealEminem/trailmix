@@ -145,6 +145,10 @@ final class HelperModel: ObservableObject {
         if commands.contains("unskip-update") { Updater.shared.skipped = nil }
         if commands.contains("beta-updates") { Updater.shared.beta = true }
         if commands.contains("no-beta-updates") { Updater.shared.beta = false }
+        if commands.contains("lockdown") { UserDefaults.standard.set(true, forKey: "lockdown") }
+        if commands.contains("no-lockdown") { UserDefaults.standard.set(false, forKey: "lockdown") }
+        if commands.contains("call-reminders") { prefs.callReminders = true; prefs.mutedCallApps = [] }
+        if commands.contains("no-call-reminders") { prefs.callReminders = false; CallReminder.shared.hide() }
         if commands.contains("open-at-login") { prefs.openAtLogin = true }
         if commands.contains("no-open-at-login") { prefs.openAtLogin = false }
         if commands.contains("sound-check"), phase == .idle, !soundChecking {
@@ -193,6 +197,8 @@ final class HelperModel: ObservableObject {
             "shortcut_record": prefs.toggleShortcut.display,
             "shortcut_mark": prefs.markShortcut.display,
             "open_at_login": prefs.openAtLogin,
+            "call_reminders": prefs.callReminders,
+            "lockdown": UserDefaults.standard.bool(forKey: "lockdown"),
             "update": Updater.shared.report ?? NSNull(),
             "call_app": currentCallApp ?? NSNull(),
         ]

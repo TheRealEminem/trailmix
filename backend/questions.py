@@ -96,10 +96,43 @@ def learn(*words: str) -> None:
     settings.update({"vocabulary": vocab[-200:]})
 
 
+# Words in a workspace's description that are surely names: CamelCase (ColdCap), acronyms (CEPAC), mixed (iPhone)
+_DISTINCT = re.compile(r"\b(?:[A-Z][a-z]+(?:[A-Z][a-z0-9]+)+|[A-Z][A-Z0-9]*[A-Z][0-9]*s?|[a-z]+[A-Z][A-Za-z]*)\b")
+
+
+def seeded() -> list[str]:
+    """Spellings Trailmix knows without asking: your name, your workspaces' names and the distinctive names in
+    their descriptions, and the people you've named in meetings."""
+    import settings
+
+    out = [settings.get_all().get("your_name", "").strip()]
+    for w in db.list_workspaces():
+        out.append(w["name"].strip())
+        out += _DISTINCT.findall(w.get("about") or "")
+    with db.connect() as conn:
+        for (names,) in conn.execute("SELECT speaker_names_json FROM meetings WHERE speaker_names_json IS NOT NULL"):
+            try:
+                out += [v.strip() for k, v in json.loads(names).items() if isinstance(v, str) and v.strip() not in ("", k)]
+            except ValueError:
+                pass
+    return list(dict.fromkeys(w for w in out if w and len(w) <= 40))
+
+
+def known_terms() -> list[str]:
+    """Everything spelled right on record: what you confirmed or added, then what Trailmix seeded."""
+    seen, out = set(), []
+    for w in vocabulary() + seeded():
+        if w.lower() not in seen:
+            seen.add(w.lower())
+            out.append(w)
+    return out
+
+
 def vocabulary_prompt() -> str:
-    """For the speech model's first words and the notes AI: names and terms spelled the way you confirmed."""
-    vocab = vocabulary()
-    return ("Names and terms: " + ", ".join(vocab[-60:]) + ".") if vocab else ""
+    """For the speech model's first words and the notes AI: names and terms spelled the way you confirmed, plus
+    the ones Trailmix knows already (your name, workspaces, people)."""
+    terms = known_terms()
+    return ("Names and terms: " + ", ".join(terms[:60]) + ".") if terms else ""
 
 
 # ── Fixing a meeting ────────────────────────────────────────────────────
@@ -283,13 +316,14 @@ def ask_about(meeting_id: int, cfg: dict, pid: str | None = None) -> int:
     # Words the AI thinks were misheard.
     if asked < MAX_OPEN:
         vocab = vocabulary_prompt()
+        settled = {t.lower() for t in known_terms()}  # never suggest "fixing" a spelling you already have
         reply = _ask_ai(cfg, TERMS_PROMPT.format(notes=m["summary"][:5000], vocab=(vocab + "\n") if vocab else ""), pid)
         for line in reply.splitlines():
             found = re.match(r"^\s*[-*\d.)]*\s*[\"“]?(.+?)[\"”]?\s*(?:→|->|=>)\s*[\"“]?(.+?)[\"”]?\s*$", line)
             if not found:
                 continue
             written, meant = found.group(1).strip(), found.group(2).strip()
-            if (written.lower() == meant.lower() or len(written) > 40 or len(meant) > 40
+            if (written.lower() == meant.lower() or len(written) > 40 or len(meant) > 40 or written.lower() in settled
                     or not sounds_alike(written, meant)  # a mishearing sounds alike; otherwise it's a rewrite
                     or not re.search(rf"(?<!\w){re.escape(written)}(?!\w)", m["summary"] + (m.get("transcript") or ""))):
                 continue  # not actually in the meeting, or not a real change

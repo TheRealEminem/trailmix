@@ -200,7 +200,7 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
             minutes = (m["duration_sec"] or 0) / 60
             summary, used, title = llm_engine.summarize(
                 meeting_text.transcript_text(m, cfg), cfg, choice,
-                m["requested_template"] or cfg["summary_template"], meeting_text.moments(m, cfg),
+                _template(m, cfg), meeting_text.moments(m, cfg),
                 want_title=bool(cfg["auto_title"] and m["title_auto"]),
                 about=f"This meeting lasted {minutes:.0f} minutes. {meeting_text.speakers_note(m, cfg)} "
                       f"{questions.vocabulary_prompt().replace('Names and terms:', 'Names and terms that may come up, spelled correctly:')}".strip(),
@@ -208,6 +208,7 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
                 on_progress=lambda what: db.update_meeting(meeting_id, wait_reason=what),
                 on_draft=lambda text: _drafts.__setitem__(meeting_id, text),
                 early_notes=early,
+                mine=meeting_text.my_notes_lines(m),
             )
             db.update_meeting(meeting_id, summary=summary, summary_provider=used,
                               summary_model=llm_engine.model_for(used, cfg))
@@ -235,6 +236,12 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
             **stats, "minutes": int(round((m["duration_sec"] or 0) / 60 / 5) * 5),
             "source": "imported" if m.get("imported_at") else "recorded",
         }, cfg)
+
+
+def _template(m: dict, cfg: dict) -> str:
+    """The note style: the one picked for this summary, else its workspace's, else the default in Settings."""
+    space = db.get_workspace(m["workspace_id"]) if m.get("workspace_id") else None
+    return m["requested_template"] or (space or {}).get("template") or cfg["summary_template"]
 
 
 def _transcribe_local(m: dict) -> tuple[list[dict], bool, float]:

@@ -1,3 +1,4 @@
+import json
 import llm_engine
 import meeting_text
 import templates
@@ -167,3 +168,44 @@ def test_flagged_moments_come_from_the_real_flags_not_the_model():
     assert notes.index("## Overview") < notes.index("## Flagged Moments") < notes.index("## Action Items")
     assert "- [10:06] Them: Let's postpone the code amendment" in notes
     assert "Flagged Moments" not in llm_engine.place_moments(written, [])  # no flags, no section
+
+
+def test_your_own_notes_are_worked_in_and_their_links_kept(monkeypatch):
+    prompts = []
+
+    def fake_generate(pid, cfg, prompt, system=None, keep_alive=None, on_text=None):
+        prompts.append(prompt)
+        return "## Overview\nWe picked the venue.\n\n## Action Items\n- [ ] Mark: book it"
+
+    monkeypatch.setattr(llm_engine, "generate", fake_generate)
+    monkeypatch.setattr(llm_engine, "unload", lambda pid, cfg: None)
+    cfg = {"summary_provider": "ollama", "summary_fallback": "none", "custom_template": ""}
+    m = {"my_notes_json": json.dumps([{"t": 754, "text": "Venue deposit is $500, see https://example.com/venue."},
+                                      {"t": None, "text": "  "}])}
+    mine = meeting_text.my_notes_lines(m)
+    assert mine == ["[12:34] Venue deposit is $500, see https://example.com/venue."]
+    summary, _, _ = llm_engine.summarize("[00:01] You: Let's book the venue.", cfg, "auto", "general", [],
+                                         want_title=False, mine=mine)
+    assert "NOTES TYPED BY THE PERSON WHO RECORDED THE MEETING" in prompts[0] and "[12:34] Venue deposit is $500" in prompts[0]
+    # the model left the note out, so it's kept word for word (link included)
+    assert summary.endswith("## Your Notes\n- Venue deposit is $500, see https://example.com/venue.")
+
+
+def test_links_already_in_the_notes_are_not_repeated():
+    notes = "## Overview\nSee [the deck](https://example.com/deck)."
+    assert llm_engine.keep_mine(notes, ["deck: https://example.com/deck"]) == notes
+
+
+def test_notes_worked_in_are_not_repeated_but_missing_links_are_added():
+    notes = "## Discussion\n- Mark wants pilot pricing at $2,000 per month."
+    mine = ["[03:10] Pilot pricing: aim for $2,000/month. Deck: https://example.com/pilot-deck"]
+    assert llm_engine.keep_mine(notes, mine) == notes + "\n\n## Links\n- https://example.com/pilot-deck"
+
+
+def test_workspace_note_style_is_used_unless_one_was_picked(monkeypatch):
+    import pipeline
+    monkeypatch.setattr(pipeline.db, "get_workspace", lambda i: {"template": "minutes"})
+    cfg = {"summary_template": "general"}
+    assert pipeline._template({"workspace_id": 3, "requested_template": ""}, cfg) == "minutes"
+    assert pipeline._template({"workspace_id": 3, "requested_template": "sales"}, cfg) == "sales"
+    assert pipeline._template({"workspace_id": None, "requested_template": None}, cfg) == "general"

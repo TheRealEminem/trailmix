@@ -82,6 +82,21 @@ Hesitations, competitors mentioned, risks to the deal.
 ## Budget, Timeline & Decision Makers
 Whatever was said about money, dates, and who decides (write "Not discussed" if nothing).""",
     },
+    "minutes": {
+        "name": "Board or committee minutes",
+        "sections": """## Overview
+The body that met, what the meeting was for, and who chaired or attended, as far as the transcript says.
+
+## Agenda Items
+For each item discussed, a short ### heading, then what was presented, the main points raised, and where it landed.
+
+## Motions & Votes
+Each motion: who moved and seconded it (if said), what it proposed, and the result (carried, failed or tabled, with
+the vote count if given). Write "None" if there were no motions.
+
+## Decisions
+What the group agreed, one bullet each.""",
+    },
     "custom": {"name": "Custom (from Settings)", "sections": ""},
 }
 
@@ -133,9 +148,18 @@ what is in the transcript.
 
 
 def final_prompt(template_id: str, custom: str, material: str, from_notes: bool, moments: list[str],
-                 about: str, minutes: float) -> tuple[str, str]:
+                 about: str, minutes: float, mine: list[str] = ()) -> tuple[str, str]:
     """(system, prompt) for the meeting notes. The material comes first and the instructions after it,
-    so they're the last thing the model reads (and never the part a too-long prompt loses)."""
+    so they're the last thing the model reads (and never the part a too-long prompt loses). `mine`: the notes
+    you typed yourself, which the notes must work in."""
+    own, own_rule = "", ""
+    if mine:
+        own = ("\n\nNOTES TYPED BY THE PERSON WHO RECORDED THE MEETING (\"I\" is them; a [time] is when it was typed):\n"
+               + "\n".join(f"- {line}" for line in mine))
+        own_rule = ("\nThe typed notes are what the person recording most wanted remembered. Every one of them must "
+                    "appear in your notes: put each under the topic it belongs to as an ordinary bullet, keep its "
+                    "numbers, names and links exactly, and write it in the third person (\"Mark liked…\", not \"I "
+                    "liked…\"). Never say they came from typed notes, and never give a point a time it doesn't have.")
     flagged = ""
     if moments:
         # Only "cover them": the Flagged Moments section itself is written by Trailmix from the real flags
@@ -151,14 +175,14 @@ def final_prompt(template_id: str, custom: str, material: str, from_notes: bool,
     return FINAL_SYSTEM, f"""{about}
 
 {label}:
-{material}
+{material}{own}
 
 ---
 Write the notes for this meeting from {source}.{combine} {_shape(template_id, custom)}
 
 {ACTION_RULE}
 {_length(minutes)} Summarize in your own words; never copy transcript lines. Only use information from
-{source}. Do not invent names, dates, or facts.{flagged}
+{source}{" and the listener's own notes" if mine else ""}. Do not invent names, dates, or facts.{flagged}{own_rule}
 Start your reply directly with the first heading.
 """
 

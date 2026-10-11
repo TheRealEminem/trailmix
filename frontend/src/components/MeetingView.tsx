@@ -28,11 +28,12 @@ import { ContourBadge } from "./illustrations";
 import { WorkspacePicker } from "./Workspaces";
 import PipelineStatus from "./PipelineStatus";
 import Questions from "./Questions";
+import MyNotes from "./MyNotes";
 import Summary from "./Summary";
 import Transcript from "./Transcript";
 import { Segmented, Spinner, Switch } from "./ui";
 
-export type Tab = "summary" | "transcript" | "ask";
+export type Tab = "summary" | "transcript" | "notes" | "ask";
 
 interface Props {
   meeting: Meeting;
@@ -270,6 +271,11 @@ export default function MeetingView({
               label: "Transcript",
               icon: <LinesIcon size={16} />,
             },
+            {
+              id: "notes",
+              label: m.my_notes.length ? `Your notes · ${m.my_notes.length}` : "Your notes",
+              icon: <PencilIcon size={16} />,
+            },
             { id: "ask", label: "Ask", icon: <ChatIcon size={16} /> },
           ]}
         />
@@ -288,6 +294,15 @@ export default function MeetingView({
               onResummarize={(p, t) => on.onSummarize(p, t || undefined)}
               onToggleTask={on.onToggleTask}
             />
+          )}
+          {tab === "notes" && (
+            <div>
+              <p className="mb-4 text-hint leading-relaxed text-ink-soft">
+                What you typed during the meeting, each at the moment you typed it. The notes AI works these into the
+                summary and keeps every link. After changing them, press Regenerate under the summary.
+              </p>
+              <MyNotes meetingId={m.id} notes={m.my_notes} onChanged={on.onChanged} />
+            </div>
           )}
           {tab === "transcript" && (
             <Transcript

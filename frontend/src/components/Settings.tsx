@@ -57,6 +57,7 @@ import {
   Skeleton,
   Spinner,
   SwitchRow,
+  TemplateSelect,
   useConfirm,
 } from "./ui";
 
@@ -293,7 +294,9 @@ function WorkspacesSection({
   auto,
   onAuto,
   organize,
+  health,
 }: {
+  health: Health | null;
   workspaces: Workspace[];
   defaultCount: number;
   onChanged: () => void;
@@ -355,6 +358,15 @@ function WorkspacesSection({
               <span className="whitespace-nowrap text-hint text-ink-soft">
                 {w.meetings} meeting{w.meetings === 1 ? "" : "s"}
               </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-hint text-ink-soft">
+              <TemplateSelect
+                value={w.template}
+                onChange={(t) => void act(() => api.updateWorkspace(w.id, { template: t }))}
+                health={health}
+                className="w-56"
+              />
+              <span>note style for its meetings</span>
             </div>
             <TextField
               label={`What ${w.name} is about`}
@@ -517,8 +529,38 @@ function UpgradesSection({ organize, onChanged }: { organize: ReturnType<typeof 
 }
 
 /** Settings → Updates: which version this is, and checking for and installing a new one. */
+/** "Zoom call started. Record it?": the menu bar recorder's reminder, switched here (or in its menu). */
+function CallReminders({ native }: { native: NativeRecorder }) {
+  const [on, setOn] = useState<boolean | null>(null); // until the recorder reports the change
+  useEffect(() => {
+    if (on !== null && native.call_reminders === on) setOn(null);
+  }, [on, native.call_reminders]);
+  return (
+    <SwitchRow
+      icon={<MicIcon size={16} />}
+      label="Remind me to record calls"
+      hint="When Zoom, Teams, FaceTime, Slack or a browser call starts using your mic and Trailmix isn't recording, a small card asks whether to record. When a recorded call ends, it asks whether to stop. Turning this on again also asks about apps you'd said not to."
+      checked={on ?? !!native.call_reminders}
+      onChange={(v) => {
+        setOn(v);
+        void api.setCallReminders(v).catch(() => setOn(null));
+      }}
+    />
+  );
+}
+
 /** Settings → Privacy: the anonymous usage stats switch, and exactly what they contain. */
+const LOCKDOWN_COSTS = [
+  "Trailmix stops checking for updates by itself, so you won't hear about fixes unless you check in Settings → Updates.",
+  "Notes can only be written by AI on this computer (Ollama). Cloud AI like Claude, OpenAI or Gemini is blocked, and so is a transcription server elsewhere.",
+  "No new speech or AI models can be downloaded. The ones you have keep working.",
+  "The ranking of AI models stops updating, so “Better models” may suggest less.",
+  "Anonymous usage stats stop.",
+  "Problem reports can be copied, but not posted from Trailmix.",
+];
+
 function PrivacySection({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT>) => Promise<void> }) {
+  const [confirm, confirmDialog] = useConfirm();
   const [info, setInfo] = useState<StatsInfo | null>(null);
   const [show, setShow] = useState(false);
   const load = () => api.stats().then(setInfo).catch(() => setInfo(null));
@@ -531,8 +573,46 @@ function PrivacySection({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT
       blurb="Your meetings, notes and recordings stay on this Mac unless you send them somewhere yourself (a cloud AI you add, an export, a problem report)."
       delay={280}
     >
+      <SwitchRow
+        icon={<ShieldIcon size={16} />}
+        label="Lockdown mode"
+        hint={
+          s.lockdown ? (
+            <>
+              On: nothing leaves this computer unless you send it yourself. What that costs:
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {LOCKDOWN_COSTS.map((c) => (
+                  <li key={c}>{c}</li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            "For maximum privacy: nothing leaves this computer. No update checks, no usage stats, no downloads, and only AI that runs here."
+          )
+        }
+        checked={s.lockdown}
+        onChange={async (v) => {
+          if (v) {
+            const ok = await confirm({
+              title: "Turn on Lockdown mode?",
+              body: `Nothing will leave this computer unless you send it yourself. What you give up:\n\n${LOCKDOWN_COSTS.map((c) => `• ${c}`).join("\n")}\n\nYou can turn it off here at any time.`,
+              confirmLabel: "Turn on Lockdown mode",
+              tone: "primary",
+            });
+            if (!ok) return;
+          }
+          void save({ lockdown: v });
+        }}
+      />
       {info && !info.available ? (
         <p className="py-3.5 text-hint text-ink-soft">This copy of Trailmix doesn't send usage stats.</p>
+      ) : s.lockdown ? (
+        <p className="py-3.5 text-hint text-ink-soft">
+          Usage stats are off while Lockdown mode is on.{" "}
+          <a className="text-forest underline decoration-forest/30 underline-offset-2" href={PRIVACY_POLICY} target="_blank" rel="noreferrer">
+            Privacy policy
+          </a>
+        </p>
       ) : (
         <>
           <SwitchRow
@@ -575,6 +655,7 @@ function PrivacySection({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT
           </Collapse>
         </>
       )}
+      {confirmDialog}
     </Section>
   );
 }
@@ -627,6 +708,7 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
   else if (u.state === "offline")
     status = "Couldn't reach GitHub to check. Are you online?";
   else if (u.state === "up-to-date") status = "You're up to date.";
+  else if (u.lockdown) status = "Lockdown mode is on: Trailmix only checks when you press Check for updates.";
   else status = "Trailmix checks for updates a few times a day.";
 
   return (
@@ -1015,6 +1097,73 @@ const PROVIDER_IDS: ProviderId[] = [
   "custom",
 ];
 
+/**
+ * Names and terms the speech model and notes AI spell your way: the ones you added or confirmed (removable),
+ * a box to add more, and the ones Trailmix knows already from your name, workspaces and people.
+ */
+function Vocabulary({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT>) => Promise<void> }) {
+  const [seeded, setSeeded] = useState<string[]>([]);
+  const [draft, setDraft] = useState("");
+  useEffect(() => {
+    api
+      .vocabulary()
+      .then((v) => setSeeded(v.seeded))
+      .catch(() => setSeeded([]));
+  }, [s.vocabulary, s.your_name]);
+  const add = () => {
+    const words = draft
+      .split(",")
+      .map((w) => w.trim())
+      .filter((w) => w && !s.vocabulary.some((v) => v.toLowerCase() === w.toLowerCase()));
+    if (words.length) void save({ vocabulary: [...s.vocabulary, ...words] });
+    setDraft("");
+  };
+  return (
+    <div className="py-3.5" data-private="your vocabulary">
+      <div className="text-label font-medium">Names and terms</div>
+      <p className="mt-0.5 text-hint text-ink-soft">
+        The speech model and the notes AI spell these your way, and Trailmix never asks to “correct” them. Add product
+        names, people and jargon it gets wrong.
+      </p>
+      {s.vocabulary.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {s.vocabulary.map((w) => (
+            <span key={w} className="chip h-6 gap-1 bg-forest/[.07] pr-1 text-ink">
+              {w}
+              <button
+                className="rounded-full p-0.5 text-ink-faint hover:text-trail-deep"
+                aria-label={`Forget ${w}`}
+                onClick={() => save({ vocabulary: s.vocabulary.filter((x) => x !== w) })}
+              >
+                <CloseIcon size={12} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="mt-2 flex gap-2">
+        <input
+          className="field h-8 w-full max-w-xs px-2.5 text-label"
+          placeholder="e.g. ColdCap, Priya Nair, B2G"
+          value={draft}
+          spellCheck={false}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && add()}
+          aria-label="Add names or terms"
+        />
+        <button className="btn btn-sm btn-soft" onClick={add} disabled={!draft.trim()}>
+          Add
+        </button>
+      </div>
+      {seeded.length > 0 && (
+        <p className="mt-2 text-hint text-ink-soft">
+          Also known from your name, workspaces and the people you've named: {seeded.join(", ")}.
+        </p>
+      )}
+    </div>
+  );
+}
+
 const LIVE_NOTES_OPTIONS: { id: SettingsT["live_notes"]; label: string }[] = [
   { id: "auto", label: "Automatic" },
   { id: "on", label: "On" },
@@ -1259,6 +1408,7 @@ export default function Settings({
       </Section>
 
       <WorkspacesSection
+        health={health}
         workspaces={workspaces}
         defaultCount={defaultCount}
         onChanged={onWorkspacesChanged}
@@ -1296,28 +1446,7 @@ export default function Settings({
           checked={s.ask_questions}
           onChange={(v) => save({ ask_questions: v })}
         />
-        {s.vocabulary.length > 0 && (
-          <div className="py-3.5" data-private="your vocabulary">
-            <div className="text-label font-medium">Names and terms Trailmix knows</div>
-            <p className="mt-0.5 text-hint text-ink-soft">
-              From your answers. The speech model and the notes AI spell these the way you confirmed.
-            </p>
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {s.vocabulary.map((w) => (
-                <span key={w} className="chip h-6 gap-1 bg-forest/[.07] pr-1 text-ink">
-                  {w}
-                  <button
-                    className="rounded-full p-0.5 text-ink-faint hover:text-trail-deep"
-                    aria-label={`Forget ${w}`}
-                    onClick={() => save({ vocabulary: s.vocabulary.filter((x) => x !== w) })}
-                  >
-                    <CloseIcon size={12} />
-                  </button>
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
+        <Vocabulary s={s} save={save} />
         <SwitchRow
           icon={<PencilIcon size={16} />}
           label="Auto-title meetings"
@@ -1682,6 +1811,9 @@ export default function Settings({
         blurb="Trailmix keeps running in the background until you quit it."
         delay={280}
       >
+        {native?.available && native.call_reminders !== undefined && (
+          <CallReminders native={native} />
+        )}
         {health?.auth ? (
           <Row
             label="Sign out"

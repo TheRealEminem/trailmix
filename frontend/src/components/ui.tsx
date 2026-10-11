@@ -664,7 +664,7 @@ export function useConfirm(): [(o: ConfirmOptions) => Promise<boolean>, ReactNod
         <h2 id="confirm-title" className="text-lead font-semibold tracking-[-0.01em]">
           {state.title}
         </h2>
-        <p id="confirm-body" className="mt-1.5 text-label leading-relaxed text-ink-soft">
+        <p id="confirm-body" className="mt-1.5 whitespace-pre-line text-label leading-relaxed text-ink-soft">
           {state.body}
         </p>
         <div className="mt-6 flex justify-end gap-2">
@@ -679,7 +679,7 @@ export function useConfirm(): [(o: ConfirmOptions) => Promise<boolean>, ReactNod
     </div>
   );
 
-  return [confirm, dialog];
+  return [confirm, dialog ? createPortal(dialog, document.body) : null]; // above everything, wherever it's used
 }
 
 // ── Toast ──────────────────────────────────────────────────────────────

@@ -56,6 +56,9 @@ DEFAULTS = {
     "transcribe_live_model": "",        # empty = same as transcribe_model
     "live_final": _ROOMY,               # transcribe with the accurate model while recording (see live.py)
     "live_notes": "auto",               # notes written during the meeting: auto | on | off (live_notes.py)
+    "whats_new_seen": "",               # the version whose "What's new" you last closed
+    # Lockdown mode: nothing leaves this computer (see locked() and the places that check it)
+    "lockdown": False,
     # Anonymous usage stats (telemetry.py): on by default, sent only once you've seen the choice
     "share_stats": True,
     "stats_notice_seen": False,
@@ -152,3 +155,18 @@ def update(changes: dict) -> dict:
                 (key, json.dumps(value.strip() if key in SECRETS else value)),
             )
     return public()
+
+
+LOCKDOWN = "Lockdown mode is on (Settings → Privacy)"
+
+
+def locked(cfg: dict | None = None) -> bool:
+    """Lockdown mode: nothing leaves this computer. No usage stats, no automatic update checks, no model
+    downloads or ranking updates, and only AI and transcription that run on this computer."""
+    return bool((cfg or get_all()).get("lockdown"))
+
+
+def on_this_computer(url: str) -> bool:
+    from urllib.parse import urlparse
+
+    return (urlparse(url or "").hostname or "") in ("localhost", "127.0.0.1", "::1")
