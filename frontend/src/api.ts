@@ -114,6 +114,58 @@ export interface DraftLine {
   channel?: number;
 }
 
+/** One transcript of a meeting: the one in use, or another engine's attempt kept to compare. */
+export interface TranscriptVersion {
+  id: number;
+  created_at: string;
+  engine: string | null;
+  model: string | null;
+  made_with: string | null;
+  /** recording: made when the meeting was processed; upgrade: made later to compare; original: from before versions */
+  source: "recording" | "upgrade" | "original";
+  applied: boolean;
+  seconds: number | null;
+  duration_sec: number | null;
+  note: string | null;
+  words: number;
+  lines: number;
+  speakers: string[];
+}
+
+export type TranscribeEngine = "local" | "remote" | "gemini";
+
+/** Another engine or model being tried on a meeting's saved audio. */
+export interface Trial {
+  engine: TranscribeEngine;
+  model: string | null;
+  state: "queued" | "running" | "done" | "failed";
+  detail: string | null;
+  version_id: number | null;
+  error: string | null;
+}
+
+export interface Comparison {
+  a: TranscriptVersion;
+  b: TranscriptVersion;
+  /** the share of words that match (1 = identical) */
+  agreement: number;
+  a_words: number;
+  b_words: number;
+  matched: number;
+  changes: { op: "replace" | "delete" | "insert"; a: string; b: string; at: number }[];
+  /** both transcripts as one stream: "delete" is only in A, "insert" only in B */
+  inline: { op: "equal" | "delete" | "insert" | "skip"; text: string }[];
+}
+
+export interface HistoryEntry {
+  id: number;
+  at: string;
+  field: string;
+  old_value: string | null;
+  new_value: string | null;
+  why: string | null;
+}
+
 export interface Bookmark {
   t: number;
   note: string;
@@ -578,6 +630,15 @@ export const api = {
     request<Bookmark[]>(`/meetings/${id}/bookmarks`, json("PUT", { bookmarks })),
   confirm: (id: number) => request<{ ok: true }>(`/meetings/${id}/confirm`, json("POST")),
   retry: (id: number) => request<{ ok: true }>(`/meetings/${id}/retry`, json("POST")),
+  versions: (id: number) =>
+    request<{ versions: TranscriptVersion[]; trial: Trial | null }>(`/meetings/${id}/versions`),
+  startTrial: (id: number, body: { engine: TranscribeEngine; model?: string; apply?: boolean; summarize?: boolean }) =>
+    request<Trial>(`/meetings/${id}/trial`, json("POST", body)),
+  applyVersion: (id: number, versionId: number, summarize = false) =>
+    request<{ ok: true }>(`/meetings/${id}/versions/${versionId}/apply`, json("POST", { summarize })),
+  compareVersions: (id: number, a: number, b: number) =>
+    request<Comparison>(`/meetings/${id}/compare?a=${a}&b=${b}`),
+  history: (id: number) => request<HistoryEntry[]>(`/meetings/${id}/history`),
   /** engine: use this one just this time (Settings' engine otherwise) */
   retranscribe: (id: number, engine?: "local" | "remote" | "gemini") =>
     request<{ ok: true }>(`/meetings/${id}/retranscribe`, json("POST", engine ? { engine } : undefined)),
