@@ -40,7 +40,7 @@ DEFAULTS = {
     "anthropic_api_key": "",
     "openai_model": "gpt-5-mini",
     "openai_api_key": "",
-    "gemini_model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+    "gemini_model": os.getenv("GEMINI_MODEL", "gemini-flash-latest"),   # (gemini-2.5-flash is closed to new accounts)
     "gemini_api_key": "",
     "deepseek_model": "deepseek-chat",
     "deepseek_api_key": "",
@@ -55,6 +55,7 @@ DEFAULTS = {
     "transcribe_model": "whisper-1",
     "transcribe_live_model": "",        # empty = same as transcribe_model
     "gemini_transcribe_model": "gemini-3.5-transcribe",   # the Google model for transcripts made after a recording
+    "gemini_mix_tracks": True,          # send your mic and the call mixed as one recording: half the cost (mixdown.py)
     "live_final": _ROOMY,               # transcribe with the accurate model while recording (see live.py)
     "live_notes": "auto",               # notes written during the meeting: auto | on | off (live_notes.py)
     "whats_new_seen": "",               # the version whose "What's new" you last closed

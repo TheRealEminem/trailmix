@@ -18,6 +18,28 @@ PER_MINUTE = [
 ]
 
 
+# Text models, dollars per million tokens (input, output), as of AS_OF. Thinking tokens count as output. The Batch API
+# charges half. "latest" names follow whichever model Google points them at today.
+TEXT_MODELS = [
+    ("gemini-flash-lite-latest", (0.30, 2.50)),
+    ("gemini-flash-latest", (0.75, 3.75)),
+    ("gemini-3.8-flash*", (0.75, 3.75)),
+    ("gemini-3.6-flash*", (0.75, 3.75)),
+    ("gemini-3.5-flash-lite*", (0.30, 2.50)),
+    ("gemini-3.1-flash-lite*", (0.25, 1.50)),
+]
+BATCH_DISCOUNT = 0.5
+
+
+def text_cost(model: str, tokens_in: int, tokens_out: int, batch: bool = False) -> float | None:
+    """Dollars for this many tokens in and out (thinking included in out), or None for a model whose price isn't known."""
+    name = model.lower().removeprefix("models/")
+    for pattern, (pin, pout) in TEXT_MODELS:
+        if fnmatch.fnmatch(name, pattern):
+            return round((tokens_in * pin + tokens_out * pout) / 1e6 * (BATCH_DISCOUNT if batch else 1), 5)
+    return None
+
+
 def per_minute(engine: str, model: str | None) -> float | None:
     """Dollars per minute of audio, or None if the price isn't known (a self-hosted endpoint, a new model)."""
     if engine == "local":
@@ -29,9 +51,10 @@ def per_minute(engine: str, model: str | None) -> float | None:
     return None
 
 
-def meeting_minutes(duration_sec: float | None, has_system: bool) -> float:
-    """Minutes of audio a meeting would send: each recorded track counts. (An upper bound: a silent track isn't sent.)"""
-    return (duration_sec or 0) / 60 * (2 if has_system else 1)
+def meeting_minutes(duration_sec: float | None, has_system: bool, mixed: bool = False) -> float:
+    """Minutes of audio a meeting would send: each recorded track counts, unless they're mixed into one. (An upper
+    bound: a silent track isn't sent.)"""
+    return (duration_sec or 0) / 60 * (2 if has_system and not mixed else 1)
 
 
 def cost(minutes: float, engine: str, model: str | None) -> float | None:

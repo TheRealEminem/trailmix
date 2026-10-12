@@ -58,6 +58,8 @@ export interface Upgrades {
   notes: { count: number; from: Record<string, number> };
   tags: { count: number; from: Record<string, number> };
   sorting: { count: number; from: Record<string, number> };
+  /** The same notes, rewritten by Gemini as a half-price batch job (needs a Google key; off in Lockdown). */
+  notes_batch: { ready: boolean; model: string; score: number | null; count: number; from: Record<string, number> };
   /** Transcripts a speech engine you have now would do better, where the audio is still kept. */
   transcripts: {
     best: { engine: TranscribeEngine; model: string; score: number | null } | null;
@@ -175,6 +177,35 @@ export interface Comparison {
   inline: { op: "equal" | "delete" | "insert" | "skip"; text: string }[];
 }
 
+/** What a batch of notes would cost, before anything is sent. */
+export interface NotesBatchEstimate {
+  meetings: number;
+  tokens_in: number;
+  /** US dollars at the half-price batch rate, about */
+  cost: number | null;
+  /** the same at the normal price, for comparison */
+  standard_cost: number | null;
+  model: string;
+  as_of: string;
+  skipped: { id: number; why: string }[];
+  limit: number;
+}
+
+/** Work sent to Google's Batch API: answers come back later and are put in the meetings by themselves. */
+export interface BatchJob {
+  id: number;
+  kind: "notes";
+  model: string;
+  state: "pending" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
+  created_at: string;
+  finished_at: string | null;
+  meetings: number;
+  applied: boolean;
+  est_cost: number | null;
+  error: string | null;
+  result: { applied: number; failed: number; skipped: Record<string, number>; cost: number } | null;
+}
+
 /** What redoing some transcripts would send and cost, before anything is spent. */
 export interface TrialEstimate {
   meetings: { id: number; title: string; minutes: number; cost: number | null }[];
@@ -266,6 +297,9 @@ export interface Settings {
   transcribe_api_key: string;
   transcribe_model: string;
   transcribe_live_model: string;
+  /** Gemini: send the mic and the call mixed into one recording (half the cost) */
+  gemini_mix_tracks: boolean;
+  gemini_transcribe_model: string;
   live_final: boolean;
   /** Notes written during the meeting (see LiveNotesPlan) */
   live_notes: "auto" | "on" | "off";
@@ -607,14 +641,26 @@ export const api = {
   /** What starting these would cost, without starting anything. */
   estimateTrials: (body: { engine: TranscribeEngine; model?: string; scope: "better" | "all"; limit: number }) =>
     request<TrialEstimate>("/transcript-trials", json("POST", { ...body, dry_run: true })),
-  trialEstimate: (id: number, engine: TranscribeEngine, model?: string) =>
+  trialEstimate: (id: number, engine: TranscribeEngine, model?: string, mixTracks?: boolean) =>
     request<TrialEstimate>(
-      `/meetings/${id}/trial/estimate?engine=${engine}${model ? `&model=${encodeURIComponent(model)}` : ""}`,
+      `/meetings/${id}/trial/estimate?engine=${engine}${model ? `&model=${encodeURIComponent(model)}` : ""}${
+        mixTracks === undefined ? "" : `&mix_tracks=${mixTracks}`
+      }`,
     ),
   usage: (days = 30) => request<Usage>(`/usage?days=${days}`),
   trials: () =>
     request<{ trials: TrialRow[]; counts: Record<string, number> }>("/transcript-trials"),
   cancelTrials: () => request<{ cancelled: number }>("/transcript-trials", json("DELETE")),
+  estimateNotesBatch: (limit: number) =>
+    request<NotesBatchEstimate>("/upgrades/notes/batch", json("POST", { limit, dry_run: true })),
+  startNotesBatch: (limit: number) =>
+    request<{ jobs: number[]; submitted: number; skipped: { id: number; why: string }[]; cost: number }>(
+      "/upgrades/notes/batch",
+      json("POST", { limit }),
+    ),
+  batches: () => request<BatchJob[]>("/batches"),
+  checkBatches: () => request<{ changed: number; jobs: BatchJob[] }>("/batches/check", json("POST")),
+  cancelBatch: (id: number) => request<{ ok: true }>(`/batches/${id}/cancel`, json("POST")),
   upgradeNotes: () => request<{ queued: number }>("/upgrades/notes", json("POST")),
   retitle: (id: number) => request<{ title: string }>(`/meetings/${id}/retitle`, json("POST")),
   device: () => request<DeviceAdvice>("/device"),
@@ -693,7 +739,10 @@ export const api = {
   retry: (id: number) => request<{ ok: true }>(`/meetings/${id}/retry`, json("POST")),
   versions: (id: number) =>
     request<{ versions: TranscriptVersion[]; trial: Trial | null }>(`/meetings/${id}/versions`),
-  startTrial: (id: number, body: { engine: TranscribeEngine; model?: string; apply?: boolean; summarize?: boolean }) =>
+  startTrial: (
+    id: number,
+    body: { engine: TranscribeEngine; model?: string; apply?: boolean; summarize?: boolean; mix_tracks?: boolean },
+  ) =>
     request<Trial>(`/meetings/${id}/trial`, json("POST", body)),
   applyVersion: (id: number, versionId: number, summarize = false) =>
     request<{ ok: true }>(`/meetings/${id}/versions/${versionId}/apply`, json("POST", { summarize })),

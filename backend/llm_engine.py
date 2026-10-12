@@ -661,6 +661,27 @@ def summarize(transcript: str, cfg: dict, choice: str, template: str, moments: l
     return summary, used, title
 
 
+def single_request(pid: str, cfg: dict, inputs: dict) -> tuple[str, str] | None:
+    """(system, prompt) that asks for the finished notes in one request, or None if the transcript is too long for
+    this provider to read in one go (those are summarized in parts, which can't be sent as a single batch job)."""
+    if len(inputs["transcript"]) > context_chars(pid, cfg):
+        return None
+    return templates.final_prompt(inputs["template"], cfg["custom_template"], inputs["transcript"], False,
+                                  inputs["moments"], inputs["about"], inputs["minutes"], inputs["mine"])
+
+
+def finish_single(raw: str, pid: str, cfg: dict, inputs: dict) -> str:
+    """The notes from the AI's answer to single_request(), finished as summarize() finishes them: tidied, the Action
+    Items section asked for if the model forgot it, flagged moments and your own notes put in."""
+    summary = tidy(raw)
+    if not _ACTION_HEADING.search(summary):
+        system, prompt = templates.actions_prompt(inputs["transcript"], False, inputs["about"])
+        actions = tidy(generate(pid, cfg, prompt, system=system))
+        summary += "\n\n" + (actions if _ACTION_HEADING.search(actions) else "## Action Items\n- None")
+    summary = place_moments(summary, inputs["moments"])
+    return keep_mine(summary, inputs["mine"])
+
+
 ASK_SYSTEM = """You answer questions about the user's own meetings, using only the material provided.
 Be direct and concise. If the material doesn't contain the answer, say so plainly instead of guessing.
 When you rely on a specific moment, cite its timestamp like [12:34]. {extra}"""
