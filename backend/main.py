@@ -47,6 +47,7 @@ import settings
 import telemetry
 import templates
 import model_ranks
+import pricing
 import workspaces
 import file_import
 import feedback
@@ -1430,12 +1431,45 @@ def upgrades():
     return data
 
 
+def _estimate(meetings: list[dict], engine: str, model: str | None, cfg: dict) -> dict:
+    """What redoing these meetings' transcripts would send and cost: {meetings: [{id, title, minutes, cost}],
+    minutes, cost (None if the price isn't known), per_minute, as_of}. An upper bound: a silent track isn't sent."""
+    model = model or (cfg["gemini_transcribe_model"] if engine == "gemini" else cfg["transcribe_model"] if engine == "remote" else None)
+    rows = []
+    for m in meetings:
+        minutes = pricing.meeting_minutes(m["duration_sec"], bool(m["has_system"]))
+        rows.append({"id": m["id"], "title": m["title"], "minutes": round(minutes, 1),
+                     "cost": pricing.cost(minutes, engine, model)})
+    known = all(r["cost"] is not None for r in rows)
+    return {"meetings": rows, "minutes": round(sum(r["minutes"] for r in rows), 1),
+            "cost": round(sum(r["cost"] for r in rows), 4) if known else None,
+            "per_minute": pricing.per_minute(engine, model), "model": model, "as_of": pricing.AS_OF}
+
+
+@app.get("/api/meetings/{meeting_id}/trial/estimate")
+def trial_estimate(meeting_id: int, engine: str, model: str | None = None):
+    """What transcribing this meeting's audio again with this engine would cost, roughly."""
+    m = _get_or_404(meeting_id)
+    return _estimate([m], engine, model, settings.get_all())
+
+
+@app.get("/api/usage")
+def usage(days: int = 30):
+    """What the paid speech engines were asked to do in the last `days` days, and about what it cost."""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%fZ")
+    rows = db.usage_since(since)
+    return {"days": days, "rows": rows, "cost": round(sum(r["cost"] or 0 for r in rows), 4),
+            "unpriced": sum(r["unpriced"] for r in rows), "as_of": pricing.AS_OF}
+
+
 class TrialsRequest(BaseModel):
     engine: str
     model: str | None = None
     meeting_ids: list[int] | None = None   # None: see scope
     scope: str = "better"                  # "better": the meetings this engine would transcribe better than the one that did;
                                            # "all": every meeting whose audio is still kept (to compare engines)
+    limit: int = 3                         # at most this many meetings (newest first): spend a little at a time
+    dry_run: bool = False                  # only say which meetings, how much audio, and about what it would cost
     apply: bool = False                    # use each result when it's made (otherwise they're kept to compare)
     summarize: bool = False                # with apply: write each meeting's notes again from the new transcript
 
@@ -1457,16 +1491,21 @@ def start_trials(body: TrialsRequest):
                 "AND audio_dir IS NOT NULL ORDER BY id DESC").fetchall()]
     else:
         ids = _transcripts_upgradable(cfg)["ids"]
-    queued = []
+    eligible = []
     for meeting_id in ids:
         m = db.get_meeting(meeting_id)
         busy = pipeline.trial_status(meeting_id)
         if (not m or not m["transcript"] or m["audio_deleted"] or not store.audio_bytes(m)
                 or m["status"] not in ("done", "error", "ready_summarize") or (busy and busy["state"] in ("queued", "running"))):
             continue
-        pipeline.enqueue_trial(meeting_id, body.engine, body.model, apply=body.apply, summarize=body.summarize)
-        queued.append(meeting_id)
-    return {"queued": len(queued), "skipped": len(ids) - len(queued)}
+        eligible.append(m)
+    eligible = sorted(eligible, key=lambda m: m["created_at"], reverse=True)[:max(1, body.limit)]
+    estimate = _estimate(eligible, body.engine, model, cfg)
+    if body.dry_run:
+        return {**estimate, "available": len(ids), "limit": body.limit}
+    for m in eligible:
+        pipeline.enqueue_trial(m["id"], body.engine, body.model, apply=body.apply, summarize=body.summarize)
+    return {"queued": len(eligible), "skipped": len(ids) - len(eligible), **estimate}
 
 
 @app.get("/api/transcript-trials")

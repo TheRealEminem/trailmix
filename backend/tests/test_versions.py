@@ -228,7 +228,7 @@ def test_bulk_trials_queue_only_meetings_with_audio_and_can_be_cancelled(client,
     monkeypatch.setattr(pipeline, "_executor", type("X", (), {"submit": lambda self, *args: started.append(args)})())
     pipeline._trials.clear()
     r = client.post("/api/transcript-trials", json={"engine": "gemini", "meeting_ids": [a, b]}).json()
-    assert r == {"queued": 1, "skipped": 1} and len(started) == 1
+    assert (r["queued"], r["skipped"]) == (1, 1) and len(started) == 1
     assert client.get("/api/transcript-trials").json()["counts"] == {"queued": 1}
     assert client.delete("/api/transcript-trials").json() == {"cancelled": 1}
     pipeline._run_trial(a, "gemini", None, False, False)  # a cancelled one does nothing when its turn comes
@@ -270,3 +270,76 @@ def test_the_pipeline_uses_the_engine_the_recording_asked_for(fresh_db, monkeypa
     pipeline._run_stages(mid, frozenset(), frozenset())
     assert seen["engine"] == "gemini"
     assert db.get_meeting(mid)["transcribed_with"].startswith("gemini-3.5-transcribe")
+
+
+# ── spending a little at a time ──
+
+def test_prices_per_minute_of_audio():
+    import pricing
+
+    assert pricing.per_minute("gemini", "gemini-3.5-transcribe") == 0.005
+    assert pricing.per_minute("gemini", "models/gemini-3.5-transcribe-live") == 0.009
+    assert pricing.per_minute("local", "whisper-large-v3-turbo") == 0.0
+    assert pricing.per_minute("remote", "some-self-hosted-model") is None
+    assert pricing.meeting_minutes(1800, True) == 60 and pricing.meeting_minutes(1800, False) == 30
+    assert pricing.cost(60, "gemini", "gemini-3.5-transcribe") == 0.3
+
+
+def _meetings_with_audio(fresh_db, n):
+    ids = []
+    for i in range(n):
+        mid = meeting_with_transcript()
+        db.update_meeting(mid, audio_dir=str(fresh_db / "audio"), duration_sec=1800, has_system=1,
+                          created_at=f"2026-10-{10 + i:02d}T10:00:00.000Z")
+        ids.append(mid)
+    return ids
+
+
+def test_bulk_trials_default_to_three_newest_and_estimate_the_cost_first(client, fresh_db, monkeypatch):
+    ids = _meetings_with_audio(fresh_db, 5)
+    monkeypatch.setattr(main.settings, "get_all", lambda: {**main.settings.DEFAULTS, "gemini_api_key": "k", "lockdown": False})
+    monkeypatch.setattr(main.store, "audio_bytes", lambda m: 100)
+    started = []
+    monkeypatch.setattr(pipeline, "_executor", type("X", (), {"submit": lambda self, *args: started.append(args)})())
+    pipeline._trials.clear()
+    dry = client.post("/api/transcript-trials", json={"engine": "gemini", "scope": "all", "dry_run": True}).json()
+    assert [r["id"] for r in dry["meetings"]] == [ids[4], ids[3], ids[2]]     # newest first, three
+    assert dry["available"] == 5 and dry["minutes"] == 180.0                     # 3 x 30 min x 2 tracks
+    assert dry["cost"] == 0.9 and dry["per_minute"] == 0.005
+    assert started == [] and pipeline._trials == {}                              # a dry run spends nothing
+    real = client.post("/api/transcript-trials", json={"engine": "gemini", "scope": "all", "limit": 1}).json()
+    assert real["queued"] == 1 and real["cost"] == 0.3 and len(started) == 1
+
+
+def test_a_free_engine_estimates_to_zero_and_an_unknown_price_to_none(client, fresh_db, monkeypatch):
+    _meetings_with_audio(fresh_db, 1)
+    monkeypatch.setattr(main.settings, "get_all", lambda: {**main.settings.DEFAULTS, "transcribe_url": "http://box:8770/v1",
+                                                          "transcribe_model": "my-model", "lockdown": False})
+    monkeypatch.setattr(main.store, "audio_bytes", lambda m: 100)
+    pipeline._trials.clear()
+    unknown = client.post("/api/transcript-trials", json={"engine": "remote", "scope": "all", "dry_run": True}).json()
+    assert unknown["cost"] is None and unknown["minutes"] == 60.0
+
+
+def test_usage_is_tallied_by_engine_and_summed(client, fresh_db):
+    db.log_usage(1, "transcript", "gemini", "gemini-3.5-transcribe", 3600, 0.3)
+    db.log_usage(1, "live captions", "gemini", "gemini-3.5-transcribe-live", 1800, 0.27)
+    db.log_usage(2, "transcript", "remote", "weird", 600, None)
+    u = client.get("/api/usage").json()
+    assert u["cost"] == 0.57 and u["unpriced"] == 1
+    assert {(r["kind"], r["engine"]) for r in u["rows"]} == {("transcript", "gemini"), ("live captions", "gemini"), ("transcript", "remote")}
+    assert client.get("/api/usage", params={"days": 0}).json()["rows"] == []
+
+
+def test_a_gemini_transcript_is_logged_with_its_estimated_cost(fresh_db, monkeypatch):
+    import numpy as np
+
+    mid = meeting_with_transcript()
+    db.update_meeting(mid, audio_dir=str(fresh_db / "audio"))
+    audio = (np.ones(16000 * 60, dtype=np.float32) * 0.2)
+    monkeypatch.setattr(pipeline.store, "load_track", lambda folder, name: audio if name == "system" else None)
+    monkeypatch.setattr(pipeline.transcribe_gemini, "transcribe", lambda *a, **k: [
+        {"start": 0, "end": 1, "speaker": "Speaker 1", "text": "hello"}])
+    pipeline._transcribe_gemini(db.get_meeting(mid), {**pipeline.settings.DEFAULTS, "gemini_api_key": "k"})
+    row = db.usage_since("2000-01-01")[0]
+    assert (row["engine"], row["seconds"], row["cost"]) == ("gemini", 60.0, 0.005)

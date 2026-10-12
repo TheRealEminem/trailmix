@@ -34,6 +34,7 @@ import llm_engine
 import meeting_text
 import mlx_engine
 import models
+import pricing
 import resources
 import settings
 import telemetry
@@ -372,6 +373,9 @@ def _transcribe_remote(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
             off = a / store.SAMPLE_RATE
             segs += [{**s, "start": s["start"] + off, "end": s["end"] + off} for s in found]
             _progress(m["id"], f"Transcribing {name} track: {i + 1}/{len(regions)}")
+        sent = sum(b - a for a, b in regions) / store.SAMPLE_RATE  # only the speech is uploaded
+        db.log_usage(m["id"], "transcript", "remote", cfg["transcribe_model"], sent,
+                     pricing.cost(sent / 60, "remote", cfg["transcribe_model"]))
         per_track[name] = segs
     return _label(per_track, list(tracks)), "system" in tracks and "mic" in tracks, duration
 
@@ -397,6 +401,9 @@ def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
                     m["id"], f"Transcribing {name} track: {i}/{n}" if n > 1 else f"Transcribing {name} track"))
         except transcribe_gemini.GeminiError as e:
             raise RuntimeError(str(e)) from e
+        seconds = len(audio) / store.SAMPLE_RATE
+        model = cfg["gemini_transcribe_model"]
+        db.log_usage(m["id"], "transcript", "gemini", model, seconds, pricing.cost(seconds / 60, "gemini", model))
     return _label(per_track, list(tracks), diarized=True), both, duration
 
 
