@@ -9,6 +9,7 @@ model), and kept per track. When you stop, only the last few seconds are left to
 transcript and summary follow straight away. If anything was missed (a chunk failed, the model wasn't
 downloaded yet), the pipeline falls back to transcribing the whole recording afterwards.
 """
+import asyncio
 import json
 import threading
 import time
@@ -16,13 +17,12 @@ from difflib import SequenceMatcher
 
 import numpy as np
 
-import asyncio
-
 import audio_store as store
 import database as db
 import live_gemini
 import mlx_engine
 import models
+import pricing
 import questions
 import transcribe_remote
 import vad
@@ -238,6 +238,10 @@ class LiveSession:
     async def stop_gemini(self) -> None:
         """After the last audio: gives Google a moment to send the last words, then hangs up."""
         await asyncio.gather(*(c.stop() for c in self._channels.values()), return_exceptions=True)
+        seconds = sum(c.sent_samples for c in self._channels.values()) / SR
+        if seconds:
+            db.log_usage(self.meeting_id, "live captions", "gemini", live_gemini.MODEL.removeprefix("models/"), seconds,
+                         pricing.cost(seconds / 60, "gemini", live_gemini.MODEL))
 
     def describe(self, title: str, recent: int = 40) -> dict:
         """What another app needs to show this recording live."""

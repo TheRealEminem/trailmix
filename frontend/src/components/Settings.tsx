@@ -9,8 +9,10 @@ import type {
   StatsInfo,
   NativeRecorder,
   TranscribeEngine,
+  TrialEstimate,
   TrialRow,
   Upgrades,
+  Usage,
   Workspace,
   ProviderId,
   Settings as SettingsT,
@@ -539,10 +541,44 @@ const TRIAL_ENGINES: { value: TranscribeEngine; label: string }[] = [
 ];
 
 /** Redo transcripts with a better speech engine, or run any engine over every meeting to compare them. */
+/** What the paid speech engines were asked to do lately, and about what it cost. */
+function SpendRow() {
+  const [usage, setUsage] = useState<Usage | null>(null);
+  useEffect(() => {
+    api
+      .usage(30)
+      .then(setUsage)
+      .catch(() => undefined);
+  }, []);
+  if (!usage || usage.rows.length === 0) return null;
+  const minutes = (s: number) => `${Math.round(s / 60)} min`;
+  return (
+    <Row
+      label="Spent on speech engines, last 30 days"
+      hint={`An estimate from Google's and OpenAI's published per-minute prices (as of ${usage.as_of}), not your bill.${usage.unpriced ? " Some work isn't counted: its price isn't known." : ""}`}
+    >
+      <div className="text-right text-hint">
+        <div className="text-label font-medium text-ink">{usage.cost < 0.005 ? "under $0.01" : `$${usage.cost.toFixed(2)}`}</div>
+        {usage.rows.map((r) => (
+          <div key={`${r.kind}-${r.engine}-${r.model}`} className="text-ink-soft">
+            {r.kind}, {r.model ?? r.engine}: {minutes(r.seconds)}
+            {r.cost != null ? ` · ${r.cost < 0.005 ? "<$0.01" : `$${r.cost.toFixed(2)}`}` : ""}
+          </div>
+        ))}
+      </div>
+    </Row>
+  );
+}
+
+const money = (c: number | null) => (c == null ? "an unknown price" : c === 0 ? "free" : `about $${c < 0.1 ? c.toFixed(3) : c.toFixed(2)}`);
+
 function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => void }) {
   const [engine, setEngine] = useState<TranscribeEngine>(up.transcripts.best?.engine ?? "gemini");
   const [model, setModel] = useState("");
   const [apply, setApply] = useState(false);
+  const [limit, setLimit] = useState(3);
+  const [estimates, setEstimates] = useState<Partial<Record<"better" | "all", TrialEstimate>>>({});
+  const [confirm, confirmDialog] = useConfirm();
   const [rows, setRows] = useState<TrialRow[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const t = up.transcripts;
@@ -565,13 +601,47 @@ function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => 
     if (rows.length && !working) onChanged();
   }, [working]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const start = (scope: "better" | "all") =>
+  // What it would cost, kept up to date as the choices change.
+  useEffect(() => {
+    let alive = true;
+    const wanted: ("better" | "all")[] = t.count > 0 ? ["better", "all"] : ["all"];
+    const t0 = setTimeout(() => {
+      wanted.forEach((scope) =>
+        api
+          .estimateTrials({ engine, model: model.trim() || undefined, scope, limit })
+          .then((e) => alive && setEstimates((old) => ({ ...old, [scope]: e })))
+          .catch(() => alive && setEstimates((old) => ({ ...old, [scope]: undefined }))),
+      );
+    }, 300);
+    return () => {
+      alive = false;
+      clearTimeout(t0);
+    };
+  }, [engine, model, limit, t.count, rows.length]);
+
+  const start = async (scope: "better" | "all") => {
+    const e = estimates[scope];
+    if (e && e.meetings.length === 0) return setMessage("Nothing to redo: no meeting with its audio kept needs it.");
+    if (e && (e.cost ?? 1) > 0) {
+      const ok = await confirm({
+        title: `Transcribe ${e.meetings.length} meeting${e.meetings.length === 1 ? "" : "s"} again?`,
+        body: `This sends up to ${Math.round(e.minutes)} minutes of audio (each track counts) to ${
+          engine === "gemini" ? "Google" : "the transcription service"
+        }: ${money(e.cost)}, at ${e.per_minute != null ? `$${e.per_minute}/min` : "a price Trailmix doesn't know"} (prices as of ${e.as_of}). The newest meetings go first, ${limit} at a time; nothing is replaced unless you chose that.`,
+        confirmLabel: "Go ahead",
+      });
+      if (!ok) return;
+    }
+    return startNow(scope);
+  };
+
+  const startNow = (scope: "better" | "all") =>
     api
-      .startTrials({ engine, model: model.trim() || undefined, scope, apply })
+      .startTrials({ engine, model: model.trim() || undefined, scope, limit, apply })
       .then((r) => {
         setMessage(
           r.queued
-            ? `Transcribing ${r.queued} meeting${r.queued === 1 ? "" : "s"} again, one after another. ${apply ? "Each is switched over when it's made; the old transcript stays in its versions." : "The results are kept beside the current transcripts, to compare; nothing changes until you pick one."}`
+            ? `Transcribing ${r.queued} meeting${r.queued === 1 ? "" : "s"} again (${money(r.cost)}), one after another. ${apply ? "Each is switched over when it's made; the old transcript stays in its versions." : "The results are kept beside the current transcripts, to compare; nothing changes until you pick one."}`
             : "Nothing to redo: no meeting with its audio kept needs it.",
         );
         void load();
@@ -584,6 +654,7 @@ function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => 
 
   return (
     <>
+      {confirmDialog}
       {t.best && (
         <Row
           label="Best speech engine you have"
@@ -598,7 +669,7 @@ function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => 
           hint={`Made by ${from}; ${t.best?.model} would do better.`}
         >
           <button className="btn btn-sm btn-soft" disabled={working} onClick={() => void start("better")}>
-            Redo them
+            Redo {Math.min(limit, t.count)} ({money(estimates.better?.cost ?? null).replace("an unknown price", "price unknown")})
           </button>
         </Row>
       )}
@@ -630,10 +701,30 @@ function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => 
             <Switch checked={apply} onChange={setApply} label="Switch to each new transcript" />
             Switch to each new transcript
           </label>
+          <label className="flex items-center gap-1.5 text-hint">
+            At a time
+            <input
+              type="number"
+              min={1}
+              max={100}
+              className="field h-8 w-16 px-2 text-label"
+              value={limit}
+              onChange={(e) => setLimit(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
+              aria-label="How many meetings at a time"
+            />
+          </label>
           <button className="btn btn-sm btn-soft" disabled={working} onClick={() => void start("all")}>
-            Run on all meetings
+            Run on the {limit} newest
           </button>
         </div>
+        {estimates.all && (
+          <p className="mt-2 text-hint text-ink-soft">
+            {estimates.all.meetings.length === 0
+              ? "No meeting has its audio kept."
+              : `${estimates.all.meetings.length} of ${estimates.all.available} meetings · ${Math.round(estimates.all.minutes)} minutes of audio (both tracks) · ${money(estimates.all.cost)}`}
+            {estimates.all.per_minute ? ` at $${estimates.all.per_minute}/min, an upper bound; prices as of ${estimates.all.as_of}` : ""}
+          </p>
+        )}
       </div>
       {message && <p className="pb-2 text-hint text-ink-soft">{message}</p>}
       {rows.length > 0 && (
@@ -1853,6 +1944,7 @@ export default function Settings({
           </button>
           <TestResult state={tResult} />
         </div>
+        <SpendRow />
       </Section>
 
       <Section

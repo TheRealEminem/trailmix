@@ -71,6 +71,7 @@ class Channel:
         self._task: asyncio.Task | None = None
         self._closing: list[_Stream] = []   # streams that were told the audio ended and are still sending words back
         self._paused_reported = False
+        self.sent_samples = 0               # audio sent to Google so far, all streams (what's billed)
 
     # -- public -------------------------------------------------------------
 
@@ -105,6 +106,7 @@ class Channel:
         await stream.ws.send(json.dumps({"realtimeInput": {"audio": {
             "data": base64.b64encode(frame).decode(), "mimeType": "audio/pcm;rate=16000"}}}))
         stream.sent += len(frame) // 2
+        self.sent_samples += len(frame) // 2
 
     async def _end(self, stream: _Stream) -> None:
         """Tells Google the audio is over (it then sends the last words); the stream closes when it's done."""
