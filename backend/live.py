@@ -35,6 +35,7 @@ CONTEXT_CHARS = 200    # what was just said on a track, given to the model with 
 FRAME_S = 0.25
 SILENCE_RMS = 0.006    # below this a frame counts as a pause / is not worth transcribing
 LABELS = {0: "You", 1: "Them"}
+DRAFT_SAVE_EVERY_S = 5.0  # live captions are saved to the database at most this often
 
 _active: dict[int, "LiveSession"] = {}
 _registry_lock = threading.Lock()
@@ -125,6 +126,7 @@ class LiveSession:
                             and not cfg.get("lockdown"))
         self._channels: dict[int, live_gemini.Channel] = {}
         self.interim: dict[int, dict] = {}  # the words being said right now, per channel
+        self._drafts_saved = 0.0
         # The accurate model, transcribing for keeps while the meeting runs (see the module docstring).
         self.final = bool(cfg.get("live_final")) and (
             cfg["transcribe_engine"] == "remote" or (cfg["transcribe_engine"] == "local" and mlx_engine.available()))
@@ -193,7 +195,16 @@ class LiveSession:
     @property
     def polls_drafts(self) -> bool:
         """Whether draft_step() has chunks to transcribe here (not with Gemini, whose captions stream in)."""
-        return (self.draft and not self.gemini_live) or self.final
+        return (self.draft and self.cfg["transcribe_engine"] != "gemini") or self.final
+
+    @property
+    def captions_off_reason(self) -> str | None:
+        """Why live captions aren't running although the engine is Gemini and captions were asked for."""
+        if not self.draft or self.cfg["transcribe_engine"] != "gemini" or self.gemini_live:
+            return None
+        if self.cfg.get("lockdown"):
+            return "Live captions are off: Lockdown mode keeps your audio on this computer. The transcript is made after you stop."
+        return "Live captions are off: add a Google API key in Settings → Transcription. The transcript is made after you stop."
 
     # ── Live captions from Google (event loop only) ─────────────────────
 
@@ -224,7 +235,7 @@ class LiveSession:
                 line = {"start": start, "speaker": self._label(ch), "text": text}
                 self.drafts.append(line)
                 self.drafts.sort(key=lambda d: d["start"])
-                db.update_meeting(self.meeting_id, draft_json=json.dumps(self.drafts))
+                self._save_drafts()
                 self._push({"type": "draft", "channel": ch, **line})
 
             def status(message: str):
@@ -235,9 +246,19 @@ class LiveSession:
             channel.start()
         return channel
 
+    def _save_drafts(self, force: bool = False) -> None:
+        """The captions so far go to the database (a crash then loses little), but at most every few seconds: the whole
+        list is written each time, on the loop that carries the audio."""
+        now = time.monotonic()
+        if force or now - self._drafts_saved >= DRAFT_SAVE_EVERY_S:
+            self._drafts_saved = now
+            db.update_meeting(self.meeting_id, draft_json=json.dumps(self.drafts))
+
     async def stop_gemini(self) -> None:
         """After the last audio: gives Google a moment to send the last words, then hangs up."""
         await asyncio.gather(*(c.stop() for c in self._channels.values()), return_exceptions=True)
+        if self.drafts and self.gemini_live:
+            self._save_drafts(force=True)
         seconds = sum(c.sent_samples for c in self._channels.values()) / SR
         if seconds:
             db.log_usage(self.meeting_id, "live captions", "gemini", live_gemini.MODEL.removeprefix("models/"), seconds,

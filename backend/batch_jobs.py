@@ -9,6 +9,7 @@ answer didn't come back.
 import hashlib
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 
 import numpy as np
@@ -31,6 +32,9 @@ EST_TOKENS_OUT = 4000   # a meeting's notes, including the model's thinking, for
 
 class NotReady(Exception):
     pass
+
+
+_checking = threading.Lock()  # the background loop and "Check now" must not apply the same finished job twice
 
 
 def _fingerprint(m: dict) -> str:
@@ -115,6 +119,7 @@ def _apply_notes(job: dict, results: dict, cfg: dict) -> dict:
         db.update_meeting(m["id"], why=f"notes rewritten by {job['model']} (batch job)", summary=summary,
                           summary_provider="gemini", summary_model=job["model"])
         db.replace_tasks(m["id"], meeting_text.action_items(summary))
+        pipeline.reexport(m["id"])
         outcome["applied"] += 1
     outcome["cost"] = round(outcome["cost"], 4)
     return outcome
@@ -124,6 +129,15 @@ def check(cfg: dict | None = None) -> int:
     """Asks Google about every open job and uses the answers of those that have finished. Returns how many
     jobs changed. Quietly does nothing when there are none, or Lockdown is on."""
     cfg = cfg or settings.get_all()
+    if not _checking.acquire(blocking=False):  # another check is already at it
+        return 0
+    try:
+        return _check(cfg)
+    finally:
+        _checking.release()
+
+
+def _check(cfg: dict) -> int:
     open_jobs = db.batch_jobs(open_only=True)
     if not open_jobs or settings.locked(cfg) or not cfg["gemini_api_key"]:
         return 0
@@ -275,6 +289,7 @@ def _apply_transcripts(job: dict, results: dict, cfg: dict) -> dict:
         if first["apply"]:
             if _fingerprint(m) == first["fingerprint"]:
                 pipeline.apply_version(mid, version)
+                pipeline.reexport(mid)
             else:
                 outcome["skipped"]["you changed it meanwhile (the new transcript is kept as a version)"] = 1 + outcome["skipped"].get(
                     "you changed it meanwhile (the new transcript is kept as a version)", 0)

@@ -301,15 +301,7 @@ def _present(m: dict) -> dict:
 
 def _reexport(meeting_id: int) -> None:
     """Keep an already-exported file in step with edits (title, names, ticked tasks)."""
-    meeting = db.get_meeting(meeting_id)
-    cfg = settings.get_all()
-    if not (meeting and meeting["exported_paths"] and meeting["transcript"]):  # exported once: keep it current
-        return
-    try:
-        paths = exporter.export_meeting(meeting, cfg)
-        db.update_meeting(meeting_id, exported_paths=json.dumps(paths), export_error=None)
-    except OSError as e:
-        db.update_meeting(meeting_id, export_error=f"Export failed: {e}")
+    pipeline.reexport(meeting_id)
 
 
 def _local_llm_paused(cfg: dict) -> None:
@@ -819,6 +811,8 @@ async def stream(ws: WebSocket, meeting_id: int, draft: int = 1, client: str = "
 
     session.request_stop = stop_requested.set  # only called on the event loop (async endpoint below)
     session.notify = send
+    if session.captions_off_reason:
+        await send({"type": "status", "message": session.captions_off_reason})
 
     async def draft_loop():
         try:
@@ -1406,8 +1400,8 @@ def _upgradable(cfg: dict, current: str | None = None) -> dict:
             """SELECT id, summary, summary_provider, summary_model, tags_json, tags_model, workspace_id,
                       workspace_auto, workspace_model, status FROM meetings WHERE status = 'done'""").fetchall()
     ours = set(llm_engine.PROVIDERS)
-    notes = [r for r in rows if r["summary"] and (r["summary_provider"] in ours or current != llm_engine.model_for(
-                 llm_engine.chain("auto", cfg)[0], cfg)) and model_ranks.better(current, r["summary_model"])]
+    notes = [r for r in rows if r["summary"] and r["summary_provider"] in ours  # not notes imported from another app
+             and model_ranks.better(current, r["summary_model"])]
     tags = [r for r in rows if r["tags_json"] and model_ranks.better(current, r["tags_model"])]
     sorting = [r for r in rows if r["workspace_auto"] and r["workspace_model"]
                and model_ranks.better(current, r["workspace_model"])]
