@@ -11,6 +11,14 @@ AS_OF = "2026-10-12"
 # Per minute of audio sent, input and output together. Local transcription is free.
 PER_MINUTE = [
     ("gemini-3.5-transcribe-live*", 0.009),   # $0.005 audio in + $0.004 text out
+    # General models asked to transcribe (transcribe_gemini.call_llm): 25 audio tokens per second in, about 330 tokens
+    # of text per minute out (Flash adds thinking tokens). Measured on one 23-minute meeting, so only roughly.
+    ("gemini-3.5-flash-lite*", 0.0013),
+    ("gemini-3.1-flash-lite*", 0.0013),
+    ("gemini-flash-lite-latest*", 0.0013),
+    ("gemini-3.8-flash*", 0.0042),
+    ("gemini-3.6-flash*", 0.0042),
+    ("gemini-flash-latest*", 0.0042),
     ("gemini-3.5-transcribe*", 0.005),        # $0.003 audio in + $0.002 text out
     ("gpt-4o-mini-transcribe*", 0.003),
     ("gpt-4o-transcribe*", 0.006),
@@ -49,6 +57,16 @@ def per_minute(engine: str, model: str | None) -> float | None:
         if fnmatch.fnmatch(name, pattern):
             return price
     return None
+
+
+def transcript_cost(model: str, seconds: float, usage: dict | None) -> float | None:
+    """What a transcription cost: from the tokens the model reported when it did (a general model), else from the
+    per-minute price of the audio sent."""
+    if usage and usage.get("in"):
+        exact = text_cost(model, usage["in"], usage["out"])
+        if exact is not None:
+            return exact
+    return cost(seconds / 60, "gemini", model)
 
 
 def meeting_minutes(duration_sec: float | None, has_system: bool, mixed: bool = False) -> float:

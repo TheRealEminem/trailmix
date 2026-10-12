@@ -31,7 +31,8 @@ URL_BODY_MAX = 6000  # GitHub's new-issue link carries the text; longer links fa
 
 _PATTERNS: list[tuple[re.Pattern, str]] = [
     # keys and tokens: OpenAI, Anthropic, Granola, Google, GitHub, bearer tokens, long random strings
-    (re.compile(r"\b(?:sk-(?:ant-|proj-)?|grn_|AIza|ghp_|gho_|github_pat_|xox[bp]-)[A-Za-z0-9_\-]{8,}"), "[key]"),
+    (re.compile(r"\b(?:sk-(?:ant-|proj-)?|grn_|AIza|AQ\.|ghp_|gho_|github_pat_|xox[bp]-)[A-Za-z0-9_\-]{8,}"), "[key]"),
+    (re.compile(r"(?i)([?&](?:key|api_?key|access_token)=)[^&\s\"']+"), r"\1[key]"),
     (re.compile(r"(?i)\b(bearer|token|api[_ -]?key|passcode|password|pwd)\b(\s*[:=]\s*|\s+)\S+"), r"\1\2[key]"),
     (re.compile(r"\b(?=[A-Za-z0-9_\-]*\d)(?=[A-Za-z0-9_\-]*[A-Za-z])[A-Za-z0-9_\-]{32,}\b"), "[key]"),
     (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "[email]"),

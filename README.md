@@ -82,6 +82,11 @@ API key for a cloud provider. First use downloads the Whisper models (base ≈ 1
   you record (`gemini-3.5-transcribe-live`). Audio is sent to Google, so Lockdown mode switches it off. Long
   recordings go in overlapping chunks whose speaker labels are matched. The engine can be switched on the Recorder
   card right before you press Record.
+- **Economy and batch.** Choosing the Economy quality (Gemini Flash-Lite) transcribes through a general model for
+  about a quarter of the price, and it can run as a half-price **Batch** job; notes can be rewritten at half price
+  the same way. Every paid action shows its estimated cost first, bulk runs go a few meetings at a time, and
+  Settings tallies what was spent. Batch results are put in by themselves when Google is done, and are skipped if you
+  changed the meeting meanwhile.
 - **Versions and comparing.** Every transcript made of a meeting is kept. Re-transcribe the saved audio with any
   engine or model (or all meetings at once) and the result sits beside the current one: compare them word by word,
   and switch with one click (optionally rewriting the notes). Speech models are ranked like the notes models, so
