@@ -1301,7 +1301,11 @@ export default function Settings({
   const saveTranscription = async (changes: Partial<SettingsT>) => {
     await save(changes);
     const next = { ...s, ...changes };
-    if (next.transcribe_engine === "local" || next.transcribe_url) {
+    const hasGoogleKey = !!changes.gemini_api_key || !!s?.secret_hints?.gemini_api_key;
+    if (
+      next.transcribe_engine === "local" ||
+      (next.transcribe_engine === "gemini" ? hasGoogleKey : next.transcribe_url)
+    ) {
       setNeedsAddress(false);
       void testTranscription();
     } else {
@@ -1566,10 +1570,34 @@ export default function Settings({
             options={[
               { id: "local", label: "This Mac (MLX)" },
               { id: "remote", label: "Remote endpoint" },
+              { id: "gemini", label: "Google Gemini" },
             ]}
           />
         </Row>
-        <SwitchRow
+        {s.transcribe_engine === "gemini" && (
+          <>
+            <Row
+              label="Google API key"
+              hint={
+                s.lockdown
+                  ? "Lockdown mode is on, so recordings can't be sent to Google (Settings → Privacy)."
+                  : "The same key as Google Gemini for notes; adding it in either place works for both."
+              }
+            >
+              <SecretField
+                label="Google API key"
+                hint={s.secret_hints?.gemini_api_key}
+                onSave={(v) => void saveTranscription({ gemini_api_key: v })}
+              />
+            </Row>
+            <p className="py-3.5 text-hint leading-relaxed text-ink-soft">
+              Tells people apart: “Speaker 1”, “Speaker 2”… (on a call your microphone is always you). The
+              recording is sent to Google to be transcribed after you stop, and removed from their servers
+              straight afterwards. The transcript appears a few minutes after the meeting, not during it.
+            </p>
+          </>
+        )}
+        {s.transcribe_engine !== "gemini" && <SwitchRow
           icon={<LinesIcon size={16} />}
           label="Final transcript while recording"
           hint={
@@ -1581,7 +1609,7 @@ export default function Settings({
           }
           checked={s.live_final}
           onChange={(v) => save({ live_final: v })}
-        />
+        />}
         {s.transcribe_engine === "remote" && (
           <>
             <div className="py-3.5">

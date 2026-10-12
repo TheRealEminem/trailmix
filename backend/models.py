@@ -168,12 +168,12 @@ def status() -> dict:
             "progress": progress(repo), "error": job.error if job and job.done.is_set() and not have else None,
             "size_gb": round((job.total if job and job.total else _size_guess(repo)) / 1e9, 2),
         })
-    return {"local": mlx_engine.available() and settings.get_all()["transcribe_engine"] != "remote", "models": items}
+    return {"local": mlx_engine.available() and settings.get_all()["transcribe_engine"] == "local", "models": items}
 
 
 def prefetch() -> None:
     """Downloads whichever local models are missing, the small live one first."""
-    if not mlx_engine.available() or settings.get_all()["transcribe_engine"] == "remote":
+    if not mlx_engine.available() or settings.get_all()["transcribe_engine"] != "local":
         return
     if os.getenv("TRAILMIX_PREFETCH") == "0":
         return

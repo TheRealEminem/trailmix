@@ -41,7 +41,8 @@ interface Props {
   onDate: (iso: string) => Promise<void>;
   onDelete: () => void;
   onDeleteAudio: () => void;
-  onRetranscribe: () => void;
+  /** engine: use this one just this time (Settings' otherwise) */
+  onRetranscribe: (engine?: "gemini") => void;
   onKeepForever: (keep: boolean) => void;
   onExport: () => void;
   onConfirm: () => void;
@@ -168,6 +169,7 @@ export default function MeetingView({
   ...on
 }: Props) {
   const audioGone = m.audio_deleted || m.audio_bytes === 0;
+  const voices = new Set((m.segments ?? []).map((s) => s.speaker).filter((x) => x && x !== "You" && x !== "Them")).size;
 
   return (
     <div key={m.id}>
@@ -176,7 +178,7 @@ export default function MeetingView({
           <MeetingDate meeting={m} onSave={on.onDate} />
           <span className="inline-flex items-center gap-1.5">
             <UsersIcon size={16} className="text-ink-faint" />
-            {m.has_system ? "You & them" : "One mic"}
+            {voices > 1 ? `${voices + (m.has_system ? 1 : 0)} voices` : m.has_system ? "You & them" : "One mic"}
           </span>
           <span data-private="workspace"><WorkspacePicker
             workspaces={on.workspaces}
@@ -375,7 +377,7 @@ export default function MeetingView({
                 <div className="flex flex-wrap justify-end gap-1.5">
                   {["done", "error", "ready_summarize"].includes(m.status) && (
                     <button
-                      onClick={on.onRetranscribe}
+                      onClick={() => on.onRetranscribe()}
                       className="btn btn-sm btn-soft"
                       data-tip="Transcribe the audio again and write a new summary"
                     >
@@ -383,6 +385,18 @@ export default function MeetingView({
                       Transcribe again
                     </button>
                   )}
+                  {["done", "error", "ready_summarize"].includes(m.status) &&
+                    health?.transcription.gemini_ready &&
+                    health.transcription.engine !== "gemini" && (
+                      <button
+                        onClick={() => on.onRetranscribe("gemini")}
+                        className="btn btn-sm btn-soft"
+                        data-tip="Send the audio to Google to tell the speakers apart, then write new notes"
+                      >
+                        <UsersIcon size={16} />
+                        Label speakers
+                      </button>
+                    )}
                   <button
                     onClick={on.onDeleteAudio}
                     className="btn btn-sm btn-danger-ghost"

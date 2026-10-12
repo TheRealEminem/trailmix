@@ -104,8 +104,8 @@
       <h2>What stays on your computer</h2>
       <p>Everything Trailmix records or writes is kept on your computer, in Trailmix's own folder: recordings,
       transcripts, notes, action items, names, workspaces, tags, your answers to its quick questions, and your settings
-      (including any API keys you add). Transcription runs on your computer, and so do the notes when you use a local AI
-      model through Ollama. Recordings are deleted after 30 days unless you choose to keep one.</p>
+      (including any API keys you add). Transcription runs on your computer unless you choose Google Gemini for it, and so
+      do the notes when you use a local AI model through Ollama. Recordings are deleted after 30 days unless you choose to keep one.</p>
 
       <h2>Anonymous usage stats</h2>
       <p>Trailmix is free. To decide which computers and set-ups to support, it sends a few anonymous stats. They're on
@@ -140,6 +140,10 @@
         <li><b>A cloud AI you add</b> (such as Claude, OpenAI, Gemini or DeepSeek). If you choose one to write your notes,
         your transcript is sent to it for that, under that company's own privacy policy. Trailmix never adds one for you.</li>
         <li><b>Your own transcription server</b>, if you set one up, which receives your recordings.</li>
+        <li><b>Google Gemini for transcription</b>, only if you choose it (in setup or Settings → Transcription). Your
+        recording is uploaded to Google after you stop, to be transcribed with the speakers told apart, and Trailmix
+        deletes the upload as soon as it's done. It's under Google's own privacy policy and your API key's terms.
+        Lockdown mode switches this off.</li>
         <li><b>Problem reports</b> are only sent if you post them: Trailmix removes personal information on your computer,
         shows you the report, and you post it yourself as a public issue on GitHub.</li>
       </ul>

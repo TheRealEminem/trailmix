@@ -50,6 +50,7 @@ import workspaces
 import file_import
 import feedback
 import questions
+import transcribe_gemini
 import transcribe_remote
 
 log = logging.getLogger("trailmix")
@@ -195,6 +196,10 @@ class MeetingPatch(BaseModel):
 
 class SettingsPatch(BaseModel):
     model_config = {"extra": "allow"}  # validated key-by-key in settings.update
+
+
+class RetranscribeRequest(BaseModel):
+    engine: str | None = None  # local | remote | gemini, just for this time; None = the one in Settings
 
 
 class SummarizeRequest(BaseModel):
@@ -651,17 +656,19 @@ def health():
                 "ready": ready, "reason": why, "local": llm_engine.is_local(pid, cfg)}
 
     remote = cfg["transcribe_engine"] == "remote"
+    gemini = cfg["transcribe_engine"] == "gemini"
     return {
         "summary": provider_info(cfg["summary_provider"]),
         "fallback": provider_info(cfg["summary_fallback"]) if cfg["summary_fallback"] != "none" else None,
         "transcription": {
             "engine": cfg["transcribe_engine"],
-            "model": cfg["transcribe_model"] if remote else mlx_engine.FINAL_MODEL,
-            "live_model": (cfg["transcribe_model"] if cfg["live_final"] else cfg["transcribe_live_model"] or cfg["transcribe_model"])
+            "model": transcribe_gemini.MODEL if gemini else cfg["transcribe_model"] if remote else mlx_engine.FINAL_MODEL,
+            "live_model": None if gemini else (cfg["transcribe_model"] if cfg["live_final"] else cfg["transcribe_live_model"] or cfg["transcribe_model"])
             if remote else (mlx_engine.FINAL_MODEL if cfg["live_final"] else mlx_engine.LIVE_MODEL),
             "url": cfg["transcribe_url"] if remote else None,
             "local_available": mlx_engine.available(),
-            "live_final": cfg["live_final"],  # the transcript made while recording is the final one
+            "live_final": cfg["live_final"] and not gemini,  # the transcript made while recording is the final one
+            "gemini_ready": bool(cfg["gemini_api_key"]) and not settings.locked(cfg),  # Google can be used for speaker labels
         },
         "version": archive.APP_VERSION,
         "templates": templates.listing(),
@@ -718,6 +725,11 @@ def provider_test(pid: str):
 @app.post("/api/transcription/test")
 def transcription_test():
     cfg = settings.get_all()
+    if cfg["transcribe_engine"] == "gemini":
+        try:
+            return {"ok": True, "message": transcribe_gemini.check(cfg["gemini_api_key"])}
+        except transcribe_gemini.GeminiError as e:
+            raise HTTPException(502, str(e))
     if cfg["transcribe_engine"] != "remote":
         return {"ok": True, "message": f"Local MLX transcription ({'available' if mlx_engine.available() else 'not installed'})"}
     try:
@@ -965,7 +977,8 @@ def guess_date(meeting_id: int):
 @app.put("/api/meetings/{meeting_id}/speakers")
 def set_speakers(meeting_id: int, names: dict[str, str]):
     _get_or_404(meeting_id)
-    clean = {k: v.strip()[:60] for k, v in names.items() if k in ("You", "Them")}
+    allowed = {"You", "Them", *meeting_text.speaker_labels(_get_or_404(meeting_id))}
+    clean = {k: v.strip()[:60] for k, v in names.items() if k in allowed}
     db.update_meeting(meeting_id, speaker_names_json=clean)
     _reexport(meeting_id)
     return _present(db.get_meeting(meeting_id))["speaker_names"]
@@ -1020,17 +1033,27 @@ def retry(meeting_id: int):
 
 
 @app.post("/api/meetings/{meeting_id}/retranscribe", status_code=202)
-def retranscribe(meeting_id: int):
-    """Transcribe again from the saved audio (say, after an update that transcribes better), then summarize.
-    Speaker names, flags and tasks you ticked off are kept; the summary is rewritten."""
+def retranscribe(meeting_id: int, body: RetranscribeRequest | None = None):
+    """Transcribe again from the saved audio (say, after an update that transcribes better, or with a different
+    engine: "gemini" labels who said what), then summarize. Speaker names, flags and tasks you ticked off are
+    kept; the summary is rewritten."""
     meeting = _get_or_404(meeting_id)
+    engine = body.engine if body else None
+    cfg = settings.get_all()
+    if engine and engine not in settings.CHOICES["transcribe_engine"]:
+        raise HTTPException(422, "Unknown transcription engine")
+    if (engine or cfg["transcribe_engine"]) == "gemini":  # fail now, not after the old notes have been cleared
+        if settings.locked(cfg):
+            raise HTTPException(409, f"{settings.LOCKDOWN}, so recordings can't be sent to Google")
+        if not cfg["gemini_api_key"]:
+            raise HTTPException(409, "Add a Google API key first (Settings → Transcription)")
     if meeting["status"] not in ("done", "error", "ready_summarize"):
         raise HTTPException(409, "This meeting is still being processed")
     if meeting["audio_deleted"] or not store.audio_bytes(meeting):
         raise HTTPException(409, "The audio for this meeting has been deleted, so it can't be transcribed again")
     db.update_meeting(meeting_id, status="queued", wait_reason=None, error=None, transcribed=0, summary=None,
                       summary_error=None, live_json=None)  # the whole recording, from scratch
-    pipeline.enqueue(meeting_id, go=frozenset({"transcribe", "summarize"}))
+    pipeline.enqueue(meeting_id, go=frozenset({"transcribe", "summarize"}), engine=engine)
     return {"ok": True}
 
 

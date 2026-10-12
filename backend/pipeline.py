@@ -1,7 +1,8 @@
 """Post-recording jobs, run one at a time on a single worker thread.
 
   compress audio -> [approve] -> [RAM gate] -> final transcript (local: large model in its own process;
-                                                                    remote: an OpenAI-compatible endpoint)
+                                                                    remote: an OpenAI-compatible endpoint;
+                                                                    gemini: Google's, with speaker labels)
                  (or, when it was transcribed while recording: just the last few seconds, no approval or gate)
                  -> [approve] -> [RAM gate] -> summary + title + action items (any provider) -> export
 
@@ -35,6 +36,7 @@ import models
 import resources
 import settings
 import telemetry
+import transcribe_gemini
 import transcribe_remote
 import vad
 import workspaces
@@ -54,8 +56,16 @@ def draft(meeting_id: int) -> str | None:
     return _drafts.get(meeting_id)
 
 
-def enqueue(meeting_id: int, go: frozenset[str] = NONE, force: frozenset[str] = NONE) -> None:
-    """go: stages the user has just approved by hand. force: stages whose low-RAM warning they overrode."""
+# A speech engine chosen for one meeting's next transcription ("Transcribe again with Gemini"), instead of the
+# one in Settings. In memory only: after a restart the job simply uses the Settings engine.
+_engine_for: dict[int, str] = {}
+
+
+def enqueue(meeting_id: int, go: frozenset[str] = NONE, force: frozenset[str] = NONE, engine: str | None = None) -> None:
+    """go: stages the user has just approved by hand. force: stages whose low-RAM warning they overrode.
+    engine: transcribe with this engine (local, remote, gemini) this once."""
+    if engine:
+        _engine_for[meeting_id] = engine
     _executor.submit(_run, meeting_id, go, force)
 
 
@@ -145,6 +155,8 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
     if not m:
         return
     cfg = settings.get_all()
+    if meeting_id in _engine_for:
+        cfg["transcribe_engine"] = _engine_for[meeting_id]
     stats: dict = {}  # for the anonymous usage stats (telemetry.py): durations and choices, nothing said
     started = time.monotonic()
 
@@ -165,7 +177,8 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
         if "transcribe" not in go and not cfg["auto_transcribe"]:
             db.update_meeting(meeting_id, status="ready_transcribe", wait_reason=None)
             return
-        local = cfg["transcribe_engine"] == "local"
+        engine = cfg["transcribe_engine"]
+        local = engine == "local"
         if local:
             if not mlx_engine.available():
                 raise RuntimeError("Local transcription needs a Mac with MLX; set a remote endpoint in Settings → Transcription")
@@ -173,7 +186,9 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
             _gate(meeting_id, "transcribe" in force, mlx_engine.FINAL_MODEL_RAM_GB, "The transcription model")
         db.update_meeting(meeting_id, status="transcribing", wait_reason=None)
         began = time.monotonic()
-        segments, labeled, duration = _transcribe_local(m) if local else _transcribe_remote(m, cfg)
+        transcribe = _transcribe_local if local else _transcribe_gemini if engine == "gemini" else _transcribe_remote
+        segments, labeled, duration = transcribe(m) if local else transcribe(m, cfg)
+        _engine_for.pop(meeting_id, None)
         _save_transcript(m, segments, labeled, duration, made_with=f"{_speech_model(cfg)}, after the meeting")
         stats.update(transcribed="after the meeting", transcribe_seconds=round(time.monotonic() - began))
         m = db.get_meeting(meeting_id)
@@ -356,7 +371,30 @@ def _transcribe_remote(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
     return _label(per_track, list(tracks)), "system" in tracks and "mic" in tracks, duration
 
 
-def _label(per_track: dict, tracks: list[str]) -> list[dict]:
+def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
+    """Google's transcription model, which labels who is speaking. With both sides of a call recorded your
+    microphone is simply you, and only the other side's track needs its speakers told apart."""
+    folder = store.track_dir(m)
+    tracks = {}
+    for name in store.TRACKS.values():
+        audio = store.load_track(folder, name)
+        if audio is not None and np.max(np.abs(audio), initial=0) > 0.01:
+            tracks[name] = audio
+    duration = max((len(a) for a in tracks.values()), default=0) / store.SAMPLE_RATE
+    both = "system" in tracks and "mic" in tracks
+    per_track = {}
+    for name, audio in tracks.items():
+        try:
+            per_track[name] = transcribe_gemini.transcribe(
+                audio, cfg["gemini_api_key"], mlx_engine.LANGUAGE, diarize=not (both and name == "mic"),
+                on_progress=lambda i, n, name=name: db.update_meeting(
+                    m["id"], wait_reason=f"Transcribing {name} track: {i}/{n}" if n > 1 else f"Transcribing {name} track"))
+        except transcribe_gemini.GeminiError as e:
+            raise RuntimeError(str(e)) from e
+    return _label(per_track, list(tracks), diarized=True), both, duration
+
+
+def _label(per_track: dict, tracks: list[str], diarized: bool = False) -> list[dict]:
     if not tracks:
         raise RuntimeError("No audio was captured (both tracks are silent or missing)")
     labeled = "system" in tracks and "mic" in tracks  # me-vs-them only makes sense with two live tracks
@@ -365,6 +403,14 @@ def _label(per_track: dict, tracks: list[str]) -> list[dict]:
         clean["mic"] = cleanup.remove_echo(clean.get("mic", []), clean.get("system", []))
     segments = []
     for name, segs in clean.items():
+        if diarized:  # the engine told the speakers apart ("Speaker 1"...)
+            who = {s.get("speaker") for s in segs}
+            if labeled and name == "mic":
+                segs = [{**s, "speaker": "You"} for s in segs]
+            elif len(who) == 1:  # one voice: "Them" on a call, no labels at all in a one-person recording
+                segs = [{**s, "speaker": "Them" if labeled else None} for s in segs]
+            segments += segs
+            continue
         speaker = {"mic": "You", "system": "Them"}[name] if labeled else None
         segments += [{**s, "speaker": speaker} for s in segs]
     segments.sort(key=lambda s: s["start"])
@@ -373,6 +419,8 @@ def _label(per_track: dict, tracks: list[str]) -> list[dict]:
 
 def _speech_model(cfg: dict) -> str:
     """The speech model's short name, e.g. "whisper-large-v3-turbo"."""
+    if cfg["transcribe_engine"] == "gemini":
+        return transcribe_gemini.MODEL
     model = mlx_engine.FINAL_MODEL if cfg["transcribe_engine"] == "local" else cfg["transcribe_model"]
     return model.rsplit("/", 1)[-1].removesuffix("-mlx")
 
