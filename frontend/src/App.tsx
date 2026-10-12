@@ -573,14 +573,22 @@ export default function App() {
     if (ok) await guarded(() => api.deleteAudio(meeting.id), meeting.id);
   };
 
-  const handleRetranscribe = async () => {
+  const handleRetranscribe = async (engine?: "gemini") => {
     if (!meeting) return;
-    const ok = await confirm({
-      title: "Transcribe this meeting again?",
-      body: "Trailmix transcribes the saved audio again with the current settings and writes a new summary. Speaker names, flagged moments and ticked-off tasks are kept.",
-      confirmLabel: "Transcribe again",
-    });
-    if (ok) await guarded(() => api.retranscribe(meeting.id), meeting.id);
+    const ok = await confirm(
+      engine === "gemini"
+        ? {
+            title: "Label who said what?",
+            body: "The saved audio is sent to Google, which tells the speakers apart (Speaker 1, Speaker 2…) and transcribes it again, then Trailmix writes a new summary. Google removes the audio when it's done. Flagged moments and ticked-off tasks are kept; speaker names you set for other labels will need setting again.",
+            confirmLabel: "Send to Google",
+          }
+        : {
+            title: "Transcribe this meeting again?",
+            body: "Trailmix transcribes the saved audio again with the current settings and writes a new summary. Speaker names, flagged moments and ticked-off tasks are kept.",
+            confirmLabel: "Transcribe again",
+          },
+    );
+    if (ok) await guarded(() => api.retranscribe(meeting.id, engine), meeting.id);
   };
 
   const handleExport = async () => {
@@ -871,7 +879,7 @@ export default function App() {
               }}
               onDelete={() => void handleDelete(meeting.id, meeting.title)}
               onDeleteAudio={() => void handleDeleteAudio()}
-              onRetranscribe={() => void handleRetranscribe()}
+              onRetranscribe={(engine) => void handleRetranscribe(engine)}
               onKeepForever={(keep) =>
                 void guarded(
                   () => api.keepForever(meeting.id, keep),

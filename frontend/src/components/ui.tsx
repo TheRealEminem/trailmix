@@ -496,10 +496,25 @@ export function StatusChip({ status }: { status: MeetingStatus }) {
   );
 }
 
-/** Colored by role (You = sky, Them = berry); shows the person's name if you've set one. */
+// Voices told apart by Gemini ("Speaker 1", "Speaker 2"...) each get their own colour.
+const VOICE_COLORS = [
+  "bg-berry-soft text-berry-deep",
+  "bg-forest-soft text-forest-deep",
+  "bg-sun-soft text-sun-deep",
+  "bg-trail-soft text-trail-deep",
+];
+
+/** Colored by role (You = sky, Them = berry, each told-apart voice its own); shows the person's name if you've set one. */
 export function SpeakerChip({ speaker, name }: { speaker: string; name?: string }) {
+  const voice = /^Speaker (\d+)$/.exec(speaker);
   const cls =
-    speaker === "You" ? "bg-sky-soft text-sky-deep" : speaker === "Them" ? "bg-berry-soft text-berry-deep" : "bg-surface-subtle text-ink-soft";
+    speaker === "You"
+      ? "bg-sky-soft text-sky-deep"
+      : speaker === "Them"
+        ? "bg-berry-soft text-berry-deep"
+        : voice
+          ? VOICE_COLORS[(Number(voice[1]) - 1) % VOICE_COLORS.length]
+          : "bg-surface-subtle text-ink-soft";
   return <span className={`chip max-w-[8rem] truncate ${cls}`}>{name || speaker}</span>;
 }
 

@@ -201,7 +201,9 @@ export default function Recorder(p: Props) {
   const helper = p.rec === null && p.remote !== null;
   const drafts = p.remote && !p.rec ? p.remote.drafts : p.drafts;
   const bookmarks = p.remote && !p.rec ? p.remote.bookmarks : p.bookmarks;
-  const liveDraft = p.remote && !p.rec ? p.remote.draft : p.liveDraft;
+  // Gemini transcribes after you stop (it tells the speakers apart), so there is no live draft with it.
+  const gemini = p.health?.transcription.engine === "gemini";
+  const liveDraft = (p.remote && !p.rec ? p.remote.draft : p.liveDraft) && !gemini;
   const draftBox = useRef<HTMLDivElement>(null);
   const remote = p.health?.transcription.engine === "remote";
   const finalLive = !!p.health?.transcription.live_final;
@@ -464,20 +466,22 @@ export default function Recorder(p: Props) {
                   checked={p.includeMeetingAudio}
                   onChange={p.onIncludeMeetingAudio}
                 />
-                <SwitchRow
-                  icon={<LinesIcon size={16} />}
-                  label="Live draft"
-                  hint="A rough running transcript from a small model. Turn off for the lightest footprint."
-                  checked={p.liveDraft}
-                  onChange={p.onLiveDraft}
-                />
+                {!gemini && (
+                  <SwitchRow
+                    icon={<LinesIcon size={16} />}
+                    label="Live draft"
+                    hint="A rough running transcript from a small model. Turn off for the lightest footprint."
+                    checked={p.liveDraft}
+                    onChange={p.onLiveDraft}
+                  />
+                )}
               </div>
             )}
             {p.health && (
               <footer className="flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-line bg-surface-subtle/50 px-5 py-3 text-meta text-ink-soft sm:px-6">
                 <ModelNote
                   tone="forest"
-                  label={remote ? "Transcript · remote" : "Transcript"}
+                  label={gemini ? "Transcript · Google, after you stop" : remote ? "Transcript · remote" : "Transcript"}
                   value={shortModel(p.health.transcription.model)}
                 />
                 <ModelNote
