@@ -21,6 +21,8 @@ interface Options {
   includeMeetingAudio: boolean;
   liveDraft: boolean;
   onDraft: (line: DraftLine) => void;
+  /** Live captions from Google: the words of the current stretch of speech so far (empty text: nothing now). */
+  onInterim?: (line: DraftLine & { channel: number }) => void;
   onNotice: (message: string) => void;
   onMarked: (b: Bookmark) => void;
   /** Called if the socket drops without stop() being requested. The backend still processes what it got. */
@@ -131,7 +133,9 @@ export async function startRecording(opts: Options): Promise<ActiveRecording> {
     const stopped = new Promise<void>((resolve) => (onStopped = resolve));
     socket.onmessage = (e) => {
       const msg = JSON.parse(e.data as string);
-      if (msg.type === "draft") opts.onDraft({ start: msg.start, speaker: msg.speaker, text: msg.text });
+      if (msg.type === "draft") opts.onDraft({ start: msg.start, speaker: msg.speaker, text: msg.text, channel: msg.channel });
+      else if (msg.type === "interim")
+        opts.onInterim?.({ start: msg.start, speaker: msg.speaker, text: msg.text, channel: msg.channel });
       else if (msg.type === "status") opts.onNotice(msg.message);
       else if (msg.type === "marked") opts.onMarked({ t: msg.t, note: msg.note });
       else if (msg.type === "stopped") {

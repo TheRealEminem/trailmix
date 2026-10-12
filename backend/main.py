@@ -805,7 +805,7 @@ async def stream(ws: WebSocket, meeting_id: int, draft: int = 1, client: str = "
         except Exception:
             log.exception("Live draft stopped for meeting %s (recording continues)", meeting_id)
 
-    drafter = asyncio.create_task(draft_loop()) if draft or session.final else None
+    drafter = asyncio.create_task(draft_loop()) if session.polls_drafts else None
     stop_wait = asyncio.create_task(stop_requested.wait())
     try:
         while True:
@@ -831,6 +831,7 @@ async def stream(ws: WebSocket, meeting_id: int, draft: int = 1, client: str = "
         stop_wait.cancel()
         if drafter:
             drafter.cancel()
+        await session.stop_gemini()  # the last words of the live captions
         await run_in_threadpool(session.finish)  # waits for the chunk in hand, saves the transcript so far
         session.close()
         db.update_meeting(
