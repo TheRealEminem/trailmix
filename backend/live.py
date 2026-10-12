@@ -16,8 +16,11 @@ from difflib import SequenceMatcher
 
 import numpy as np
 
+import asyncio
+
 import audio_store as store
 import database as db
+import live_gemini
 import mlx_engine
 import models
 import questions
@@ -114,10 +117,14 @@ class LiveSession:
         self.meeting_id = meeting_id
         self.client = client        # which app is capturing: "web" or "helper" (the menu bar app)
         self.started_at = time.time()
-        # Gemini transcribes after the recording (it labels the speakers, which needs the whole audio), so
-        # there is no live transcript with it.
-        self.draft = draft and cfg["transcribe_engine"] != "gemini"
+        self.draft = draft
         self.cfg = cfg  # settings snapshot: which engine drafts the live transcript
+        # With Gemini the live captions stream from Google as you talk (live_gemini.py); the transcript you keep
+        # is made after the recording, with the speakers told apart. Nothing is polled here.
+        self.gemini_live = (draft and cfg["transcribe_engine"] == "gemini" and bool(cfg.get("gemini_api_key"))
+                            and not cfg.get("lockdown"))
+        self._channels: dict[int, live_gemini.Channel] = {}
+        self.interim: dict[int, dict] = {}  # the words being said right now, per channel
         # The accurate model, transcribing for keeps while the meeting runs (see the module docstring).
         self.final = bool(cfg.get("live_final")) and (
             cfg["transcribe_engine"] == "remote" or (cfg["transcribe_engine"] == "local" and mlx_engine.available()))
@@ -156,6 +163,8 @@ class LiveSession:
         """How far into the recording the live transcript is complete, in seconds (0 without one)."""
         if not (self.draft or self.final):
             return 0.0
+        if self.gemini_live:  # finals arrive at pauses; anything older than a few seconds is in
+            return max(0.0, self.duration - 15)
         with self._lock:
             done = [self._pending_start[ch] for ch in (0, 1) if self._written[ch]]
         return min(done) / SR if done else 0.0
@@ -173,18 +182,70 @@ class LiveSession:
             f = self._files[ch] = open(store.pcm_path(self.folder, store.TRACKS[ch]), "ab")
         f.write(pcm)
         f.flush()  # hand it to the OS now; a crash of this process then loses nothing
+        if self.gemini_live:
+            self._gemini_channel(ch).feed(pcm)
         samples = np.frombuffer(pcm, dtype=np.int16)
         with self._lock:
             self._written[ch] += len(samples)
-            if self.draft or self.final:
+            if (self.draft and not self.gemini_live) or self.final:
                 self._pending[ch].append(samples)
+
+    @property
+    def polls_drafts(self) -> bool:
+        """Whether draft_step() has chunks to transcribe here (not with Gemini, whose captions stream in)."""
+        return (self.draft and not self.gemini_live) or self.final
+
+    # ── Live captions from Google (event loop only) ─────────────────────
+
+    def _push(self, msg: dict) -> None:
+        if self.notify:
+            try:
+                asyncio.get_running_loop().create_task(self.notify(msg))
+            except RuntimeError:
+                pass
+
+    def _label(self, ch: int) -> str | None:
+        return LABELS[ch] if self.has_system else None
+
+    def _gemini_channel(self, ch: int) -> "live_gemini.Channel":
+        channel = self._channels.get(ch)
+        if channel is None:
+            def interim(start: float, text: str):
+                self.interim[ch] = {"start": start, "speaker": self._label(ch), "text": text}
+                self._push({"type": "interim", "channel": ch, **self.interim[ch]})
+
+            def final(start: float, text: str):
+                self.interim.pop(ch, None)
+                if ch == 1:
+                    self._recent_them = [(start, text)] + [x for x in self._recent_them if start - x[0] < 30]
+                elif self._is_echo(start, text):  # your mic heard the speakers
+                    self._push({"type": "interim", "channel": ch, "start": start, "speaker": None, "text": ""})
+                    return
+                line = {"start": start, "speaker": self._label(ch), "text": text}
+                self.drafts.append(line)
+                self.drafts.sort(key=lambda d: d["start"])
+                db.update_meeting(self.meeting_id, draft_json=json.dumps(self.drafts))
+                self._push({"type": "draft", "channel": ch, **line})
+
+            def status(message: str):
+                self._push({"type": "status", "message": message})
+
+            channel = self._channels[ch] = live_gemini.Channel(
+                self.cfg["gemini_api_key"], mlx_engine.LANGUAGE, interim, final, status)
+            channel.start()
+        return channel
+
+    async def stop_gemini(self) -> None:
+        """After the last audio: gives Google a moment to send the last words, then hangs up."""
+        await asyncio.gather(*(c.stop() for c in self._channels.values()), return_exceptions=True)
 
     def describe(self, title: str, recent: int = 40) -> dict:
         """What another app needs to show this recording live."""
         return {
             "id": self.meeting_id, "title": title, "client": self.client, "started_at": self.started_at,
             "duration": round(self.duration, 2), "has_system": self.has_system, "draft": self.draft,
-            "drafts": self.drafts[-recent:], "bookmarks": list(self.bookmarks),
+            "drafts": self.drafts[-recent:], "interims": list(self.interim.values()),
+            "bookmarks": list(self.bookmarks),
         }
 
     def mark(self, note: str = "") -> dict:
