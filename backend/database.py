@@ -93,6 +93,20 @@ CREATE TABLE IF NOT EXISTS transcript_versions (
     note          TEXT
 );
 CREATE INDEX IF NOT EXISTS versions_meeting ON transcript_versions (meeting_id, id);
+
+-- What paid speech engines were asked to do, and roughly what it cost (pricing.py), so spending is never a surprise.
+-- Kept after a meeting is deleted: it's a record of money spent, with no meeting content in it.
+CREATE TABLE IF NOT EXISTS usage (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    meeting_id    INTEGER,
+    kind          TEXT NOT NULL,     -- transcript | live captions
+    engine        TEXT NOT NULL,
+    model         TEXT,
+    audio_seconds REAL NOT NULL,
+    est_cost      REAL               -- US dollars; NULL when the price isn't known
+);
+CREATE INDEX IF NOT EXISTS usage_at ON usage (at);
 """
 
 
@@ -412,6 +426,23 @@ def mark_applied(meeting_id: int, version_id: int) -> None:
     with connect() as conn:
         conn.execute("UPDATE transcript_versions SET applied = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE meeting_id = ?",
                      (version_id, meeting_id))
+
+
+def log_usage(meeting_id: int | None, kind: str, engine: str, model: str | None, audio_seconds: float,
+              est_cost: float | None) -> None:
+    with connect() as conn:
+        conn.execute("INSERT INTO usage (meeting_id, kind, engine, model, audio_seconds, est_cost) VALUES (?, ?, ?, ?, ?, ?)",
+                     (meeting_id, kind, engine, model, audio_seconds, est_cost))
+
+
+def usage_since(iso: str) -> list[dict]:
+    """Spending by kind, engine and model since `iso`: [{kind, engine, model, seconds, cost, unpriced}]."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT kind, engine, model, sum(audio_seconds) AS seconds, sum(est_cost) AS cost, "
+            "sum(est_cost IS NULL) AS unpriced FROM usage WHERE at >= ? GROUP BY kind, engine, model ORDER BY cost DESC",
+            (iso,)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def delete_meeting(meeting_id: int) -> None:

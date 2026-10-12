@@ -175,6 +175,29 @@ export interface Comparison {
   inline: { op: "equal" | "delete" | "insert" | "skip"; text: string }[];
 }
 
+/** What redoing some transcripts would send and cost, before anything is spent. */
+export interface TrialEstimate {
+  meetings: { id: number; title: string; minutes: number; cost: number | null }[];
+  /** minutes of audio that would be sent (each track counts; an upper bound) */
+  minutes: number;
+  /** US dollars, about (null: the price of this model isn't known) */
+  cost: number | null;
+  per_minute: number | null;
+  model: string | null;
+  as_of: string;
+  /** how many meetings qualify before the limit */
+  available?: number;
+  limit?: number;
+}
+
+export interface Usage {
+  days: number;
+  rows: { kind: string; engine: string; model: string | null; seconds: number; cost: number | null; unpriced: number }[];
+  cost: number;
+  unpriced: number;
+  as_of: string;
+}
+
 export interface HistoryEntry {
   id: number;
   at: string;
@@ -576,9 +599,19 @@ export const api = {
     engine: TranscribeEngine;
     model?: string;
     scope?: "better" | "all";
+    /** at most this many meetings, newest first */
+    limit?: number;
     apply?: boolean;
     summarize?: boolean;
-  }) => request<{ queued: number; skipped: number }>("/transcript-trials", json("POST", body)),
+  }) => request<{ queued: number; skipped: number } & TrialEstimate>("/transcript-trials", json("POST", body)),
+  /** What starting these would cost, without starting anything. */
+  estimateTrials: (body: { engine: TranscribeEngine; model?: string; scope: "better" | "all"; limit: number }) =>
+    request<TrialEstimate>("/transcript-trials", json("POST", { ...body, dry_run: true })),
+  trialEstimate: (id: number, engine: TranscribeEngine, model?: string) =>
+    request<TrialEstimate>(
+      `/meetings/${id}/trial/estimate?engine=${engine}${model ? `&model=${encodeURIComponent(model)}` : ""}`,
+    ),
+  usage: (days = 30) => request<Usage>(`/usage?days=${days}`),
   trials: () =>
     request<{ trials: TrialRow[]; counts: Record<string, number> }>("/transcript-trials"),
   cancelTrials: () => request<{ cancelled: number }>("/transcript-trials", json("DELETE")),

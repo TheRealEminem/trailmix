@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Comparison, HistoryEntry, TranscribeEngine, TranscriptVersion, Trial } from "../api";
+import type { Comparison, HistoryEntry, TranscribeEngine, TranscriptVersion, Trial, TrialEstimate } from "../api";
 import type { Health, Meeting } from "../api";
 import { ClockIcon, RefreshIcon } from "./icons";
 import { Select, Spinner, useConfirm } from "./ui";
@@ -69,6 +69,7 @@ export default function Versions({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirm, confirmDialog] = useConfirm();
+  const [estimate, setEstimate] = useState<TrialEstimate | null>(null);
 
   const audioGone = m.audio_deleted || m.audio_bytes === 0;
   const finished = ["done", "error", "ready_summarize"].includes(m.status);
@@ -96,6 +97,22 @@ export default function Versions({
     const t = setInterval(() => void load(), 2000);
     return () => clearInterval(t);
   }, [trying, m.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // What transcribing again would cost, before you press the button.
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    const t = setTimeout(() => {
+      api
+        .trialEstimate(m.id, engine, model.trim() || undefined)
+        .then((e) => alive && setEstimate(e))
+        .catch(() => alive && setEstimate(null));
+    }, 250);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [open, m.id, engine, model]);
 
   if (!m.transcript || !finished) return null;
 
@@ -290,6 +307,11 @@ export default function Versions({
                   <button className="btn btn-sm btn-soft" disabled={busy || trying} onClick={() => void startTrial()}>
                     {trying ? "Working…" : "Transcribe to compare"}
                   </button>
+                  {estimate && (
+                    <span data-tip={`Up to ${Math.round(estimate.minutes)} minutes of audio (each track counts)${estimate.per_minute ? ` at $${estimate.per_minute}/min` : ""}; prices as of ${estimate.as_of}`}>
+                      {estimate.cost == null ? "price unknown" : estimate.cost === 0 ? "free" : `about $${estimate.cost < 0.1 ? estimate.cost.toFixed(3) : estimate.cost.toFixed(2)}`}
+                    </span>
+                  )}
                 </div>
               </>
             )}
