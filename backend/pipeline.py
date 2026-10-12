@@ -24,6 +24,7 @@ import numpy as np
 
 import audio_store as store
 import cleanup
+import compare
 import database as db
 import exporter
 import live
@@ -480,12 +481,26 @@ def trial_status(meeting_id: int) -> dict | None:
 
 def enqueue_trial(meeting_id: int, engine: str, model: str | None = None, apply: bool = False, summarize: bool = False) -> None:
     _trials[meeting_id] = {"engine": engine, "model": model, "state": "queued", "detail": None, "version_id": None,
-                           "error": None}
+                           "error": None, "agreement": None, "apply": apply}
     _executor.submit(_run_trial, meeting_id, engine, model, apply, summarize)
+
+
+def cancel_trials() -> int:
+    """Stops the trials that haven't started (the one running finishes). Returns how many were stopped."""
+    stopped = [t for t in _trials.values() if t["state"] == "queued"]
+    for t in stopped:
+        t["state"] = "cancelled"
+    return len(stopped)
+
+
+def all_trials() -> dict[int, dict]:
+    return dict(_trials)
 
 
 def _run_trial(meeting_id: int, engine: str, model: str | None, apply: bool, summarize: bool) -> None:
     trial = _trials[meeting_id]
+    if trial["state"] != "queued":  # cancelled while it waited
+        return
     try:
         m = db.get_meeting(meeting_id)
         if not m or m["audio_deleted"] or not m["audio_dir"]:
@@ -515,7 +530,9 @@ def _run_trial(meeting_id: int, engine: str, model: str | None, apply: bool, sum
             meeting_id, transcript="\n".join(_line(s) for s in segments), segments_json=json.dumps(segments),
             engine=engine, model=used, made_with=f"{used}, redone later", source="upgrade", duration_sec=duration,
             has_system=labeled, seconds=round(time.monotonic() - began))
-        trial.update(version_id=version, state="done", detail=None)
+        current = compare.diff(compare.plain(json.loads(m["segments_json"]) if m.get("segments_json") else None,
+                                             m["transcript"] or ""), compare.plain(segments))
+        trial.update(version_id=version, state="done", detail=None, agreement=current["agreement"])
         if apply:
             apply_version(meeting_id, version, summarize=summarize)
     except Exception as e:

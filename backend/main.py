@@ -1377,12 +1377,108 @@ def _upgradable(cfg: dict) -> dict:
             "sorting": {"count": len(sorting), "from": by_model(sorting, "workspace_model")}}
 
 
+def _speech_engines(cfg: dict) -> list[dict]:
+    """The speech engines you could use right now, each with how it's rated: [{engine, model, score}]."""
+    out = []
+    if cfg["gemini_api_key"] and not settings.locked(cfg):
+        out.append({"engine": "gemini", "model": cfg["gemini_transcribe_model"]})
+    if cfg["transcribe_url"] and (not settings.locked(cfg) or settings.on_this_computer(cfg["transcribe_url"])):
+        out.append({"engine": "remote", "model": cfg["transcribe_model"]})
+    if mlx_engine.available():
+        out.append({"engine": "local", "model": mlx_engine.FINAL_MODEL.rsplit("/", 1)[-1].removesuffix("-mlx")})
+    for e in out:
+        e["score"] = model_ranks.score(e["model"])
+    return out
+
+
+def _transcripts_upgradable(cfg: dict) -> dict:
+    """Transcripts a speech engine you have now would do better than the one that made them (only where the
+    audio is still kept, since it has to be transcribed again)."""
+    engines = [e for e in _speech_engines(cfg) if e["score"] is not None]
+    best = max(engines, key=lambda e: e["score"], default=None)
+    rows = []
+    if best:
+        with db.connect() as conn:
+            rows = conn.execute(
+                "SELECT id, transcribed_with FROM meetings WHERE status IN ('done', 'ready_summarize') AND transcript IS NOT NULL "
+                "AND audio_deleted = 0 AND audio_dir IS NOT NULL").fetchall()
+        rows = [r for r in rows if model_ranks.better(best["model"], model_ranks.speech_model(r["transcribed_with"]))]
+    counts: dict[str, int] = {}
+    for r in rows:
+        name = model_ranks.speech_model(r["transcribed_with"]) or "an earlier engine"
+        counts[name] = counts.get(name, 0) + 1
+    return {"best": best, "engines": engines, "count": len(rows), "ids": [r["id"] for r in rows], "from": counts}
+
+
 @app.get("/api/upgrades")
 def upgrades():
     """Meetings whose notes, tags or workspace came from a weaker model than the one you have now."""
-    data = _upgradable(settings.get_all())
+    cfg = settings.get_all()
+    data = _upgradable(cfg)
     data["notes"].pop("ids")
+    transcripts = _transcripts_upgradable(cfg)
+    transcripts.pop("ids")
+    data["transcripts"] = transcripts
     return data
+
+
+class TrialsRequest(BaseModel):
+    engine: str
+    model: str | None = None
+    meeting_ids: list[int] | None = None   # None: see scope
+    scope: str = "better"                  # "better": the meetings this engine would transcribe better than the one that did;
+                                           # "all": every meeting whose audio is still kept (to compare engines)
+    apply: bool = False                    # use each result when it's made (otherwise they're kept to compare)
+    summarize: bool = False                # with apply: write each meeting's notes again from the new transcript
+
+
+@app.post("/api/transcript-trials", status_code=202)
+def start_trials(body: TrialsRequest):
+    """Redoes transcripts with another engine or model, one meeting after another, keeping each result as a
+    version to compare (or using it, with `apply`). `meeting_ids` None means the meetings this engine would
+    transcribe better than the engine that did (see /api/upgrades)."""
+    cfg = settings.get_all()
+    _check_engine(body.engine, cfg)
+    model = body.model or (cfg["gemini_transcribe_model"] if body.engine == "gemini" else None)
+    if body.meeting_ids is not None:
+        ids = body.meeting_ids
+    elif body.scope == "all":
+        with db.connect() as conn:
+            ids = [r["id"] for r in conn.execute(
+                "SELECT id FROM meetings WHERE status IN ('done', 'ready_summarize') AND transcript IS NOT NULL AND audio_deleted = 0 "
+                "AND audio_dir IS NOT NULL ORDER BY id DESC").fetchall()]
+    else:
+        ids = _transcripts_upgradable(cfg)["ids"]
+    queued = []
+    for meeting_id in ids:
+        m = db.get_meeting(meeting_id)
+        busy = pipeline.trial_status(meeting_id)
+        if (not m or not m["transcript"] or m["audio_deleted"] or not store.audio_bytes(m)
+                or m["status"] not in ("done", "error", "ready_summarize") or (busy and busy["state"] in ("queued", "running"))):
+            continue
+        pipeline.enqueue_trial(meeting_id, body.engine, body.model, apply=body.apply, summarize=body.summarize)
+        queued.append(meeting_id)
+    return {"queued": len(queued), "skipped": len(ids) - len(queued)}
+
+
+@app.get("/api/transcript-trials")
+def list_trials():
+    """Every transcript redone (or being redone) since Trailmix started: where each stands, and how much its
+    words agree with the transcript the meeting has."""
+    out = []
+    for meeting_id, trial in pipeline.all_trials().items():
+        m = db.get_meeting(meeting_id)
+        if m:
+            out.append({"meeting_id": meeting_id, "title": m["title"], "current": m["transcribed_with"], **trial})
+    counts: dict[str, int] = {}
+    for t in out:
+        counts[t["state"]] = counts.get(t["state"], 0) + 1
+    return {"trials": out, "counts": counts}
+
+
+@app.delete("/api/transcript-trials")
+def cancel_trials():
+    return {"cancelled": pipeline.cancel_trials()}
 
 
 @app.post("/api/upgrades/notes", status_code=202)

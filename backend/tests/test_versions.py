@@ -183,3 +183,54 @@ def test_api_refuses_a_trial_it_cannot_run(client, fresh_db, monkeypatch):
     r = client.post(f"/api/meetings/{mid}/trial", json={"engine": "gemini"})
     assert r.status_code == 409 and "Google API key" in r.json()["detail"]
     assert client.post(f"/api/meetings/{mid}/trial", json={"engine": "nope"}).status_code == 422
+
+
+# ── upgrading transcripts with a better speech engine ──
+
+def test_speech_models_are_ranked_and_their_names_read_from_the_note_of_how_they_were_made():
+    import model_ranks
+
+    assert model_ranks.speech_model("whisper-large-v3-turbo, after the meeting") == "whisper-large-v3-turbo"
+    assert model_ranks.speech_model("mlx-community/whisper-large-v3-turbo, while recording") == "whisper-large-v3-turbo"
+    assert model_ranks.better("gemini-3.5-transcribe", "whisper-large-v3-turbo")
+    assert not model_ranks.better("whisper-large-v3-turbo", "gemini-3.5-transcribe")
+    assert not model_ranks.better("whisper-large-v3-turbo", "whisper-large-v3")  # not clearly better
+
+
+def test_upgrades_offer_transcripts_a_better_engine_you_have_would_redo(client, fresh_db, monkeypatch):
+    weak = meeting_with_transcript(made_with="whisper-large-v3-turbo, after the meeting")
+    strong = meeting_with_transcript(made_with="gemini-3.5-transcribe, after the meeting")
+    gone = meeting_with_transcript()
+    for mid in (weak, strong):
+        db.update_meeting(mid, audio_dir=str(fresh_db / "audio"))
+    db.update_meeting(gone, audio_deleted=1)  # no audio: it can't be redone
+    monkeypatch.setattr(main.settings, "get_all", lambda: {**main.settings.DEFAULTS, "gemini_api_key": "k", "lockdown": False})
+    monkeypatch.setattr(main.mlx_engine, "available", lambda: False)
+    ups = client.get("/api/upgrades").json()["transcripts"]
+    assert ups["best"]["engine"] == "gemini" and ups["count"] == 1
+    assert ups["from"] == {"whisper-large-v3-turbo": 1}
+
+
+def test_a_key_in_lockdown_does_not_count_as_a_better_engine(client, fresh_db, monkeypatch):
+    mid = meeting_with_transcript()
+    db.update_meeting(mid, audio_dir=str(fresh_db / "audio"))
+    monkeypatch.setattr(main.settings, "get_all", lambda: {**main.settings.DEFAULTS, "gemini_api_key": "k", "lockdown": True})
+    monkeypatch.setattr(main.mlx_engine, "available", lambda: False)
+    assert client.get("/api/upgrades").json()["transcripts"]["best"] is None
+
+
+def test_bulk_trials_queue_only_meetings_with_audio_and_can_be_cancelled(client, fresh_db, monkeypatch):
+    a, b = meeting_with_transcript(), meeting_with_transcript()
+    db.update_meeting(a, audio_dir=str(fresh_db / "audio"))
+    monkeypatch.setattr(main.settings, "get_all", lambda: {**main.settings.DEFAULTS, "gemini_api_key": "k", "lockdown": False})
+    monkeypatch.setattr(main.store, "audio_bytes", lambda m: 100 if m["id"] == a else 0)
+    started = []
+    monkeypatch.setattr(pipeline, "_executor", type("X", (), {"submit": lambda self, *args: started.append(args)})())
+    pipeline._trials.clear()
+    r = client.post("/api/transcript-trials", json={"engine": "gemini", "meeting_ids": [a, b]}).json()
+    assert r == {"queued": 1, "skipped": 1} and len(started) == 1
+    assert client.get("/api/transcript-trials").json()["counts"] == {"queued": 1}
+    assert client.delete("/api/transcript-trials").json() == {"cancelled": 1}
+    pipeline._run_trial(a, "gemini", None, False, False)  # a cancelled one does nothing when its turn comes
+    assert pipeline.trial_status(a)["state"] == "cancelled"
+    assert len(db.transcript_versions(a)) == 1
