@@ -390,6 +390,15 @@ def update_meeting(meeting_id: int, why: str | None = None, **fields) -> None:
             _reindex(conn, meeting_id)
 
 
+def replace_history(meeting_id: int, rows: list[dict]) -> None:
+    """Gives an imported meeting the history it had where it was exported (instead of the entries made by importing it)."""
+    with connect() as conn:
+        conn.execute("DELETE FROM history WHERE meeting_id = ?", (meeting_id,))
+        for r in sorted(rows, key=lambda r: r.get("at") or ""):
+            conn.execute("INSERT INTO history (meeting_id, at, field, old_value, new_value, why) VALUES (?, ?, ?, ?, ?, ?)",
+                         (meeting_id, r["at"], r["field"], r.get("old_value"), r.get("new_value"), r.get("why")))
+
+
 def history_for(meeting_id: int, field: str | None = None, limit: int = 200) -> list[dict]:
     """The changes to a meeting, newest first: {id, at, field, old_value, new_value, why}."""
     with connect() as conn:
@@ -404,13 +413,14 @@ def history_for(meeting_id: int, field: str | None = None, limit: int = 200) -> 
 def add_transcript_version(meeting_id: int, *, transcript: str, segments_json: str | None, engine: str | None,
                            model: str | None, made_with: str | None, source: str, duration_sec: float = 0,
                            has_system: bool = False, seconds: float | None = None, applied: bool = False,
-                           note: str | None = None) -> int:
+                           note: str | None = None, created_at: str | None = None) -> int:
     with connect() as conn:
         return conn.execute(
             "INSERT INTO transcript_versions (meeting_id, engine, model, made_with, source, transcript, segments_json,"
-            " duration_sec, has_system, seconds, applied, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " duration_sec, has_system, seconds, applied, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,"
+            " coalesce(?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')))",
             (meeting_id, engine, model, made_with, source, transcript, segments_json, duration_sec, int(has_system),
-             seconds, int(applied), note)).lastrowid
+             seconds, int(applied), note, created_at)).lastrowid
 
 
 def transcript_versions(meeting_id: int) -> list[dict]:
