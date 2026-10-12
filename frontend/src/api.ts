@@ -166,7 +166,7 @@ export interface Settings {
   custom_base_url: string;
   custom_model: string;
   custom_api_key: string;
-  transcribe_engine: "local" | "remote";
+  transcribe_engine: "local" | "remote" | "gemini";
   transcribe_url: string;
   transcribe_api_key: string;
   transcribe_model: string;
@@ -240,13 +240,16 @@ export interface Health {
   summary: ProviderInfo;
   fallback: ProviderInfo | null;
   transcription: {
-    engine: "local" | "remote";
+    engine: "local" | "remote" | "gemini";
     model: string;
-    live_model: string;
+    /** null with Gemini: it transcribes after the recording, not during */
+    live_model: string | null;
     url: string | null;
     local_available: boolean;
     /** the accurate model transcribes while recording, so the live transcript is the final one */
     live_final: boolean;
+    /** A Google API key is saved and Lockdown is off: "Label speakers" (Gemini) can be used */
+    gemini_ready: boolean;
   };
   /** This copy of Trailmix, e.g. "0.14.0" ("dev" from source) */
   version: string;
@@ -571,7 +574,9 @@ export const api = {
     request<Bookmark[]>(`/meetings/${id}/bookmarks`, json("PUT", { bookmarks })),
   confirm: (id: number) => request<{ ok: true }>(`/meetings/${id}/confirm`, json("POST")),
   retry: (id: number) => request<{ ok: true }>(`/meetings/${id}/retry`, json("POST")),
-  retranscribe: (id: number) => request<{ ok: true }>(`/meetings/${id}/retranscribe`, json("POST")),
+  /** engine: use this one just this time (Settings' engine otherwise) */
+  retranscribe: (id: number, engine?: "local" | "remote" | "gemini") =>
+    request<{ ok: true }>(`/meetings/${id}/retranscribe`, json("POST", engine ? { engine } : undefined)),
   summarize: (id: number, provider: Provider, template?: string) =>
     request<{ ok: true }>(`/meetings/${id}/summarize`, json("POST", { provider, template })),
   askMeeting: (id: number, question: string) => request<QA>(`/meetings/${id}/ask`, json("POST", { question })),

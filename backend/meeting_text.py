@@ -40,9 +40,15 @@ def bookmarks(m: dict) -> list[dict]:
     return json.loads(m["bookmarks_json"]) if m.get("bookmarks_json") else []
 
 
+def speaker_labels(m: dict) -> list[str]:
+    """The speakers in a transcript, in order of first appearance: "You", "Them", or "Speaker 1", "Speaker 2"..."""
+    return list(dict.fromkeys(s["speaker"] for s in segments(m) if s.get("speaker")))
+
+
 def speaker_names(m: dict, cfg: dict) -> dict:
     """Label -> display name. 'You' defaults to your name from Settings."""
     names = {"You": cfg.get("your_name") or "You", "Them": "Them"}
+    names.update({label: label for label in speaker_labels(m) if label not in names})
     if m.get("speaker_names_json"):
         names.update({k: v for k, v in json.loads(m["speaker_names_json"]).items() if v})
     return names
@@ -115,9 +121,17 @@ def speakers_note(m: dict, cfg: dict) -> str:
     if not any(s.get("speaker") for s in segs):
         return "The transcript has no speaker labels."
     names = speaker_names(m, cfg)
+    labels = speaker_labels(m)
     you, them = names.get("You", "You"), names.get("Them", "Them")
-    return (f'"{you}" is the person who recorded the meeting. "{them}" is everyone on the other end of the call '
-            "(possibly several people). When people are named in the conversation, use their names in the notes.")
+    if set(labels) <= {"You", "Them"}:
+        return (f'"{you}" is the person who recorded the meeting. "{them}" is everyone on the other end of the call '
+                "(possibly several people). When people are named in the conversation, use their names in the notes.")
+    others = [f'"{names[x]}"' for x in labels if x not in ("You", "Them")]
+    note = (f'"{you}" is the person who recorded the meeting. ' if "You" in labels else "")
+    note += ('"Them" is one person on the other end of the call. ' if "Them" in labels else "")
+    return (f"{note}{', '.join(others)} are different people, told apart by their voices; that is mostly right but "
+            "can slip, so when the conversation makes clear who someone is, go by that. "
+            "When people are named in the conversation, use their names in the notes.")
 
 
 def moments(m: dict, cfg: dict) -> list[str]:

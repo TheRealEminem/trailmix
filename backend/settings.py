@@ -49,7 +49,7 @@ DEFAULTS = {
     "custom_model": "",
     "custom_api_key": "",
     # Transcription
-    "transcribe_engine": "local",       # local (MLX on this Mac) | remote (OpenAI-compatible endpoint)
+    "transcribe_engine": "local",       # local (MLX on this Mac) | remote (OpenAI-compatible endpoint) | gemini (speaker labels)
     "transcribe_url": "",               # e.g. https://api.openai.com/v1 or http://my-mac:8770/v1
     "transcribe_api_key": "",
     "transcribe_model": "whisper-1",
@@ -86,7 +86,7 @@ _KEY_ENV = {
 CHOICES = {
     "summary_provider": ("ollama", "anthropic", "openai", "gemini", "deepseek", "custom"),
     "summary_fallback": ("none", "ollama", "anthropic", "openai", "gemini", "deepseek", "custom"),
-    "transcribe_engine": ("local", "remote"),
+    "transcribe_engine": ("local", "remote", "gemini"),
     "live_notes": ("auto", "on", "off"),
 }
 

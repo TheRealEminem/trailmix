@@ -82,7 +82,7 @@ _warming = threading.Lock()
 
 def live_model(cfg: dict) -> str | None:
     """The model that transcribes while recording on this Mac (None with a remote engine)."""
-    if cfg["transcribe_engine"] == "remote" or not mlx_engine.available():
+    if cfg["transcribe_engine"] != "local" or not mlx_engine.available():
         return None
     return mlx_engine.FINAL_MODEL if cfg.get("live_final") else mlx_engine.LIVE_MODEL
 
@@ -114,10 +114,13 @@ class LiveSession:
         self.meeting_id = meeting_id
         self.client = client        # which app is capturing: "web" or "helper" (the menu bar app)
         self.started_at = time.time()
-        self.draft = draft
+        # Gemini transcribes after the recording (it labels the speakers, which needs the whole audio), so
+        # there is no live transcript with it.
+        self.draft = draft and cfg["transcribe_engine"] != "gemini"
         self.cfg = cfg  # settings snapshot: which engine drafts the live transcript
         # The accurate model, transcribing for keeps while the meeting runs (see the module docstring).
-        self.final = bool(cfg.get("live_final")) and (cfg["transcribe_engine"] == "remote" or mlx_engine.available())
+        self.final = bool(cfg.get("live_final")) and (
+            cfg["transcribe_engine"] == "remote" or (cfg["transcribe_engine"] == "local" and mlx_engine.available()))
         self.final_segments: dict[int, list[dict]] = {0: [], 1: []}
         self.final_complete = True  # False once any chunk was skipped: then the pipeline redoes it all
         self._step_lock = threading.Lock()  # one draft_step at a time; finish() waits for the running one

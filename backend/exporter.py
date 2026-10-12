@@ -47,10 +47,11 @@ def _transcript(m: dict, cfg: dict) -> list[dict]:
 
 
 def _speakers(m: dict, cfg: dict) -> str:
-    if not m.get("has_system"):
+    labels = meeting_text.speaker_labels(m)
+    if not labels and not m.get("has_system"):
         return ""
     names = meeting_text.speaker_names(m, cfg)
-    return f"{names.get('You', 'You')} & {names.get('Them', 'Them')}"
+    return " & ".join(names.get(x, x) for x in labels or ["You", "Them"])
 
 
 def documents_for(m: dict, cfg: dict) -> dict[str, bytes]:

@@ -14,6 +14,7 @@ import { OrganizeProgress, WorkspaceSuggestions, useOrganize } from "./Workspace
 
 const DISMISSED_KEY = "trailmix.setupDismissed";
 const WORKSPACES_SKIPPED_KEY = "trailmix.workspacesSkipped";
+const TRANSCRIPTION_CHOSEN_KEY = "trailmix.transcriptionChosen";
 // Instruction-following families that write good notes (see llm_engine.preferred_ollama_model).
 const GOOD_MODELS = /^(qwen3|qwen2\.5|gemma3|llama3\.[12]|mistral|phi4)/i;
 
@@ -109,6 +110,15 @@ export default function SetupCard({
   const [speech, setSpeech] = useState<SpeechModels | null>(null);
   const [ollama, setOllama] = useState<OllamaStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Where speech becomes text: this Mac, or Google Gemini (which labels the speakers).
+  const [engine, setEngine] = useState<"local" | "remote" | "gemini">("local");
+  const [googleKeySaved, setGoogleKeySaved] = useState(false);
+  const [locked, setLocked] = useState(false);
+  const [engineChosen, setEngineChosen] = useState(() => remembered(TRANSCRIPTION_CHOSEN_KEY));
+  const [pickingGoogle, setPickingGoogle] = useState(false);
+  const [googleKey, setGoogleKey] = useState("");
+  const [engineBusy, setEngineBusy] = useState(false);
+  const [engineError, setEngineError] = useState<string | null>(null);
   const [device, setDevice] = useState<DeviceAdvice | null>(null);
   const [skippedSpaces, setSkippedSpaces] = useState(() => remembered(WORKSPACES_SKIPPED_KEY));
   const organize = useOrganize(onChanged);
@@ -137,7 +147,13 @@ export default function SetupCard({
     const load = () => {
       api
         .getSettings()
-        .then((s) => alive && setName(s.your_name))
+        .then((s) => {
+          if (!alive) return;
+          setName(s.your_name);
+          setEngine(s.transcribe_engine);
+          setGoogleKeySaved(!!s.secret_hints?.gemini_api_key);
+          setLocked(!!s.lockdown);
+        })
         .catch(() => undefined);
       api
         .speechModels()
@@ -173,12 +189,15 @@ export default function SetupCard({
     : health.summary.ready;
   // A Mac short on memory or disk: a cloud AI for notes is the recommendation (done once one is chosen).
   const deviceDone = !device || device.verdict === "local" || !health.summary.local;
+  // Settled once you've picked, or it was already set up (a cloud engine, or meetings recorded before this step existed).
+  const engineDone =
+    engineChosen || engine === "remote" || (engine === "gemini" && googleKeySaved) || meetingCount > 0;
   // Open while suggestions are waiting to be added, or meetings are being sorted into new workspaces.
   const ideasLeft = (organize.job?.suggestions ?? []).filter(
     (idea) => !workspaces.some((w) => w.name.toLowerCase() === idea.name.toLowerCase()),
   ).length;
   const spacesDone = skippedSpaces || (workspaces.length > 0 && !ideasLeft && !organize.job?.active);
-  if (nameDone && micDone && speechDone && summaryDone && hasMeetings && deviceDone && spacesDone)
+  if (nameDone && micDone && speechDone && summaryDone && hasMeetings && deviceDone && spacesDone && engineDone)
     return null;
 
   const dismiss = () => {
@@ -208,6 +227,51 @@ export default function SetupCard({
       .catch((e) => setError((e as Error).message));
   };
   const pct = ollama?.pull?.progress;
+  const chooseThisMac = async () => {
+    setEngineError(null);
+    setPickingGoogle(false);
+    try {
+      await api.putSettings({ transcribe_engine: "local" });
+      setEngine("local");
+      setEngineChosen(true);
+      remember(TRANSCRIPTION_CHOSEN_KEY);
+      onChanged();
+    } catch (e) {
+      setEngineError((e as Error).message);
+    }
+  };
+  // Saves the key (if one was typed), switches to Gemini, and proves it works; goes back to this Mac if it doesn't.
+  const chooseGoogle = async () => {
+    setEngineBusy(true);
+    setEngineError(null);
+    try {
+      await api.putSettings({
+        transcribe_engine: "gemini",
+        ...(googleKey.trim() ? { gemini_api_key: googleKey.trim() } : {}),
+      });
+      try {
+        await api.transcriptionTest();
+      } catch (e) {
+        // Not working: back to how it was, and don't keep a key that doesn't work.
+        await api.putSettings({
+          transcribe_engine: engine === "gemini" ? "local" : engine,
+          ...(googleKey.trim() ? { gemini_api_key: "" } : {}),
+        });
+        throw e;
+      }
+      setEngine("gemini");
+      setGoogleKeySaved(true);
+      setGoogleKey("");
+      setPickingGoogle(false);
+      setEngineChosen(true);
+      remember(TRANSCRIPTION_CHOSEN_KEY);
+      onChanged();
+    } catch (e) {
+      setEngineError((e as Error).message);
+    } finally {
+      setEngineBusy(false);
+    }
+  };
 
   return (
     <section
@@ -292,6 +356,69 @@ export default function SetupCard({
             <SoundCheck native={native} />
           </Step>
         )}
+        <Step
+          done={engineDone}
+          title={
+            engineDone
+              ? engine === "gemini"
+                ? "Transcription: Google Gemini, with speaker labels"
+                : engine === "remote"
+                  ? "Transcription: your own server"
+                  : "Transcription: on this Mac"
+              : "Choose how recordings become text"
+          }
+        >
+          On this Mac is private and free, but a download of about 1.7 GB; it labels you and the other side of a call.
+          Google Gemini needs no download and tells the individual people apart, but your recordings are sent to
+          Google and the transcript arrives a few minutes after you stop.
+          {device?.verdict === "cloud" && " This Mac is short on space, so Gemini is the easier fit."}
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button className="btn btn-sm btn-soft" onClick={() => void chooseThisMac()}>
+              On this Mac
+            </button>
+            {!locked && (
+              <button
+                className={`btn btn-sm ${device?.verdict === "cloud" ? "btn-primary" : "btn-soft"}`}
+                onClick={() => (googleKeySaved ? void chooseGoogle() : setPickingGoogle(true))}
+                disabled={engineBusy}
+              >
+                {googleKeySaved ? "Use Google Gemini" : "Google Gemini…"}
+              </button>
+            )}
+          </div>
+          {locked && <p className="mt-1.5">Lockdown mode is on, so recordings stay on this Mac.</p>}
+          {pickingGoogle && !googleKeySaved && (
+            <div className="mt-2">
+              <p className="mb-1.5">
+                Paste a Google AI API key (a free one works, but it's rate-limited, so long meetings take a bit longer; create one at{" "}
+                <a className="underline" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
+                  aistudio.google.com/apikey
+                </a>
+                ). It's kept on this computer, and also writes your notes if you pick Gemini for summaries.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  className="field h-8 w-64 px-2.5 text-label"
+                  placeholder="Google API key"
+                  value={googleKey}
+                  onChange={(e) => setGoogleKey(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && googleKey.trim() && void chooseGoogle()}
+                  aria-label="Google API key"
+                  autoComplete="off"
+                />
+                <button
+                  className="btn btn-sm btn-primary"
+                  onClick={() => void chooseGoogle()}
+                  disabled={!googleKey.trim() || engineBusy}
+                >
+                  {engineBusy ? "Checking…" : "Save and check"}
+                </button>
+              </div>
+            </div>
+          )}
+          {engineError && <p className="mt-1.5 text-trail-deep">{engineError}</p>}
+        </Step>
         <Step
           done={speechDone}
           title={

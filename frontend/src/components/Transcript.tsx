@@ -58,6 +58,9 @@ export default function Transcript({ meeting: m, pending, onBookmarks, onSpeaker
 
   const segments: Segment[] = m.segments ?? [];
   const names = m.speaker_names;
+  // Who spoke: the labels in the transcript ("You", "Them", or "Speaker 1"...).
+  const speakers = [...new Set(segments.map((s) => s.speaker).filter((x): x is string => !!x))];
+  if (!speakers.length && m.has_system) speakers.push("You", "Them");
   const hasAudio = !m.audio_deleted && m.audio_bytes > 0 && !audioError;
   const current = playing || time > 0 ? segments.findLastIndex((s) => s.start <= time + 0.05) : -1;
 
@@ -126,10 +129,16 @@ export default function Transcript({ meeting: m, pending, onBookmarks, onSpeaker
           <div className="inset-surface mb-6 space-y-3 px-4 py-3.5 text-hint text-ink-soft">
             <div className="flex flex-wrap items-center gap-2">
               <span className="eyebrow">Speakers</span>
-              {m.has_system ? (
+              {speakers.length ? (
                 <>
-                  <SpeakerName label="You" name={names.You} onSave={(v) => onSpeakers({ ...names, You: v })} />
-                  <SpeakerName label="Them" name={names.Them} onSave={(v) => onSpeakers({ ...names, Them: v })} />
+                  {speakers.map((label) => (
+                    <SpeakerName
+                      key={label}
+                      label={label}
+                      name={names[label] ?? label}
+                      onSave={(v) => onSpeakers({ ...names, [label]: v })}
+                    />
+                  ))}
                   <span>Click a name to change it.</span>
                 </>
               ) : (

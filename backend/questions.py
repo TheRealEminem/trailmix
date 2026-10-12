@@ -15,6 +15,7 @@ from difflib import SequenceMatcher
 
 import database as db
 import llm_engine
+import meeting_text
 
 MAX_OPEN = 3
 NAME = re.compile(r"\b[A-ZÀ-ɏ][a-zÀ-ɏ'’\-]{2,}(?:[ \t]+[A-ZÀ-ɏ][a-zÀ-ɏ'’\-]{2,})?\b")
@@ -297,7 +298,8 @@ def ask_about(meeting_id: int, cfg: dict, pid: str | None = None) -> int:
     names = json.loads(m["speaker_names_json"]) if m.get("speaker_names_json") else {}
 
     # Who was on the other side of the call?
-    if m.get("has_system") and not names.get("Them"):
+    labels = meeting_text.speaker_labels(m)  # (with several voices on their side there is no single "Them")
+    if ("Them" in labels or (m.get("has_system") and not labels)) and not names.get("Them"):
         choices = list(dict.fromkeys(people + [k for k in known if k.lower() != me.lower()]))[:4]
         if choices:
             options = [{"label": c, "value": c} for c in choices] + [{"label": "Several people", "value": "several"}]
