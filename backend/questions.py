@@ -180,7 +180,7 @@ def answer(question_id: int, value: str) -> int:
     if q["kind"] == "them" and value and value != "several":
         m = db.get_meeting(meeting_id)
         names = json.loads(m["speaker_names_json"]) if m and m.get("speaker_names_json") else {}
-        db.update_meeting(meeting_id, speaker_names_json={**names, "Them": value})
+        db.update_meeting(meeting_id, why="you answered who was on the call", speaker_names_json={**names, "Them": value})
         learn(value)
     elif q["kind"] in ("spelling", "term"):
         if value == "yes":

@@ -147,8 +147,8 @@ def parse_words(body) -> list[dict]:
     return words
 
 
-def call(file: dict, mime: str, api_key: str, language: str | None, diarize: bool) -> list[dict]:
-    body = {"model": MODEL, "input": [{"type": "audio", "uri": file["uri"], "mime_type": mime}],
+def call(file: dict, mime: str, api_key: str, language: str | None, diarize: bool, model: str = MODEL) -> list[dict]:
+    body = {"model": model, "input": [{"type": "audio", "uri": file["uri"], "mime_type": mime}],
             "generation_config": _config(language, diarize)}
     r = _request("POST", f"{API}/v1beta/interactions", api_key, json=body)
     return parse_words(r.json())
@@ -258,7 +258,7 @@ def encode(audio: np.ndarray) -> bytes:
 
 
 def transcribe(audio: np.ndarray, api_key: str, language: str | None = None, diarize: bool = True,
-               on_progress=None) -> list[dict]:
+               on_progress=None, model: str = MODEL) -> list[dict]:
     """[{start, end, speaker, text}] for the whole of `audio` (16 kHz mono float). `diarize` False still
     gives timestamps but no speaker labels (every word is one speaker). `on_progress(i, n)` after each chunk."""
     import settings
@@ -272,7 +272,7 @@ def transcribe(audio: np.ndarray, api_key: str, language: str | None = None, dia
     for i, (a, b) in enumerate(chunks):
         file = upload(encode(audio[int(a * SR):int(b * SR)]), "audio/ogg", api_key, name=f"chunk-{i + 1}")
         try:
-            per_chunk.append(((a, b), call(file, "audio/ogg", api_key, language, diarize)))
+            per_chunk.append(((a, b), call(file, "audio/ogg", api_key, language, diarize, model)))
         finally:
             delete_file(file, api_key)
         if on_progress:

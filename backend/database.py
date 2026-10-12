@@ -60,6 +60,42 @@ CREATE TABLE IF NOT EXISTS workspaces (
 CREATE VIRTUAL TABLE IF NOT EXISTS meetings_fts USING fts5(title, transcript, summary, tags, tokenize='porter unicode61');
 """
 
+# The receipt for every change to a meeting: what changed, when, from what, to what, and why. Only ever added to
+# (update_meeting writes it, in the same transaction as the change), so nothing the app overwrites is lost.
+# A meeting you delete takes its history with it.
+HISTORY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id  INTEGER NOT NULL,
+    at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    field       TEXT NOT NULL,
+    old_value   TEXT,
+    new_value   TEXT,
+    why         TEXT
+);
+CREATE INDEX IF NOT EXISTS history_meeting ON history (meeting_id, id);
+
+-- Every transcript ever made of a meeting, the one in use or not, so they can be compared and switched.
+CREATE TABLE IF NOT EXISTS transcript_versions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id    INTEGER NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    engine        TEXT,              -- local | remote | gemini | imported
+    model         TEXT,
+    made_with     TEXT,              -- as shown: "gemini-3.5-transcribe, after the meeting"
+    source        TEXT,              -- recording | upgrade | original (from before versions were kept)
+    transcript    TEXT NOT NULL,
+    segments_json TEXT,
+    duration_sec  REAL,
+    has_system    INTEGER NOT NULL DEFAULT 0,
+    seconds       REAL,              -- how long making it took
+    applied       INTEGER NOT NULL DEFAULT 0,   -- it is the meeting's transcript now (when it changed: see history)
+    note          TEXT
+);
+CREATE INDEX IF NOT EXISTS versions_meeting ON transcript_versions (meeting_id, id);
+"""
+
+
 # Columns added after the first release; applied to existing databases on startup.
 _ADDED_COLUMNS = {
     "wait_reason": "TEXT",                           # why a queued/paused meeting is waiting
@@ -104,6 +140,7 @@ def init_db() -> None:
     AUDIO_DIR.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.executescript(SCHEMA)
+        conn.executescript(HISTORY_SCHEMA)
         if "template" not in {r["name"] for r in conn.execute("PRAGMA table_info(workspaces)")}:
             conn.execute("ALTER TABLE workspaces ADD COLUMN template TEXT NOT NULL DEFAULT ''")  # its note style
         have = {r["name"] for r in conn.execute("PRAGMA table_info(meetings)")}
@@ -286,7 +323,16 @@ _UPDATABLE = {
 _JSON_FIELDS = {"my_notes_json", "live_notes_json", "tags_json", "segments_json", "draft_json", "exported_paths", "bookmarks_json", "speaker_names_json", "qa_json"}
 
 
-def update_meeting(meeting_id: int, **fields) -> None:
+# What the history keeps. Not the transient bookkeeping (status, progress, live drafts), and not segments_json: its
+# text is the transcript's, and every transcript is kept whole in transcript_versions.
+_TRACKED = {
+    "title", "transcript", "summary", "summary_provider", "summary_model", "speaker_names_json", "my_notes_json",
+    "bookmarks_json", "workspace_id", "tags_json", "created_at", "transcribed_with", "keep_audio", "audio_deleted",
+}
+
+
+def update_meeting(meeting_id: int, why: str | None = None, **fields) -> None:
+    """Changes columns of a meeting. `why` goes in the history ("you renamed it", "transcribed with ...")."""
     bad = set(fields) - _UPDATABLE
     if bad:
         raise ValueError(f"Cannot update columns: {bad}")
@@ -296,14 +342,79 @@ def update_meeting(meeting_id: int, **fields) -> None:
         if not isinstance(fields[k], (str, type(None))):
             fields[k] = json.dumps(fields[k])
     assignments = ", ".join(f"{k} = ?" for k in fields)
+    tracked = [k for k in fields if k in _TRACKED]
     with connect() as conn:
+        old = (conn.execute(f"SELECT {', '.join(tracked)} FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
+               if tracked else None)
         conn.execute(f"UPDATE meetings SET {assignments} WHERE id = ?", (*fields.values(), meeting_id))
+        for k in tracked:
+            before, after = (old[k] if old else None), fields[k]
+            if str(before) != str(after) and not (before in (None, "") and after in (None, "")):
+                conn.execute("INSERT INTO history (meeting_id, field, old_value, new_value, why) VALUES (?, ?, ?, ?, ?)",
+                             (meeting_id, k, None if before is None else str(before),
+                              None if after is None else str(after), why))
         if set(fields) & set(_FTS_FIELDS):
             _reindex(conn, meeting_id)
 
 
+def history_for(meeting_id: int, field: str | None = None, limit: int = 200) -> list[dict]:
+    """The changes to a meeting, newest first: {id, at, field, old_value, new_value, why}."""
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM history WHERE meeting_id = ? {'AND field = ?' if field else ''} ORDER BY id DESC LIMIT ?",
+            (meeting_id, *([field] if field else []), limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ── Transcript versions ─────────────────────────────────────────────────
+
+def add_transcript_version(meeting_id: int, *, transcript: str, segments_json: str | None, engine: str | None,
+                           model: str | None, made_with: str | None, source: str, duration_sec: float = 0,
+                           has_system: bool = False, seconds: float | None = None, applied: bool = False,
+                           note: str | None = None) -> int:
+    with connect() as conn:
+        return conn.execute(
+            "INSERT INTO transcript_versions (meeting_id, engine, model, made_with, source, transcript, segments_json,"
+            " duration_sec, has_system, seconds, applied, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (meeting_id, engine, model, made_with, source, transcript, segments_json, duration_sec, int(has_system),
+             seconds, int(applied), note)).lastrowid
+
+
+def transcript_versions(meeting_id: int) -> list[dict]:
+    """Every transcript of a meeting, oldest first, with its text. A meeting from before versions were kept gets
+    its current transcript recorded as the "original" first."""
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM transcript_versions WHERE meeting_id = ? ORDER BY id", (meeting_id,)).fetchall()
+        if not rows:
+            m = conn.execute("SELECT transcript, segments_json, transcribed_with, duration_sec, has_system "
+                             "FROM meetings WHERE id = ?", (meeting_id,)).fetchone()
+            if m and m["transcript"]:
+                conn.execute(
+                    "INSERT INTO transcript_versions (meeting_id, made_with, source, transcript, segments_json,"
+                    " duration_sec, has_system, applied) VALUES (?, ?, 'original', ?, ?, ?, ?, 1)",
+                    (meeting_id, m["transcribed_with"], m["transcript"], m["segments_json"], m["duration_sec"],
+                     m["has_system"]))
+                rows = conn.execute("SELECT * FROM transcript_versions WHERE meeting_id = ? ORDER BY id",
+                                    (meeting_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_transcript_version(version_id: int) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM transcript_versions WHERE id = ?", (version_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def mark_applied(meeting_id: int, version_id: int) -> None:
+    with connect() as conn:
+        conn.execute("UPDATE transcript_versions SET applied = CASE WHEN id = ? THEN 1 ELSE 0 END WHERE meeting_id = ?",
+                     (version_id, meeting_id))
+
+
 def delete_meeting(meeting_id: int) -> None:
     with connect() as conn:
+        conn.execute("DELETE FROM history WHERE meeting_id = ?", (meeting_id,))
+        conn.execute("DELETE FROM transcript_versions WHERE meeting_id = ?", (meeting_id,))
         conn.execute("DELETE FROM action_items WHERE meeting_id = ?", (meeting_id,))
         conn.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
         conn.execute("DELETE FROM meetings_fts WHERE rowid = ?", (meeting_id,))

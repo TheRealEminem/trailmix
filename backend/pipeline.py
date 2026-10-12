@@ -56,6 +56,16 @@ def draft(meeting_id: int) -> str | None:
     return _drafts.get(meeting_id)
 
 
+def _progress(meeting_id: int, text: str) -> None:
+    """What the transcription job is doing, shown on the meeting (or, for a trial run that mustn't touch the
+    meeting, on the trial)."""
+    trial = _trials.get(meeting_id)
+    if trial and trial["state"] == "running":
+        trial["detail"] = text
+    else:
+        db.update_meeting(meeting_id, wait_reason=text)
+
+
 # A speech engine chosen for one meeting's next transcription ("Transcribe again with Gemini"), instead of the
 # one in Settings. In memory only: after a restart the job simply uses the Settings engine.
 _engine_for: dict[int, str] = {}
@@ -167,7 +177,9 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
         had_live = bool(m.get("live_json"))
         done_live = _finish_live(m, cfg)
         if done_live:  # transcribed while recording: the accurate model ran once, during the meeting
-            _save_transcript(m, *done_live, made_with=f"{_speech_model(cfg)}, while recording")
+            _save_transcript(m, *done_live, made_with=f"{_speech_model(cfg)}, while recording",
+                             engine=cfg["transcribe_engine"], model=_speech_model(cfg),
+                             seconds=round(time.monotonic() - started))
             stats.update(transcribed="while recording", transcribe_seconds=round(time.monotonic() - started))
             m = db.get_meeting(meeting_id)
         elif had_live:
@@ -189,7 +201,8 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
         transcribe = _transcribe_local if local else _transcribe_gemini if engine == "gemini" else _transcribe_remote
         segments, labeled, duration = transcribe(m) if local else transcribe(m, cfg)
         _engine_for.pop(meeting_id, None)
-        _save_transcript(m, segments, labeled, duration, made_with=f"{_speech_model(cfg)}, after the meeting")
+        _save_transcript(m, segments, labeled, duration, made_with=f"{_speech_model(cfg)}, after the meeting",
+                         engine=engine, model=_speech_model(cfg), seconds=round(time.monotonic() - began))
         stats.update(transcribed="after the meeting", transcribe_seconds=round(time.monotonic() - began))
         m = db.get_meeting(meeting_id)
         if store.RETENTION_DAYS == 0:
@@ -225,15 +238,15 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
                 early_notes=early,
                 mine=meeting_text.my_notes_lines(m),
             )
-            db.update_meeting(meeting_id, summary=summary, summary_provider=used,
-                              summary_model=llm_engine.model_for(used, cfg))
+            db.update_meeting(meeting_id, why=f"notes written by {llm_engine.model_for(used, cfg) or used}",
+                              summary=summary, summary_provider=used, summary_model=llm_engine.model_for(used, cfg))
             _drafts.pop(meeting_id, None)
             stats.update(notes="written", notes_seconds=round(time.monotonic() - began), notes_provider=used,
                          notes_model=llm_engine.model_for(used, cfg) if used != "custom" else "custom",
                          notes_from_meeting_notes=bool(early) and len(m["transcript"] or "") > llm_engine.context_chars(used, cfg))
             db.replace_tasks(meeting_id, meeting_text.action_items(summary))
             if title and db.get_meeting(meeting_id)["title_auto"]:  # you may have renamed it meanwhile
-                db.update_meeting(meeting_id, title=title)
+                db.update_meeting(meeting_id, why="a title from its notes", title=title)
             try:
                 workspaces.after_notes(meeting_id, cfg, used)  # tags, and a workspace if it's in Default
             except Exception:
@@ -264,8 +277,8 @@ def _transcribe_local(m: dict) -> tuple[list[dict], bool, float]:
     mlx_engine.unload()  # drop the small live model from this process too
     models.ensure(  # first run: the speech model may still be downloading
         mlx_engine.FINAL_MODEL,
-        lambda p: db.update_meeting(m["id"], wait_reason="Downloading the speech model (first time only)"
-                                    + (f": {p:.0%}" if p is not None else "…")),
+        lambda p: _progress(m["id"], "Downloading the speech model (first time only)"
+                            + (f": {p:.0%}" if p is not None else "…")),
     )
     proc = subprocess.Popen(
         [sys.executable, str(Path(__file__).with_name("transcribe_worker.py")), str(store.track_dir(m)),
@@ -281,7 +294,7 @@ def _transcribe_local(m: dict) -> tuple[list[dict], bool, float]:
             tracks, duration = msg["tracks"], msg["duration"]
         elif "progress" in msg:
             name, i, n = msg["progress"]
-            db.update_meeting(m["id"], wait_reason=f"Transcribing {name} track: {i}/{n}")
+            _progress(m["id"], f"Transcribing {name} track: {i}/{n}")
         elif "track" in msg:
             per_track[msg["track"]] = msg["segments"]
         elif msg.get("done"):
@@ -366,7 +379,7 @@ def _transcribe_remote(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
                 raise RuntimeError(str(e)) from e
             off = a / store.SAMPLE_RATE
             segs += [{**s, "start": s["start"] + off, "end": s["end"] + off} for s in found]
-            db.update_meeting(m["id"], wait_reason=f"Transcribing {name} track: {i + 1}/{len(regions)}")
+            _progress(m["id"], f"Transcribing {name} track: {i + 1}/{len(regions)}")
         per_track[name] = segs
     return _label(per_track, list(tracks)), "system" in tracks and "mic" in tracks, duration
 
@@ -387,8 +400,9 @@ def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
         try:
             per_track[name] = transcribe_gemini.transcribe(
                 audio, cfg["gemini_api_key"], mlx_engine.LANGUAGE, diarize=not (both and name == "mic"),
-                on_progress=lambda i, n, name=name: db.update_meeting(
-                    m["id"], wait_reason=f"Transcribing {name} track: {i}/{n}" if n > 1 else f"Transcribing {name} track"))
+                model=cfg["gemini_transcribe_model"],
+                on_progress=lambda i, n, name=name: _progress(
+                    m["id"], f"Transcribing {name} track: {i}/{n}" if n > 1 else f"Transcribing {name} track"))
         except transcribe_gemini.GeminiError as e:
             raise RuntimeError(str(e)) from e
     return _label(per_track, list(tracks), diarized=True), both, duration
@@ -420,17 +434,24 @@ def _label(per_track: dict, tracks: list[str], diarized: bool = False) -> list[d
 def _speech_model(cfg: dict) -> str:
     """The speech model's short name, e.g. "whisper-large-v3-turbo"."""
     if cfg["transcribe_engine"] == "gemini":
-        return transcribe_gemini.MODEL
+        return cfg["gemini_transcribe_model"]
     model = mlx_engine.FINAL_MODEL if cfg["transcribe_engine"] == "local" else cfg["transcribe_model"]
     return model.rsplit("/", 1)[-1].removesuffix("-mlx")
 
 
-def _save_transcript(m: dict, segments: list[dict], labeled: bool, duration: float, made_with: str | None = None) -> None:
+def _save_transcript(m: dict, segments: list[dict], labeled: bool, duration: float, made_with: str | None = None,
+                     engine: str | None = None, model: str | None = None, seconds: float | None = None) -> None:
     text = "\n".join(_line(s) for s in segments)
+    db.transcript_versions(m["id"])  # a transcript from before versions were kept is recorded before it's replaced
     db.update_meeting(
-        m["id"], transcript=text, segments_json=json.dumps(segments), transcribed=1,
+        m["id"], why=f"transcribed with {made_with}" if made_with else "transcribed",
+        transcript=text, segments_json=json.dumps(segments), transcribed=1,
         has_system=int(labeled), duration_sec=duration, wait_reason=None, transcribed_with=made_with,
     )
+    version = db.add_transcript_version(
+        m["id"], transcript=text, segments_json=json.dumps(segments), engine=engine, model=model, made_with=made_with,
+        source="recording", duration_sec=duration, has_system=labeled, seconds=seconds)
+    db.mark_applied(m["id"], version)
 
 
 def _fmt(t: float) -> str:
@@ -443,3 +464,82 @@ def _fmt(t: float) -> str:
 def _line(s: dict) -> str:
     who = f"{s['speaker']}: " if s.get("speaker") else ""
     return f"[{_fmt(s['start'])}] {who}{s['text']}"
+
+
+# ── Trying another speech model on a meeting ─────────────────────────────
+# The saved audio is transcribed again with the engine and model asked for, and the result is kept as a new version
+# of the transcript, next to the others, to compare. It replaces the meeting's transcript only if you say so
+# (apply_version). The meeting itself is untouched meanwhile: its status, notes and transcript stay as they are.
+
+_trials: dict[int, dict] = {}  # by meeting: {engine, model, state: queued|running|done|failed, detail, version_id, error}
+
+
+def trial_status(meeting_id: int) -> dict | None:
+    return _trials.get(meeting_id)
+
+
+def enqueue_trial(meeting_id: int, engine: str, model: str | None = None, apply: bool = False, summarize: bool = False) -> None:
+    _trials[meeting_id] = {"engine": engine, "model": model, "state": "queued", "detail": None, "version_id": None,
+                           "error": None}
+    _executor.submit(_run_trial, meeting_id, engine, model, apply, summarize)
+
+
+def _run_trial(meeting_id: int, engine: str, model: str | None, apply: bool, summarize: bool) -> None:
+    trial = _trials[meeting_id]
+    try:
+        m = db.get_meeting(meeting_id)
+        if not m or m["audio_deleted"] or not m["audio_dir"]:
+            raise RuntimeError("The audio for this meeting has been deleted, so it can't be transcribed again")
+        cfg = settings.get_all()
+        cfg["transcribe_engine"] = engine
+        if model and engine == "gemini":
+            cfg["gemini_transcribe_model"] = model
+        elif model and engine == "remote":
+            cfg["transcribe_model"] = model
+        db.transcript_versions(meeting_id)  # what's there now is recorded first, as the one to compare against
+        if engine == "local":
+            if not mlx_engine.available():
+                raise RuntimeError("Local transcription needs a Mac with MLX")
+            while live.active_count():  # never run the heavy model during a recording
+                trial["detail"] = "Waiting for the current recording to finish"
+                time.sleep(3)
+            short = resources.check(mlx_engine.FINAL_MODEL_RAM_GB, "The transcription model")
+            if short:
+                raise RuntimeError(short)
+        trial.update(state="running", detail=None)
+        began = time.monotonic()
+        transcribe = _transcribe_local if engine == "local" else _transcribe_gemini if engine == "gemini" else _transcribe_remote
+        segments, labeled, duration = transcribe(m) if engine == "local" else transcribe(m, cfg)
+        used = _speech_model(cfg)
+        version = db.add_transcript_version(
+            meeting_id, transcript="\n".join(_line(s) for s in segments), segments_json=json.dumps(segments),
+            engine=engine, model=used, made_with=f"{used}, redone later", source="upgrade", duration_sec=duration,
+            has_system=labeled, seconds=round(time.monotonic() - began))
+        trial.update(version_id=version, state="done", detail=None)
+        if apply:
+            apply_version(meeting_id, version, summarize=summarize)
+    except Exception as e:
+        log.exception("Trying another speech model on meeting %s failed", meeting_id)
+        trial.update(state="failed", error=str(e), detail=None)
+    finally:
+        if engine == "local":
+            mlx_engine.unload()
+
+
+def apply_version(meeting_id: int, version_id: int, summarize: bool = False) -> None:
+    """Makes a version the meeting's transcript. The one it replaces stays in the versions (and the history); the
+    notes stay as they were unless `summarize`, which writes them again from the new transcript."""
+    version = db.get_transcript_version(version_id)
+    if not version or version["meeting_id"] != meeting_id:
+        raise ValueError("That transcript belongs to another meeting")
+    db.transcript_versions(meeting_id)
+    db.update_meeting(
+        meeting_id, why=f"you chose the transcript made with {version['made_with'] or 'an earlier engine'}",
+        transcript=version["transcript"], segments_json=version["segments_json"], transcribed=1,
+        has_system=version["has_system"], duration_sec=version["duration_sec"] or 0,
+        transcribed_with=version["made_with"])
+    db.mark_applied(meeting_id, version_id)
+    if summarize:
+        db.update_meeting(meeting_id, status="queued", wait_reason=None, summary=None, summary_error=None,
+                          why="notes rewritten from the new transcript")
+        enqueue(meeting_id, go=frozenset({"summarize"}))
