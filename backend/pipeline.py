@@ -32,6 +32,7 @@ import live_notes
 import questions
 import llm_engine
 import meeting_text
+import mixdown
 import mlx_engine
 import models
 import pricing
@@ -195,7 +196,8 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
         transcribe = _transcribe_local if local else _transcribe_gemini if engine == "gemini" else _transcribe_remote
         segments, labeled, duration = transcribe(m) if local else transcribe(m, cfg)
         _save_transcript(m, segments, labeled, duration, made_with=f"{_speech_model(cfg)}, after the meeting",
-                         engine=engine, model=_speech_model(cfg), seconds=round(time.monotonic() - began))
+                         engine=engine, model=_speech_model(cfg), seconds=round(time.monotonic() - began),
+                         note=_gemini_note(cfg, labeled))
         stats.update(transcribed="after the meeting", transcribe_seconds=round(time.monotonic() - began))
         m = db.get_meeting(meeting_id)
         if store.RETENTION_DAYS == 0:
@@ -218,18 +220,15 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
         began = time.monotonic()
         early = live_notes.usable(m)
         try:
-            minutes = (m["duration_sec"] or 0) / 60
+            inputs = notes_inputs(m, cfg)
             summary, used, title = llm_engine.summarize(
-                meeting_text.transcript_text(m, cfg), cfg, choice,
-                _template(m, cfg), meeting_text.moments(m, cfg),
+                inputs["transcript"], cfg, choice, inputs["template"], inputs["moments"],
                 want_title=bool(cfg["auto_title"] and m["title_auto"]),
-                about=f"This meeting lasted {minutes:.0f} minutes. {meeting_text.speakers_note(m, cfg)} "
-                      f"{questions.vocabulary_prompt().replace('Names and terms:', 'Names and terms that may come up, spelled correctly:')}".strip(),
-                minutes=minutes,
+                about=inputs["about"], minutes=inputs["minutes"],
                 on_progress=lambda what: db.update_meeting(meeting_id, wait_reason=what),
                 on_draft=lambda text: _drafts.__setitem__(meeting_id, text),
                 early_notes=early,
-                mine=meeting_text.my_notes_lines(m),
+                mine=inputs["mine"],
             )
             db.update_meeting(meeting_id, why=f"notes written by {llm_engine.model_for(used, cfg) or used}",
                               summary=summary, summary_provider=used, summary_model=llm_engine.model_for(used, cfg))
@@ -257,6 +256,18 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
             **stats, "minutes": int(round((m["duration_sec"] or 0) / 60 / 5) * 5),
             "source": "imported" if m.get("source") or m.get("imported_at") else "recorded",
         }, cfg)
+
+
+def notes_inputs(m: dict, cfg: dict) -> dict:
+    """Everything the notes AI is given about a meeting: transcript, note style, flagged moments, who's who, how long
+    it was, and what you wrote yourself. (Shared with the batch notes upgrade, which writes the same notes later.)"""
+    minutes = (m["duration_sec"] or 0) / 60
+    return {
+        "transcript": meeting_text.transcript_text(m, cfg), "template": _template(m, cfg),
+        "moments": meeting_text.moments(m, cfg), "minutes": minutes, "mine": meeting_text.my_notes_lines(m),
+        "about": f"This meeting lasted {minutes:.0f} minutes. {meeting_text.speakers_note(m, cfg)} "
+                 f"{questions.vocabulary_prompt().replace('Names and terms:', 'Names and terms that may come up, spelled correctly:')}".strip(),
+    }
 
 
 def _template(m: dict, cfg: dict) -> str:
@@ -391,6 +402,19 @@ def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
             tracks[name] = audio
     duration = max((len(a) for a in tracks.values()), default=0) / store.SAMPLE_RATE
     both = "system" in tracks and "mic" in tracks
+    model = cfg["gemini_transcribe_model"]
+    if both and cfg["gemini_mix_tracks"]:  # one mixed recording: half the cost; who is "you" is worked out here
+        audio = mixdown.mix(tracks["mic"], tracks["system"])
+        try:
+            segs = transcribe_gemini.transcribe(
+                audio, cfg["gemini_api_key"], mlx_engine.LANGUAGE, diarize=True, model=model,
+                on_progress=lambda i, n: _progress(m["id"], f"Transcribing: {i}/{n}" if n > 1 else "Transcribing"))
+        except transcribe_gemini.GeminiError as e:
+            raise RuntimeError(str(e)) from e
+        seconds = len(audio) / store.SAMPLE_RATE
+        db.log_usage(m["id"], "transcript", "gemini", model, seconds, pricing.cost(seconds / 60, "gemini", model))
+        segs = mixdown.name_you(cleanup.drop_hallucinations(segs), tracks["mic"], tracks["system"])
+        return cleanup.strip_metrics(sorted(segs, key=lambda s: s["start"])), True, duration
     per_track = {}
     for name, audio in tracks.items():
         try:
@@ -402,7 +426,6 @@ def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
         except transcribe_gemini.GeminiError as e:
             raise RuntimeError(str(e)) from e
         seconds = len(audio) / store.SAMPLE_RATE
-        model = cfg["gemini_transcribe_model"]
         db.log_usage(m["id"], "transcript", "gemini", model, seconds, pricing.cost(seconds / 60, "gemini", model))
     return _label(per_track, list(tracks), diarized=True), both, duration
 
@@ -438,8 +461,16 @@ def _speech_model(cfg: dict) -> str:
     return model.rsplit("/", 1)[-1].removesuffix("-mlx")
 
 
+def _gemini_note(cfg: dict, labeled: bool) -> str | None:
+    """How the audio was sent to Google, for the version's record (None unless both tracks were recorded)."""
+    if cfg["transcribe_engine"] != "gemini" or not labeled:
+        return None
+    return "mic and call mixed into one recording" if cfg["gemini_mix_tracks"] else "mic and call sent as separate recordings"
+
+
 def _save_transcript(m: dict, segments: list[dict], labeled: bool, duration: float, made_with: str | None = None,
-                     engine: str | None = None, model: str | None = None, seconds: float | None = None) -> None:
+                     engine: str | None = None, model: str | None = None, seconds: float | None = None,
+                     note: str | None = None) -> None:
     text = "\n".join(_line(s) for s in segments)
     db.transcript_versions(m["id"])  # a transcript from before versions were kept is recorded before it's replaced
     db.update_meeting(
@@ -449,7 +480,7 @@ def _save_transcript(m: dict, segments: list[dict], labeled: bool, duration: flo
     )
     version = db.add_transcript_version(
         m["id"], transcript=text, segments_json=json.dumps(segments), engine=engine, model=model, made_with=made_with,
-        source="recording", duration_sec=duration, has_system=labeled, seconds=seconds)
+        source="recording", duration_sec=duration, has_system=labeled, seconds=seconds, note=note)
     db.mark_applied(m["id"], version)
 
 
@@ -477,10 +508,12 @@ def trial_status(meeting_id: int) -> dict | None:
     return _trials.get(meeting_id)
 
 
-def enqueue_trial(meeting_id: int, engine: str, model: str | None = None, apply: bool = False, summarize: bool = False) -> None:
+def enqueue_trial(meeting_id: int, engine: str, model: str | None = None, apply: bool = False, summarize: bool = False,
+                  mix_tracks: bool | None = None) -> None:
+    """mix_tracks: with Gemini, send one mixed recording (True) or each track (False); None: as in Settings."""
     _trials[meeting_id] = {"engine": engine, "model": model, "state": "queued", "detail": None, "version_id": None,
                            "error": None, "agreement": None, "apply": apply}
-    _executor.submit(_run_trial, meeting_id, engine, model, apply, summarize)
+    _executor.submit(_run_trial, meeting_id, engine, model, apply, summarize, mix_tracks)
 
 
 def cancel_trials() -> int:
@@ -495,7 +528,8 @@ def all_trials() -> dict[int, dict]:
     return dict(_trials)
 
 
-def _run_trial(meeting_id: int, engine: str, model: str | None, apply: bool, summarize: bool) -> None:
+def _run_trial(meeting_id: int, engine: str, model: str | None, apply: bool, summarize: bool,
+               mix_tracks: bool | None = None) -> None:
     trial = _trials[meeting_id]
     if trial["state"] != "queued":  # cancelled while it waited
         return
@@ -505,6 +539,8 @@ def _run_trial(meeting_id: int, engine: str, model: str | None, apply: bool, sum
             raise RuntimeError("The audio for this meeting has been deleted, so it can't be transcribed again")
         cfg = settings.get_all()
         cfg["transcribe_engine"] = engine
+        if mix_tracks is not None:
+            cfg["gemini_mix_tracks"] = mix_tracks
         if model and engine == "gemini":
             cfg["gemini_transcribe_model"] = model
         elif model and engine == "remote":
@@ -527,7 +563,7 @@ def _run_trial(meeting_id: int, engine: str, model: str | None, apply: bool, sum
         version = db.add_transcript_version(
             meeting_id, transcript="\n".join(_line(s) for s in segments), segments_json=json.dumps(segments),
             engine=engine, model=used, made_with=f"{used}, redone later", source="upgrade", duration_sec=duration,
-            has_system=labeled, seconds=round(time.monotonic() - began))
+            has_system=labeled, seconds=round(time.monotonic() - began), note=_gemini_note(cfg, labeled))
         current = compare.diff(compare.plain(json.loads(m["segments_json"]) if m.get("segments_json") else None,
                                              m["transcript"] or ""), compare.plain(segments))
         trial.update(version_id=version, state="done", detail=None, agreement=current["agreement"])

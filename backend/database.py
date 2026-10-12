@@ -107,6 +107,22 @@ CREATE TABLE IF NOT EXISTS usage (
     est_cost      REAL               -- US dollars; NULL when the price isn't known
 );
 CREATE INDEX IF NOT EXISTS usage_at ON usage (at);
+
+-- Work sent to Google's Batch API (half price, answers come back later), until its answers have been used.
+CREATE TABLE IF NOT EXISTS batch_jobs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL UNIQUE,            -- Google's name for it: batches/...
+    kind          TEXT NOT NULL,                   -- notes
+    model         TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    state         TEXT NOT NULL DEFAULT 'pending', -- pending | running | succeeded | failed | cancelled | expired
+    finished_at   TEXT,
+    items_json    TEXT NOT NULL,                   -- {key: {meeting_id, summary_hash}}: what each request was for
+    applied       INTEGER NOT NULL DEFAULT 0,      -- the answers have been put in the meetings
+    result_json   TEXT,                            -- {applied, skipped: {reason: n}, failed, cost}
+    est_cost      REAL,
+    error         TEXT
+);
 """
 
 
@@ -443,6 +459,27 @@ def usage_since(iso: str) -> list[dict]:
             "sum(est_cost IS NULL) AS unpriced FROM usage WHERE at >= ? GROUP BY kind, engine, model ORDER BY cost DESC",
             (iso,)).fetchall()
     return [dict(r) for r in rows]
+
+
+def add_batch_job(name: str, kind: str, model: str, items: dict, est_cost: float | None) -> int:
+    with connect() as conn:
+        return conn.execute("INSERT INTO batch_jobs (name, kind, model, items_json, est_cost) VALUES (?, ?, ?, ?, ?)",
+                            (name, kind, model, json.dumps(items), est_cost)).lastrowid
+
+
+def batch_jobs(open_only: bool = False, limit: int = 50) -> list[dict]:
+    """Batch jobs, newest first. open_only: only those whose answers haven't been used yet."""
+    where = "WHERE applied = 0 AND state IN ('pending', 'running', 'succeeded')" if open_only else ""
+    with connect() as conn:
+        rows = conn.execute(f"SELECT * FROM batch_jobs {where} ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_batch_job(job_id: int, **fields) -> None:
+    allowed = {"state", "finished_at", "applied", "result_json", "error"}
+    assert set(fields) <= allowed
+    with connect() as conn:
+        conn.execute(f"UPDATE batch_jobs SET {', '.join(f'{k} = ?' for k in fields)} WHERE id = ?", (*fields.values(), job_id))
 
 
 def delete_meeting(meeting_id: int) -> None:

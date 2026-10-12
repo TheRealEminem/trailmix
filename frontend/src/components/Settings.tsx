@@ -8,6 +8,8 @@ import type {
   LiveNotesPlan,
   StatsInfo,
   NativeRecorder,
+  BatchJob,
+  NotesBatchEstimate,
   TranscribeEngine,
   TrialEstimate,
   TrialRow,
@@ -528,6 +530,7 @@ function UpgradesSection({ organize, onChanged }: { organize: ReturnType<typeof 
           </button>
         </Row>
       )}
+      <BatchNotes up={up} onChanged={() => { onChanged(); void load(); }} />
       <TranscriptUpgrades up={up} onChanged={onChanged} />
       {note && <p className="pb-3.5 text-hint text-ink-soft">{note}</p>}
     </Section>
@@ -541,6 +544,134 @@ const TRIAL_ENGINES: { value: TranscribeEngine; label: string }[] = [
 ];
 
 /** Redo transcripts with a better speech engine, or run any engine over every meeting to compare them. */
+/** Rewrite old notes with Gemini as a half-price batch job, and watch the jobs. */
+function BatchNotes({ up, onChanged }: { up: Upgrades; onChanged: () => void }) {
+  const b = up.notes_batch;
+  const [limit, setLimit] = useState(5);
+  const [estimate, setEstimate] = useState<NotesBatchEstimate | null>(null);
+  const [jobs, setJobs] = useState<BatchJob[]>([]);
+  const [message, setMessage] = useState<string | null>(null);
+  const [confirm, confirmDialog] = useConfirm();
+  const open = jobs.some((j) => j.state === "pending" || j.state === "running");
+
+  const load = () =>
+    api
+      .batches()
+      .then(setJobs)
+      .catch(() => undefined);
+  useEffect(() => {
+    void load();
+  }, []);
+  // While a job is out, ask how it's going (the app also checks by itself every minute).
+  useEffect(() => {
+    if (!open) return;
+    const id = setInterval(() => void api.checkBatches().then((r) => { setJobs(r.jobs); if (r.changed) onChanged(); }).catch(() => undefined), 20000);
+    return () => clearInterval(id);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!b.ready || !b.count) return;
+    let alive = true;
+    const t = setTimeout(() => {
+      api
+        .estimateNotesBatch(limit)
+        .then((e) => alive && setEstimate(e))
+        .catch(() => alive && setEstimate(null));
+    }, 300);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [b.ready, b.count, limit, jobs.length]);
+
+  const send = async () => {
+    if (!estimate || !estimate.meetings) return;
+    const ok = await confirm({
+      title: `Rewrite ${estimate.meetings} meeting${estimate.meetings === 1 ? "" : "s"}' notes at half price?`,
+      body: `The transcripts go to Google as a batch job for ${estimate.model}: ${money(estimate.cost)}, instead of ${money(estimate.standard_cost)} done one at a time (prices as of ${estimate.as_of}). The answers usually come back within minutes and at most about a day; they replace the notes by themselves, and the notes they replace stay in each meeting's history. Meetings whose notes you change meanwhile are left alone.`,
+      confirmLabel: "Send the batch",
+    });
+    if (!ok) return;
+    api
+      .startNotesBatch(limit)
+      .then((r) => {
+        setMessage(`Sent ${r.submitted} meeting${r.submitted === 1 ? "" : "s"} to Google (${money(r.cost)}). They're rewritten when the answers come back.`);
+        void load();
+      })
+      .catch((e: Error) => setMessage(e.message));
+  };
+
+  const stateText = (j: BatchJob) =>
+    j.state === "succeeded"
+      ? j.result
+        ? `done: ${j.result.applied} rewritten${j.result.failed ? `, ${j.result.failed} failed` : ""}${Object.entries(j.result.skipped).map(([why, n]) => `, ${n} left alone (${why})`).join("")}`
+        : "done"
+      : j.state === "failed"
+        ? `failed: ${j.error ?? "Google says so"}`
+        : j.state === "pending" ? "waiting at Google" : j.state === "running" ? "Google is working on it" : j.state;
+
+  return (
+    <>
+      {confirmDialog}
+      {b.ready && b.count > 0 && (
+        <Row
+          label={`Notes for ${b.count} meeting${b.count === 1 ? "" : "s"}: at half price`}
+          hint={`${b.model} would write them better than ${Object.keys(b.from).join(", ")}. As a Google batch job it costs half, and nobody waits for it.`}
+        >
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <label className="flex items-center gap-1.5 text-hint">
+              At a time
+              <input
+                type="number"
+                min={1}
+                max={100}
+                className="field h-8 w-16 px-2 text-label"
+                value={limit}
+                onChange={(e) => setLimit(Math.max(1, Math.min(100, Number(e.target.value) || 1)))}
+                aria-label="How many meetings at a time"
+              />
+            </label>
+            <button className="btn btn-sm btn-soft" disabled={!estimate || !estimate.meetings} onClick={() => void send()}>
+              {estimate ? `Send ${estimate.meetings} (${money(estimate.cost)})` : "…"}
+            </button>
+          </div>
+        </Row>
+      )}
+      {message && <p className="pb-2 text-hint text-ink-soft">{message}</p>}
+      {jobs.length > 0 && (
+        <div className="pb-3.5">
+          <div className="mb-1.5 flex items-center justify-between text-hint text-ink-soft">
+            <span>Batch jobs</span>
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={() => void api.checkBatches().then((r) => { setJobs(r.jobs); onChanged(); })}
+            >
+              Check now
+            </button>
+          </div>
+          <ul className="max-h-48 divide-y divide-line overflow-y-auto rounded-xl border border-line text-hint">
+            {jobs.map((j) => (
+              <li key={j.id} className="flex flex-wrap items-baseline justify-between gap-x-3 px-3 py-2">
+                <span className="text-ink">
+                  Notes for {j.meetings} meeting{j.meetings === 1 ? "" : "s"} · {j.model} ·{" "}
+                  {new Date(j.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                </span>
+                <span className="flex items-center gap-2 text-ink-soft">
+                  {stateText(j)}
+                  {(j.state === "pending" || j.state === "running") && (
+                    <button className="btn btn-sm btn-ghost" onClick={() => void api.cancelBatch(j.id).then(load)}>
+                      Cancel
+                    </button>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </>
+  );
+}
+
 /** What the paid speech engines were asked to do lately, and about what it cost. */
 function SpendRow() {
   const [usage, setUsage] = useState<Usage | null>(null);
@@ -1828,6 +1959,13 @@ export default function Settings({
                 onSave={(v) => void saveTranscription({ gemini_api_key: v })}
               />
             </Row>
+            <SwitchRow
+              icon={<LinesIcon size={16} />}
+              label="Send one mixed recording"
+              hint="Your mic and the call's audio are mixed into one before they go to Google: half the cost. Who is you is worked out here from which side was louder. Off: each is sent on its own (twice the cost, and a little more of the quiet speech is picked up)."
+              checked={s.gemini_mix_tracks}
+              onChange={(v) => save({ gemini_mix_tracks: v })}
+            />
             <p className="py-3.5 text-hint leading-relaxed text-ink-soft">
               Tells people apart: “Speaker 1”, “Speaker 2”… (on a call your microphone is always you). The
               recording is sent to Google to be transcribed after you stop, and removed from their servers
