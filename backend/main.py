@@ -29,6 +29,7 @@ import audio_store as store
 import auth
 import database as db
 import archive
+import compare
 import exporter
 import importer
 import live
@@ -901,7 +902,7 @@ def add_my_note(meeting_id: int, body: MyNote):
         raise HTTPException(422, "Type something first")
     session = live.get(meeting_id)
     notes = meeting_text.my_notes(m) + [{"t": round(session.duration, 1) if session else None, "text": text}]
-    db.update_meeting(meeting_id, my_notes_json=notes)
+    db.update_meeting(meeting_id, why="you edited your notes", my_notes_json=notes)
     return notes
 
 
@@ -910,7 +911,7 @@ def replace_my_notes(meeting_id: int, body: MyNotes):
     """Your notes after editing or deleting some. Regenerate rewrites the notes with them."""
     _get_or_404(meeting_id)
     notes = [{"t": n.t, "text": n.text.strip()[:4000]} for n in body.notes if n.text.strip()]
-    db.update_meeting(meeting_id, my_notes_json=notes or None)
+    db.update_meeting(meeting_id, why="you edited your notes", my_notes_json=notes or None)
     return notes
 
 
@@ -956,7 +957,8 @@ def edit_meeting(meeting_id: int, body: MeetingPatch):
         if not m.get("imported_at"):  # its audio's 30 days still count from when it came in, not the new date
             fields["imported_at"] = m["created_at"]
     if fields:
-        db.update_meeting(meeting_id, **fields)
+        db.update_meeting(meeting_id, why="you changed the " + " and ".join(
+            {"title": "title", "created_at": "date"}[k] for k in ("title", "created_at") if k in fields), **fields)
         _reexport(meeting_id)
     return {"ok": True}
 
@@ -980,7 +982,7 @@ def set_speakers(meeting_id: int, names: dict[str, str]):
     _get_or_404(meeting_id)
     allowed = {"You", "Them", *meeting_text.speaker_labels(_get_or_404(meeting_id))}
     clean = {k: v.strip()[:60] for k, v in names.items() if k in allowed}
-    db.update_meeting(meeting_id, speaker_names_json=clean)
+    db.update_meeting(meeting_id, why="you renamed speakers", speaker_names_json=clean)
     _reexport(meeting_id)
     return _present(db.get_meeting(meeting_id))["speaker_names"]
 
@@ -1056,6 +1058,120 @@ def retranscribe(meeting_id: int, body: RetranscribeRequest | None = None):
                       summary_error=None, live_json=None)  # the whole recording, from scratch
     pipeline.enqueue(meeting_id, go=frozenset({"transcribe", "summarize"}), engine=engine)
     return {"ok": True}
+
+
+# ── Transcript versions: try another speech model, compare, switch ─────
+
+class TrialRequest(BaseModel):
+    engine: str                     # local | remote | gemini
+    model: str | None = None        # e.g. a newer Google model, or whisper-1 / gpt-4o-transcribe for a remote endpoint
+    apply: bool = False             # use the result straight away (otherwise it's kept to compare)
+    summarize: bool = False         # with apply: write the notes again from it
+
+
+class ApplyRequest(BaseModel):
+    summarize: bool = False
+
+
+def _check_engine(engine: str, cfg: dict) -> None:
+    """Fails now, in plain words, if this engine can't be used (rather than after the job was queued)."""
+    if engine not in settings.CHOICES["transcribe_engine"]:
+        raise HTTPException(422, "Unknown transcription engine")
+    if engine == "gemini":
+        if settings.locked(cfg):
+            raise HTTPException(409, f"{settings.LOCKDOWN}, so recordings can't be sent to Google")
+        if not cfg["gemini_api_key"]:
+            raise HTTPException(409, "Add a Google API key first (Settings → Transcription)")
+    elif engine == "remote":
+        if not cfg["transcribe_url"]:
+            raise HTTPException(409, "Set the transcription endpoint first (Settings → Transcription)")
+        if settings.locked(cfg) and not settings.on_this_computer(cfg["transcribe_url"]):
+            raise HTTPException(409, f"{settings.LOCKDOWN}, so recordings can't go to a transcription server elsewhere")
+    elif not mlx_engine.available():
+        raise HTTPException(409, "Transcribing on this Mac needs a Mac with MLX")
+
+
+def _version_summary(v: dict) -> dict:
+    segments = json.loads(v["segments_json"]) if v.get("segments_json") else None
+    return {"id": v["id"], "created_at": v["created_at"], "engine": v["engine"], "model": v["model"],
+            "made_with": v["made_with"], "source": v["source"], "applied": bool(v["applied"]), "seconds": v["seconds"],
+            "duration_sec": v["duration_sec"], "note": v["note"], **compare.stats(segments, v["transcript"])}
+
+
+@app.get("/api/meetings/{meeting_id}/versions")
+def transcript_versions(meeting_id: int):
+    """Every transcript made of this meeting, oldest first, and the trial in progress (if any)."""
+    _get_or_404(meeting_id)
+    return {"versions": [_version_summary(v) for v in db.transcript_versions(meeting_id)],
+            "trial": pipeline.trial_status(meeting_id)}
+
+
+@app.get("/api/meetings/{meeting_id}/versions/{version_id}")
+def transcript_version(meeting_id: int, version_id: int):
+    _get_or_404(meeting_id)
+    v = db.get_transcript_version(version_id)
+    if not v or v["meeting_id"] != meeting_id:
+        raise HTTPException(404, "No such transcript")
+    return {**_version_summary(v), "transcript": v["transcript"],
+            "segments": json.loads(v["segments_json"]) if v["segments_json"] else None}
+
+
+@app.post("/api/meetings/{meeting_id}/versions/{version_id}/apply", status_code=202)
+def apply_transcript_version(meeting_id: int, version_id: int, body: ApplyRequest | None = None):
+    """Switches the meeting to this transcript. The one it replaces stays in the versions."""
+    meeting = _get_or_404(meeting_id)
+    if meeting["status"] not in ("done", "error", "ready_summarize"):
+        raise HTTPException(409, "This meeting is still being processed")
+    try:
+        pipeline.apply_version(meeting_id, version_id, summarize=bool(body and body.summarize))
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    _reexport(meeting_id)
+    return {"ok": True}
+
+
+@app.post("/api/meetings/{meeting_id}/trial", status_code=202)
+def start_trial(meeting_id: int, body: TrialRequest):
+    """Transcribes the saved audio again with another engine or model and keeps the result as a new version, to
+    compare with the one in use. The meeting itself isn't touched unless `apply`."""
+    meeting = _get_or_404(meeting_id)
+    if meeting["audio_deleted"] or not store.audio_bytes(meeting):
+        raise HTTPException(409, "The audio for this meeting has been deleted, so it can't be transcribed again")
+    if not meeting["transcript"]:
+        raise HTTPException(409, "This meeting has no transcript yet")
+    if meeting["status"] not in ("done", "error", "ready_summarize"):
+        raise HTTPException(409, "This meeting is still being processed")
+    current = pipeline.trial_status(meeting_id)
+    if current and current["state"] in ("queued", "running"):
+        raise HTTPException(409, "Another transcript is already being made for this meeting")
+    _check_engine(body.engine, settings.get_all())
+    pipeline.enqueue_trial(meeting_id, body.engine, body.model, apply=body.apply, summarize=body.summarize)
+    return pipeline.trial_status(meeting_id)
+
+
+@app.get("/api/meetings/{meeting_id}/trial")
+def trial_status(meeting_id: int):
+    _get_or_404(meeting_id)
+    return pipeline.trial_status(meeting_id)
+
+
+@app.get("/api/meetings/{meeting_id}/compare")
+def compare_versions(meeting_id: int, a: int, b: int):
+    """How two transcripts of this meeting differ: agreement, and the words that differ."""
+    _get_or_404(meeting_id)
+    va, vb = db.get_transcript_version(a), db.get_transcript_version(b)
+    if not va or not vb or va["meeting_id"] != meeting_id or vb["meeting_id"] != meeting_id:
+        raise HTTPException(404, "No such transcript")
+    spoken = [compare.plain(json.loads(v["segments_json"]) if v["segments_json"] else None, v["transcript"]) for v in (va, vb)]
+    return {"a": _version_summary(va), "b": _version_summary(vb), **compare.diff(*spoken),
+            "inline": compare.inline(*spoken)}
+
+
+@app.get("/api/meetings/{meeting_id}/history")
+def meeting_history(meeting_id: int, field: str | None = None):
+    """The receipt: every change to this meeting (when, what, from what to what, and why), newest first."""
+    _get_or_404(meeting_id)
+    return db.history_for(meeting_id, field)
 
 
 @app.post("/api/meetings/{meeting_id}/summarize", status_code=202)
@@ -1151,7 +1267,7 @@ def set_meeting_workspace(meeting_id: int, body: MeetingWorkspace):
     _get_or_404(meeting_id)
     if body.workspace_id and not db.get_workspace(body.workspace_id):
         raise HTTPException(404, "No such workspace")
-    db.update_meeting(meeting_id, workspace_id=body.workspace_id, workspace_auto=0)
+    db.update_meeting(meeting_id, why="you moved it to another workspace", workspace_id=body.workspace_id, workspace_auto=0)
     _reexport(meeting_id)
     return {"ok": True}
 
@@ -1298,7 +1414,7 @@ def retitle(meeting_id: int):
         raise HTTPException(502, str(e))
     if not title:
         raise HTTPException(502, "The AI didn't come up with a usable title; try again")
-    db.update_meeting(meeting_id, title=title, title_auto=1)
+    db.update_meeting(meeting_id, why="a new title from its notes", title=title, title_auto=1)
     _reexport(meeting_id)
     return {"title": title}
 
