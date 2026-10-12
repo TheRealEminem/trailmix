@@ -234,3 +234,39 @@ def test_bulk_trials_queue_only_meetings_with_audio_and_can_be_cancelled(client,
     pipeline._run_trial(a, "gemini", None, False, False)  # a cancelled one does nothing when its turn comes
     assert pipeline.trial_status(a)["state"] == "cancelled"
     assert len(db.transcript_versions(a)) == 1
+
+
+# ── choosing the engine for one recording ──
+
+def test_a_recording_remembers_the_engine_picked_for_it(client, fresh_db, monkeypatch):
+    monkeypatch.setattr(main.settings, "get_all", lambda: {**main.settings.DEFAULTS, "gemini_api_key": "k", "lockdown": False})
+    r = client.post("/api/meetings", json={"title": "", "engine": "gemini"})
+    assert r.status_code == 201
+    assert db.get_meeting(r.json()["id"])["requested_engine"] == "gemini"
+    db.update_meeting(r.json()["id"], status="done")  # not recording any more
+    plain = client.post("/api/meetings", json={"title": ""})
+    assert plain.status_code == 201 and db.get_meeting(plain.json()["id"])["requested_engine"] is None
+
+
+def test_a_recording_with_an_engine_that_cannot_work_is_refused_up_front(client, fresh_db, monkeypatch):
+    monkeypatch.setattr(main.settings, "get_all", lambda: {**main.settings.DEFAULTS, "gemini_api_key": "", "lockdown": False})
+    r = client.post("/api/meetings", json={"title": "", "engine": "gemini"})
+    assert r.status_code == 409 and "Google API key" in r.json()["detail"]
+
+
+def test_the_pipeline_uses_the_engine_the_recording_asked_for(fresh_db, monkeypatch):
+    mid = db.create_meeting("x", title_auto=False, requested_engine="gemini")
+    db.update_meeting(mid, status="queued", audio_dir=str(fresh_db / "audio"))
+    seen = {}
+
+    def fake(m, cfg):
+        seen["engine"] = cfg["transcribe_engine"]
+        return [{"start": 0, "end": 1, "speaker": None, "text": "hello"}], False, 1.0
+
+    monkeypatch.setattr(pipeline, "_transcribe_gemini", fake)
+    monkeypatch.setattr(pipeline.store, "compress_pending", lambda m: None)
+    monkeypatch.setattr(pipeline.settings, "get_all", lambda: {**pipeline.settings.DEFAULTS, "auto_summarize": False,
+                                                              "transcribe_engine": "local", "auto_export": False})
+    pipeline._run_stages(mid, frozenset(), frozenset())
+    assert seen["engine"] == "gemini"
+    assert db.get_meeting(mid)["transcribed_with"].startswith("gemini-3.5-transcribe")

@@ -129,6 +129,7 @@ _ADDED_COLUMNS = {
     "tags_json": "TEXT",                             # ["vaccine cold chain", "investor pitch", …]
     "tags_model": "TEXT",
     "imported_at": "TEXT",                           # when an imported recording came in (its audio's 30 days)
+    "requested_engine": "TEXT",                      # speech engine picked for this recording (NULL: the one in Settings)
 }
 
 _FTS_FIELDS = ("title", "transcript", "summary", "tags_json")
@@ -215,11 +216,13 @@ def _reindex(conn, meeting_id: int) -> None:
                  (meeting_id,))
 
 
-def create_meeting(title: str, title_auto: bool, workspace_id: int | None = None) -> int:
+def create_meeting(title: str, title_auto: bool, workspace_id: int | None = None,
+                   requested_engine: str | None = None) -> int:
     with connect() as conn:
         cur = conn.execute(
-            "INSERT INTO meetings (title, title_auto, status, uid, workspace_id) VALUES (?, ?, 'recording', ?, ?)",
-            (title, int(title_auto), uuid.uuid4().hex, workspace_id),
+            "INSERT INTO meetings (title, title_auto, status, uid, workspace_id, requested_engine) "
+            "VALUES (?, ?, 'recording', ?, ?, ?)",
+            (title, int(title_auto), uuid.uuid4().hex, workspace_id, requested_engine),
         )
         meeting_id = cur.lastrowid
         audio_dir = AUDIO_DIR / str(meeting_id)
@@ -318,7 +321,7 @@ _UPDATABLE = {
     "requested_provider", "requested_template", "title_auto", "draft_json", "exported_paths", "export_error",
     "bookmarks_json", "speaker_names_json", "qa_json", "keep_audio", "audio_dir", "live_json", "workspace_id", "workspace_auto",
     "live_notes_json", "my_notes_json", "transcribed_with", "summary_model", "workspace_model", "tags_json", "tags_model", "imported_at",
-    "created_at",
+    "created_at", "requested_engine",
 }
 _JSON_FIELDS = {"my_notes_json", "live_notes_json", "tags_json", "segments_json", "draft_json", "exported_paths", "bookmarks_json", "speaker_names_json", "qa_json"}
 

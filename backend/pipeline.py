@@ -67,16 +67,8 @@ def _progress(meeting_id: int, text: str) -> None:
         db.update_meeting(meeting_id, wait_reason=text)
 
 
-# A speech engine chosen for one meeting's next transcription ("Transcribe again with Gemini"), instead of the
-# one in Settings. In memory only: after a restart the job simply uses the Settings engine.
-_engine_for: dict[int, str] = {}
-
-
-def enqueue(meeting_id: int, go: frozenset[str] = NONE, force: frozenset[str] = NONE, engine: str | None = None) -> None:
-    """go: stages the user has just approved by hand. force: stages whose low-RAM warning they overrode.
-    engine: transcribe with this engine (local, remote, gemini) this once."""
-    if engine:
-        _engine_for[meeting_id] = engine
+def enqueue(meeting_id: int, go: frozenset[str] = NONE, force: frozenset[str] = NONE) -> None:
+    """go: stages the user has just approved by hand. force: stages whose low-RAM warning they overrode."""
     _executor.submit(_run, meeting_id, go, force)
 
 
@@ -166,8 +158,8 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
     if not m:
         return
     cfg = settings.get_all()
-    if meeting_id in _engine_for:
-        cfg["transcribe_engine"] = _engine_for[meeting_id]
+    if m.get("requested_engine"):  # picked for this recording (or "Transcribe again with ..."), not the Settings one
+        cfg["transcribe_engine"] = m["requested_engine"]
     stats: dict = {}  # for the anonymous usage stats (telemetry.py): durations and choices, nothing said
     started = time.monotonic()
 
@@ -201,7 +193,6 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
         began = time.monotonic()
         transcribe = _transcribe_local if local else _transcribe_gemini if engine == "gemini" else _transcribe_remote
         segments, labeled, duration = transcribe(m) if local else transcribe(m, cfg)
-        _engine_for.pop(meeting_id, None)
         _save_transcript(m, segments, labeled, duration, made_with=f"{_speech_model(cfg)}, after the meeting",
                          engine=engine, model=_speech_model(cfg), seconds=round(time.monotonic() - began))
         stats.update(transcribed="after the meeting", transcribe_seconds=round(time.monotonic() - began))

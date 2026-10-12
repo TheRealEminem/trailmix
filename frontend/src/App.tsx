@@ -871,6 +871,19 @@ export default function App() {
                 onIncludeMeetingAudio={setIncludeMeetingAudio}
                 liveDraft={liveDraft}
                 onLiveDraft={setLiveDraft}
+                onEngine={(engine) => {
+                  if (engine === "gemini" && !health?.transcription.gemini_ready) {
+                    setToast({
+                      tone: "error",
+                      text: "Add a Google API key first (Settings → Transcription), and turn Lockdown mode off.",
+                    });
+                    return;
+                  }
+                  void api
+                    .putSettings({ transcribe_engine: engine })
+                    .then(() => refreshHealth())
+                    .catch((e: Error) => setToast({ tone: "error", text: e.message }));
+                }}
                 notice={notice}
                 drafts={drafts}
                 interims={Object.values(interims)}
