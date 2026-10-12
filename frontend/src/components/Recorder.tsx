@@ -26,7 +26,7 @@ import LevelMeters from "./LevelMeter";
 import MicPicker from "./MicPicker";
 import MyNotes from "./MyNotes";
 import SoundCheck from "./SoundCheck";
-import { ControlRow, Pulse, SpeakerChip, Spinner, SwitchRow } from "./ui";
+import { ControlRow, Pulse, Segmented, SpeakerChip, Spinner, SwitchRow } from "./ui";
 
 interface Props {
   rec: ActiveRecording | null;
@@ -43,6 +43,8 @@ interface Props {
   onIncludeMeetingAudio: (v: boolean) => void;
   liveDraft: boolean;
   onLiveDraft: (v: boolean) => void;
+  /** Switches the speech engine for recordings from now on (the one in Settings → Transcription). */
+  onEngine: (engine: "local" | "gemini") => void;
   notice: string | null;
   drafts: DraftLine[];
   /** The words being said right now (live captions from Google) */
@@ -195,6 +197,36 @@ function ModelNote({
       <span className="shrink-0">{label}</span>
       <span className="truncate font-medium text-ink">{value}</span>
     </span>
+  );
+}
+
+/** Where recordings are transcribed, switchable right before you press Record. */
+function EnginePicker({ health, onEngine }: { health: Health | null; onEngine: (e: "local" | "gemini") => void }) {
+  const engine = health?.transcription.engine;
+  if (!health || !engine) return null;
+  return (
+    <ControlRow
+      icon={<LinesIcon size={16} />}
+      label="Transcribe with"
+      hint={
+        engine === "gemini"
+          ? "Google: live captions as you talk, then a transcript with the speakers told apart. Your audio is sent to Google."
+          : engine === "remote"
+            ? "Your own transcription server (change it in Settings → Transcription)."
+            : "This Mac: private and free, labels you and the other side of a call."
+      }
+    >
+      <Segmented
+        label="Speech engine for the next recording"
+        size="sm"
+        value={engine === "gemini" ? "gemini" : "local"}
+        onChange={(v) => onEngine(v as "local" | "gemini")}
+        options={[
+          { id: "local", label: "This Mac" },
+          { id: "gemini", label: "Google" },
+        ]}
+      />
+    </ControlRow>
   );
 }
 
@@ -445,6 +477,7 @@ export default function Recorder(p: Props) {
                     {p.native.source}
                   </span>
                 </ControlRow>
+                <EnginePicker health={p.health} onEngine={p.onEngine} />
                 <p className="flex items-center gap-2 py-3 text-hint text-ink-soft">
                   <MenuBarIcon />
                   Records with the Trailmix menu bar recorder
@@ -484,6 +517,7 @@ export default function Recorder(p: Props) {
                   checked={p.liveDraft}
                   onChange={p.onLiveDraft}
                 />
+                <EnginePicker health={p.health} onEngine={p.onEngine} />
               </div>
             )}
             {p.health && (

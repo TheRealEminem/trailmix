@@ -176,6 +176,7 @@ async def require_login(request: Request, call_next):
 class StartRequest(BaseModel):
     title: str = ""
     workspace_id: int | None = None  # the workspace you're in when you press Record
+    engine: str | None = None        # speech engine for this recording (local, remote, gemini); None: Settings
 
 
 class WorkspaceBody(BaseModel):
@@ -763,10 +764,13 @@ def start_meeting(body: StartRequest):
         raise HTTPException(409, "Trailmix is already recording. Stop that recording first.")
     title = body.title.strip()
     # The workspace you're in (the window says which; the menu bar and hotkey use the last one you picked).
-    wanted = body.workspace_id or settings.get_all()["current_workspace"]
+    cfg = settings.get_all()
+    if body.engine:
+        _check_engine(body.engine, cfg)  # say now, not after the meeting, that it can't be done
+    wanted = body.workspace_id or cfg["current_workspace"]
     space = wanted if wanted and db.get_workspace(wanted) else None
     return {"id": db.create_meeting(title or f"Meeting {datetime.now():%b %d, %H:%M}", title_auto=not title,
-                                    workspace_id=space)}
+                                    workspace_id=space, requested_engine=body.engine or None)}
 
 
 @app.websocket("/api/meetings/{meeting_id}/stream")
@@ -782,7 +786,10 @@ async def stream(ws: WebSocket, meeting_id: int, draft: int = 1, client: str = "
         await ws.close(code=4404)
         return
     await ws.accept()
-    session = live.LiveSession(meeting_id, Path(meeting["audio_dir"]), draft=bool(draft), cfg=settings.get_all(),
+    cfg = settings.get_all()
+    if meeting.get("requested_engine"):
+        cfg["transcribe_engine"] = meeting["requested_engine"]
+    session = live.LiveSession(meeting_id, Path(meeting["audio_dir"]), draft=bool(draft), cfg=cfg,
                                client="helper" if client == "helper" else "web")
     send_lock = asyncio.Lock()
     stop_requested = asyncio.Event()
@@ -1055,8 +1062,9 @@ def retranscribe(meeting_id: int, body: RetranscribeRequest | None = None):
     if meeting["audio_deleted"] or not store.audio_bytes(meeting):
         raise HTTPException(409, "The audio for this meeting has been deleted, so it can't be transcribed again")
     db.update_meeting(meeting_id, status="queued", wait_reason=None, error=None, transcribed=0, summary=None,
-                      summary_error=None, live_json=None)  # the whole recording, from scratch
-    pipeline.enqueue(meeting_id, go=frozenset({"transcribe", "summarize"}), engine=engine)
+                      summary_error=None, live_json=None,  # the whole recording, from scratch
+                      requested_engine=engine)  # (None: with whatever Settings says now)
+    pipeline.enqueue(meeting_id, go=frozenset({"transcribe", "summarize"}))
     return {"ok": True}
 
 
