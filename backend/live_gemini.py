@@ -115,7 +115,7 @@ class Channel:
             await stream.ws.send(json.dumps({"realtimeInput": {"audioStreamEnd": True}}))
         except Exception:
             stream.dead = True
-        self._closing.append(stream)
+        self._closing = [s for s in self._closing if not s.dead] + [stream]  # (finished ones are let go)
 
     async def _receive(self, stream: _Stream) -> None:
         start = 0.0

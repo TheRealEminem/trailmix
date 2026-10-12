@@ -134,6 +134,8 @@ def update(changes: dict) -> dict:
             raise ValueError(f"Unknown setting: {key}")
         if not isinstance(value, type(DEFAULTS[key])):
             raise ValueError(f"Setting {key} must be a {type(DEFAULTS[key]).__name__}")
+        if key == "gemini_transcribe_model" and not value.strip():
+            raise ValueError("gemini_transcribe_model can't be empty")
         if key in CHOICES and value not in CHOICES[key]:
             raise ValueError(f"{key} must be one of {', '.join(CHOICES[key])}")
         if key == "export_formats" and any(f not in ("pdf", "docx", "odt", "md", "txt") for f in value):

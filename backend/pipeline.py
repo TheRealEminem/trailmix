@@ -142,6 +142,19 @@ def _gate(meeting_id: int, override: bool, required_gb: float, what: str) -> Non
     _wait_for_recording_to_end(meeting_id)  # a recording may have started while it waited
 
 
+def reexport(meeting_id: int) -> None:
+    """Keeps an already-exported meeting's files in step with a change made to it (title, names, ticked tasks, notes
+    rewritten later). Does nothing for a meeting that was never exported."""
+    meeting = db.get_meeting(meeting_id)
+    if not (meeting and meeting["exported_paths"] and meeting["transcript"]):
+        return
+    try:
+        paths = exporter.export_meeting(meeting, settings.get_all())
+        db.update_meeting(meeting_id, exported_paths=json.dumps(paths), export_error=None)
+    except OSError as e:
+        db.update_meeting(meeting_id, export_error=f"Export failed: {e}")
+
+
 def _export(meeting_id: int, cfg: dict) -> None:
     """Auto-export if enabled. A failure is recorded on the meeting, never raised."""
     if not cfg["auto_export"]:
@@ -570,6 +583,7 @@ def _run_trial(meeting_id: int, engine: str, model: str | None, apply: bool, sum
         trial.update(version_id=version, state="done", detail=None, agreement=current["agreement"])
         if apply:
             apply_version(meeting_id, version, summarize=summarize)
+            reexport(meeting_id)
     except Exception as e:
         log.exception("Trying another speech model on meeting %s failed", meeting_id)
         trial.update(state="failed", error=str(e), detail=None)

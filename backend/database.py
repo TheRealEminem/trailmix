@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sqlite3
+import threading
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -423,10 +424,13 @@ def add_transcript_version(meeting_id: int, *, transcript: str, segments_json: s
              seconds, int(applied), note, created_at)).lastrowid
 
 
+_baseline = threading.Lock()  # two requests must not both record a meeting's "original"
+
+
 def transcript_versions(meeting_id: int) -> list[dict]:
     """Every transcript of a meeting, oldest first, with its text. A meeting from before versions were kept gets
     its current transcript recorded as the "original" first."""
-    with connect() as conn:
+    with _baseline, connect() as conn:
         rows = conn.execute("SELECT * FROM transcript_versions WHERE meeting_id = ? ORDER BY id", (meeting_id,)).fetchall()
         if not rows:
             m = conn.execute("SELECT transcript, segments_json, transcribed_with, duration_sec, has_system "

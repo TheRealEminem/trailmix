@@ -295,3 +295,126 @@ def test_a_failed_submission_deletes_the_audio_it_had_uploaded(audio_world, monk
     with pytest.raises(gemini_batch.BatchError):
         batch_jobs.submit_transcripts([mid], cfg, "gemini-3.5-flash-lite")
     assert deleted == [f"files/batch-m{mid}-c0"] and db.batch_jobs() == []
+
+
+# ── regressions found in review ──
+
+def test_two_checks_at_once_apply_a_job_only_once(world, monkeypatch):
+    cfg, _ = world
+    mid = meeting()
+    batch_jobs.submit_notes([mid], cfg)
+    batch_jobs._checking.acquire()                  # another check (the background loop) is at it
+    try:
+        monkeypatch.setattr(gemini_batch, "status", lambda *a: pytest.fail("a second check asked Google too"))
+        assert batch_jobs.check() == 0
+    finally:
+        batch_jobs._checking.release()
+
+
+def test_batch_results_refresh_an_exported_meeting(world, monkeypatch):
+    cfg, _ = world
+    mid = meeting()
+    batch_jobs.submit_notes([mid], cfg)
+    refreshed = []
+    monkeypatch.setattr(batch_jobs.pipeline, "reexport", refreshed.append)
+    monkeypatch.setattr(gemini_batch, "status", lambda n, k: {"state": "succeeded", "results": {
+        f"m{mid}": {"text": "## Summary\nNew\n\n## Action Items\n- None", "error": None, "usage": {}}}})
+    batch_jobs.check()
+    assert refreshed == [mid]
+
+
+def test_notes_imported_from_another_app_are_never_rewritten_by_a_batch(world):
+    import main
+
+    cfg, _ = world
+    mine = meeting()
+    imported = meeting()
+    db.update_meeting(imported, summary_provider="granola", summary_model=None)
+    up = main._upgradable({**main.settings.DEFAULTS, **cfg}, "gemini-3.8-flash")["notes"]
+    assert up["ids"] == [mine]
+
+
+def test_a_muted_microphone_does_not_turn_a_remote_speaker_into_you():
+    import numpy as np
+
+    import mixdown
+
+    rng = np.random.default_rng(3)
+    # two remote people on the call's audio, talking in bursts with pauses (so it is quieter on average than at its loudest)
+    envelope = np.repeat(np.tile([1.0, 0.15, 0.4, 0.15], 3 * 12), 4000)[:16000 * 12]
+    system = (rng.standard_normal(16000 * 12) * 0.2 * envelope).astype(np.float32)
+    mic = (rng.standard_normal(16000 * 12) * 0.003).astype(np.float32)          # only a steady noise floor
+    segs = [{"start": 0, "end": 6, "speaker": "a", "text": "remote talking"}, {"start": 6, "end": 12, "speaker": "b", "text": "also remote"}]
+    assert [s["speaker"] for s in mixdown.name_you(segs, mic, system)] == ["Speaker 1", "Speaker 2"]
+
+
+def test_the_original_is_recorded_once_even_when_asked_for_at_the_same_moment(world):
+    import threading
+
+    mid = meeting()
+    threads = [threading.Thread(target=db.transcript_versions, args=(mid,)) for _ in range(8)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert [v["source"] for v in db.transcript_versions(mid)] == ["original"]
+
+
+def test_the_gemini_model_cannot_be_emptied():
+    import settings
+
+    with pytest.raises(ValueError, match="can't be empty"):
+        settings.update({"gemini_transcribe_model": "  "})
+
+
+def test_gemini_with_captions_unavailable_never_falls_back_to_the_local_model(tmp_path, monkeypatch):
+    import live
+
+    monkeypatch.setattr(db, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(db, "AUDIO_DIR", tmp_path / "data" / "audio")
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "data" / "t.db")
+    db.init_db()
+    for key, why in (("", "add a Google API key"), ("k", "Lockdown")):
+        cfg = {**__import__("settings").DEFAULTS, "transcribe_engine": "gemini", "gemini_api_key": key, "live_final": False,
+               "lockdown": key == "k"}
+        s = live.LiveSession(1, tmp_path / "a", draft=True, cfg=cfg)
+        try:
+            assert not s.polls_drafts and why in s.captions_off_reason
+        finally:
+            s.close()
+
+
+def test_captions_are_saved_to_the_database_every_few_seconds_not_on_every_line(tmp_path, monkeypatch):
+    import live
+
+    monkeypatch.setattr(db, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setattr(db, "AUDIO_DIR", tmp_path / "data" / "audio")
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "data" / "t.db")
+    db.init_db()
+    mid = db.create_meeting("x", title_auto=False)
+    s = live.LiveSession(mid, tmp_path / "a", draft=True, cfg={**__import__("settings").DEFAULTS, "live_final": False})
+    writes = []
+    monkeypatch.setattr(live.db, "update_meeting", lambda *a, **k: writes.append(k))
+    try:
+        for _ in range(5):
+            s.drafts.append({"start": 0, "speaker": None, "text": "hi"})
+            s._save_drafts()
+        assert len(writes) == 1
+        s._save_drafts(force=True)
+        assert len(writes) == 2
+    finally:
+        s.close()
+
+
+def test_finished_streams_are_forgotten():
+    import asyncio
+
+    import live_gemini as lg
+
+    async def go():
+        ch = lg.Channel("k", None, lambda *a: None, lambda *a: None)
+        for _ in range(5):
+            old = lg._Stream(type("W", (), {"send": staticmethod(lambda m: asyncio.sleep(0))})(), 0)
+            old.dead = True
+            await ch._end(old)
+        return len(ch._closing)
+
+    assert asyncio.run(go()) == 1
