@@ -3,6 +3,7 @@ fastapi>=0.115
 uvicorn[standard]>=0.30
 python-multipart>=0.0.9
 httpx>=0.27
+websockets>=13  # live captions from Google (live_gemini.py); also pulled in by uvicorn[standard]
 numpy>=1.26
 psutil>=6.0
 anthropic>=1.0

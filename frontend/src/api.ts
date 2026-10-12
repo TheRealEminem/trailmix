@@ -110,6 +110,8 @@ export interface DraftLine {
   start: number;
   speaker: string | null;
   text: string;
+  /** 0 = your microphone, 1 = the meeting's audio (live captions from Google) */
+  channel?: number;
 }
 
 export interface Bookmark {
@@ -277,6 +279,8 @@ export interface LiveRecording {
   has_system: boolean;
   draft: boolean;
   drafts: DraftLine[];
+  /** The words being said right now (live captions from Google), which may still change */
+  interims?: DraftLine[];
   bookmarks: Bookmark[];
   my_notes: MyNote[];
   /** Notes written during the meeting so far, each on a stretch of it */

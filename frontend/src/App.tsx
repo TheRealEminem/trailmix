@@ -142,6 +142,8 @@ export default function App() {
   const [elapsed, setElapsed] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<DraftLine[]>([]);
+  // Live captions being said right now, by channel (cleared when that stretch of speech is final).
+  const [interims, setInterims] = useState<Record<number, DraftLine>>({});
   const [marks, setMarks] = useState<Bookmark[]>([]);
   const recRef = useRef<ActiveRecording | null>(null);
   // A recording another app is capturing (normally the menu bar helper). Followed by polling /api/live.
@@ -414,6 +416,7 @@ export default function App() {
     setToast(null);
     setNotice(null);
     setDrafts([]);
+    setInterims({});
     setMarks([]);
     setElapsed(0);
     setStarting(true);
@@ -458,7 +461,20 @@ export default function App() {
         micDeviceId,
         includeMeetingAudio,
         liveDraft,
-        onDraft: (line) => setDrafts((d) => [...d, line]),
+        onDraft: (line) => {
+          setDrafts((d) => [...d, line]);
+          if (line.channel !== undefined)
+            setInterims((i) => {
+              const { [line.channel!]: _gone, ...rest } = i;
+              return rest;
+            });
+        },
+        onInterim: (line) =>
+          setInterims((i) => {
+            if (line.text) return { ...i, [line.channel]: line };
+            const { [line.channel]: _gone, ...rest } = i;
+            return rest;
+          }),
         onNotice: setNotice,
         onMarked: (b) => setMarks((m) => [...m, b]),
         onDropped: () => {
@@ -857,6 +873,7 @@ export default function App() {
                 onLiveDraft={setLiveDraft}
                 notice={notice}
                 drafts={drafts}
+                interims={Object.values(interims)}
                 health={health}
                 backendDown={backendDown}
                 bookmarks={marks}

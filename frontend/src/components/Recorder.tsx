@@ -45,6 +45,8 @@ interface Props {
   onLiveDraft: (v: boolean) => void;
   notice: string | null;
   drafts: DraftLine[];
+  /** The words being said right now (live captions from Google) */
+  interims: DraftLine[];
   /** The recording as the engine sees it, whichever app captures it (for the notes written during it). */
   live: LiveRecording | null;
   health: Health | null;
@@ -200,10 +202,11 @@ export default function Recorder(p: Props) {
   const recording = p.rec !== null || p.remote !== null;
   const helper = p.rec === null && p.remote !== null;
   const drafts = p.remote && !p.rec ? p.remote.drafts : p.drafts;
+  const interims = p.remote && !p.rec ? (p.remote.interims ?? []) : p.interims;
   const bookmarks = p.remote && !p.rec ? p.remote.bookmarks : p.bookmarks;
-  // Gemini transcribes after you stop (it tells the speakers apart), so there is no live draft with it.
+  // With Gemini the captions stream from Google as you talk; the transcript (with speakers told apart) follows after.
   const gemini = p.health?.transcription.engine === "gemini";
-  const liveDraft = (p.remote && !p.rec ? p.remote.draft : p.liveDraft) && !gemini;
+  const liveDraft = p.remote && !p.rec ? p.remote.draft : p.liveDraft;
   const draftBox = useRef<HTMLDivElement>(null);
   const remote = p.health?.transcription.engine === "remote";
   const finalLive = !!p.health?.transcription.live_final;
@@ -347,7 +350,7 @@ export default function Recorder(p: Props) {
                   <div className="flex items-center gap-2">
                     <LinesIcon size={16} className="text-forest" />
                     <span className="text-label font-medium">
-                      {finalLive ? "Live transcript" : "Live draft"}
+                      {gemini ? "Live captions" : finalLive ? "Live transcript" : "Live draft"}
                     </span>
                     {!finalLive && (
                       <span className="chip bg-surface-subtle text-ink-soft">
@@ -356,7 +359,9 @@ export default function Recorder(p: Props) {
                     )}
                   </div>
                   <span className="text-meta text-ink-soft">
-                    {finalLive
+                    {gemini
+                      ? "From Google as you talk; the transcript with speakers follows after you stop"
+                      : finalLive
                       ? "Made by the accurate model as you talk"
                       : "The accurate transcript is made after you stop"}
                   </span>
@@ -366,15 +371,17 @@ export default function Recorder(p: Props) {
                   ref={draftBox}
                   className="fade-edges-y -mx-1 max-h-80 space-y-2.5 overflow-y-auto px-1 py-1"
                 >
-                  {drafts.length === 0 ? (
+                  {drafts.length === 0 && interims.length === 0 ? (
                     <p className="flex items-center gap-2 text-label text-ink-soft">
                       <Spinner /> Listening…
                     </p>
                   ) : (
-                    drafts.map((d, i) => (
+                    [...drafts, ...interims.map((d) => ({ ...d, interim: true }))].map((d, i) => (
                       <p
                         key={i}
-                        className="flex animate-enter items-start gap-2.5 text-body leading-relaxed"
+                        className={`flex animate-enter items-start gap-2.5 text-body leading-relaxed ${
+                          "interim" in d ? "text-ink-soft" : ""
+                        }`}
                       >
                         {d.speaker && (
                           <span className="pt-[3px]">
@@ -466,22 +473,24 @@ export default function Recorder(p: Props) {
                   checked={p.includeMeetingAudio}
                   onChange={p.onIncludeMeetingAudio}
                 />
-                {!gemini && (
-                  <SwitchRow
-                    icon={<LinesIcon size={16} />}
-                    label="Live draft"
-                    hint="A rough running transcript from a small model. Turn off for the lightest footprint."
-                    checked={p.liveDraft}
-                    onChange={p.onLiveDraft}
-                  />
-                )}
+                <SwitchRow
+                  icon={<LinesIcon size={16} />}
+                  label={gemini ? "Live captions" : "Live draft"}
+                  hint={
+                    gemini
+                      ? "Words appear a second after they're said, streamed from Google. Off: the transcript comes after you stop."
+                      : "A rough running transcript from a small model. Turn off for the lightest footprint."
+                  }
+                  checked={p.liveDraft}
+                  onChange={p.onLiveDraft}
+                />
               </div>
             )}
             {p.health && (
               <footer className="flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-line bg-surface-subtle/50 px-5 py-3 text-meta text-ink-soft sm:px-6">
                 <ModelNote
                   tone="forest"
-                  label={gemini ? "Transcript · Google, after you stop" : remote ? "Transcript · remote" : "Transcript"}
+                  label={gemini ? "Transcript · Google" : remote ? "Transcript · remote" : "Transcript"}
                   value={shortModel(p.health.transcription.model)}
                 />
                 <ModelNote
