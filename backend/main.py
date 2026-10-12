@@ -29,6 +29,7 @@ import audio_store as store
 import auth
 import database as db
 import archive
+import batch_jobs
 import compare
 import exporter
 import importer
@@ -52,6 +53,7 @@ import workspaces
 import file_import
 import feedback
 import questions
+import gemini_batch
 import transcribe_gemini
 import transcribe_remote
 
@@ -128,6 +130,20 @@ async def _live_notes_loop():
         await asyncio.sleep(LIVE_NOTES_EVERY_S)
 
 
+BATCH_CHECK_EVERY_S = 60
+
+
+async def _batch_loop():
+    """Batch jobs sent to Google (batch_jobs.py): asks how they're going once a minute while any is open, and puts the
+    answers of finished ones in their meetings."""
+    while True:
+        try:
+            await run_in_threadpool(batch_jobs.check)
+        except Exception:
+            log.exception("Checking batch jobs failed")
+        await asyncio.sleep(BATCH_CHECK_EVERY_S)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _exit_with_parent()
@@ -145,8 +161,10 @@ async def lifespan(_: FastAPI):
     sweeper = asyncio.create_task(_sweep_loop())
     warmer = asyncio.create_task(_warm_loop()) if os.getenv("TRAILMIX_WARM") != "0" else None
     note_taker = asyncio.create_task(_live_notes_loop())
+    batches = asyncio.create_task(_batch_loop())
     stats = asyncio.create_task(_stats_loop())
     yield
+    batches.cancel()
     stats.cancel()
     note_taker.cancel()
     sweeper.cancel()
@@ -1076,6 +1094,7 @@ class TrialRequest(BaseModel):
     model: str | None = None        # e.g. a newer Google model, or whisper-1 / gpt-4o-transcribe for a remote endpoint
     apply: bool = False             # use the result straight away (otherwise it's kept to compare)
     summarize: bool = False         # with apply: write the notes again from it
+    mix_tracks: bool | None = None  # Gemini: one mixed recording (half the cost) or each track; None: as in Settings
 
 
 class ApplyRequest(BaseModel):
@@ -1154,7 +1173,8 @@ def start_trial(meeting_id: int, body: TrialRequest):
     if current and current["state"] in ("queued", "running"):
         raise HTTPException(409, "Another transcript is already being made for this meeting")
     _check_engine(body.engine, settings.get_all())
-    pipeline.enqueue_trial(meeting_id, body.engine, body.model, apply=body.apply, summarize=body.summarize)
+    pipeline.enqueue_trial(meeting_id, body.engine, body.model, apply=body.apply, summarize=body.summarize,
+                           mix_tracks=body.mix_tracks)
     return pipeline.trial_status(meeting_id)
 
 
@@ -1360,16 +1380,17 @@ def organize_status():
 
 # ── Redoing work with a better model ────────────────────────────────────
 
-def _upgradable(cfg: dict) -> dict:
-    """What the AI you have now would do better than the model that did it, per job."""
-    current = llm_engine.model_for(llm_engine.chain("auto", cfg)[0], cfg)
+def _upgradable(cfg: dict, current: str | None = None) -> dict:
+    """What the AI you have now (or `current`, e.g. the Gemini model a batch job would use) would do better than the
+    model that did it, per job."""
+    current = current or llm_engine.model_for(llm_engine.chain("auto", cfg)[0], cfg)
     with db.connect() as conn:
         rows = conn.execute(
             """SELECT id, summary, summary_provider, summary_model, tags_json, tags_model, workspace_id,
                       workspace_auto, workspace_model, status FROM meetings WHERE status = 'done'""").fetchall()
     ours = set(llm_engine.PROVIDERS)
-    notes = [r for r in rows if r["summary"] and r["summary_provider"] in ours
-             and model_ranks.better(current, r["summary_model"])]
+    notes = [r for r in rows if r["summary"] and (r["summary_provider"] in ours or current != llm_engine.model_for(
+                 llm_engine.chain("auto", cfg)[0], cfg)) and model_ranks.better(current, r["summary_model"])]
     tags = [r for r in rows if r["tags_json"] and model_ranks.better(current, r["tags_model"])]
     sorting = [r for r in rows if r["workspace_auto"] and r["workspace_model"]
                and model_ranks.better(current, r["workspace_model"])]
@@ -1425,6 +1446,10 @@ def upgrades():
     cfg = settings.get_all()
     data = _upgradable(cfg)
     data["notes"].pop("ids")
+    # The same notes, rewritten by Gemini as a half-price batch job (when there's a key and Lockdown is off).
+    gemini = _upgradable(cfg, cfg["gemini_model"])["notes"]
+    data["notes_batch"] = {"ready": bool(cfg["gemini_api_key"]) and not settings.locked(cfg), "model": cfg["gemini_model"],
+                           "score": model_ranks.score(cfg["gemini_model"]), "count": gemini["count"], "from": gemini["from"]}
     transcripts = _transcripts_upgradable(cfg)
     transcripts.pop("ids")
     data["transcripts"] = transcripts
@@ -1437,7 +1462,8 @@ def _estimate(meetings: list[dict], engine: str, model: str | None, cfg: dict) -
     model = model or (cfg["gemini_transcribe_model"] if engine == "gemini" else cfg["transcribe_model"] if engine == "remote" else None)
     rows = []
     for m in meetings:
-        minutes = pricing.meeting_minutes(m["duration_sec"], bool(m["has_system"]))
+        minutes = pricing.meeting_minutes(m["duration_sec"], bool(m["has_system"]),
+                                          mixed=engine == "gemini" and bool(cfg["gemini_mix_tracks"]))
         rows.append({"id": m["id"], "title": m["title"], "minutes": round(minutes, 1),
                      "cost": pricing.cost(minutes, engine, model)})
     known = all(r["cost"] is not None for r in rows)
@@ -1447,19 +1473,79 @@ def _estimate(meetings: list[dict], engine: str, model: str | None, cfg: dict) -
 
 
 @app.get("/api/meetings/{meeting_id}/trial/estimate")
-def trial_estimate(meeting_id: int, engine: str, model: str | None = None):
+def trial_estimate(meeting_id: int, engine: str, model: str | None = None, mix_tracks: bool | None = None):
     """What transcribing this meeting's audio again with this engine would cost, roughly."""
     m = _get_or_404(meeting_id)
-    return _estimate([m], engine, model, settings.get_all())
+    cfg = settings.get_all()
+    if mix_tracks is not None:
+        cfg["gemini_mix_tracks"] = mix_tracks
+    return _estimate([m], engine, model, cfg)
 
 
 @app.get("/api/usage")
 def usage(days: int = 30):
     """What the paid speech engines were asked to do in the last `days` days, and about what it cost."""
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%fZ")
+    start = datetime.now(timezone.utc) - timedelta(days=days)
+    since = start.strftime("%Y-%m-%dT%H:%M:%S.") + f"{start.microsecond // 1000:03d}Z"  # as the database writes them
     rows = db.usage_since(since)
     return {"days": days, "rows": rows, "cost": round(sum(r["cost"] or 0 for r in rows), 4),
             "unpriced": sum(r["unpriced"] for r in rows), "as_of": pricing.AS_OF}
+
+
+class NotesBatchRequest(BaseModel):
+    limit: int = 5                    # at most this many meetings (newest first)
+    meeting_ids: list[int] | None = None   # None: the meetings Gemini's notes would beat
+    dry_run: bool = False
+
+
+@app.post("/api/upgrades/notes/batch", status_code=202)
+def upgrade_notes_batch(body: NotesBatchRequest):
+    """Has Gemini rewrite old notes as a half-price Batch job: the answers come back later (often within minutes,
+    at most about a day) and are put in the meetings by themselves; the old notes stay in the history."""
+    cfg = settings.get_all()
+    if settings.locked(cfg):
+        raise HTTPException(409, f"{settings.LOCKDOWN}, so nothing can be sent to Google")
+    if not cfg["gemini_api_key"]:
+        raise HTTPException(409, "Add a Google API key first (Settings → AI providers)")
+    ids = body.meeting_ids if body.meeting_ids is not None else _upgradable(cfg, cfg["gemini_model"])["notes"]["ids"]
+    newest = sorted((m for m in db.get_meetings(ids) if m), key=lambda m: m["created_at"], reverse=True)[:max(1, body.limit)]
+    ids = [m["id"] for m in newest]
+    if body.dry_run:
+        requests, _, skipped = batch_jobs.prepare(ids, cfg)
+        return {**batch_jobs.estimate(requests, cfg["gemini_model"]), "skipped": skipped, "limit": body.limit}
+    try:
+        return batch_jobs.submit_notes(ids, cfg)
+    except batch_jobs.NotReady as e:
+        raise HTTPException(409, str(e))
+    except gemini_batch.BatchError as e:
+        raise HTTPException(502, str(e))
+
+
+@app.get("/api/batches")
+def list_batches():
+    """Batch jobs sent to Google: where each stands, and what became of its answers."""
+    out = []
+    for j in db.batch_jobs():
+        out.append({"id": j["id"], "kind": j["kind"], "model": j["model"], "state": j["state"], "created_at": j["created_at"],
+                    "finished_at": j["finished_at"], "meetings": len(json.loads(j["items_json"])), "applied": bool(j["applied"]),
+                    "est_cost": j["est_cost"], "error": j["error"],
+                    "result": json.loads(j["result_json"]) if j["result_json"] else None})
+    return out
+
+
+@app.post("/api/batches/check")
+def check_batches():
+    changed = batch_jobs.check()
+    return {"changed": changed, "jobs": list_batches()}
+
+
+@app.post("/api/batches/{job_id}/cancel")
+def cancel_batch(job_id: int):
+    try:
+        batch_jobs.cancel(job_id, settings.get_all())
+    except batch_jobs.NotReady as e:
+        raise HTTPException(409, str(e))
+    return {"ok": True}
 
 
 class TrialsRequest(BaseModel):

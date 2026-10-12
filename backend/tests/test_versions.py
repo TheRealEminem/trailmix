@@ -304,11 +304,11 @@ def test_bulk_trials_default_to_three_newest_and_estimate_the_cost_first(client,
     pipeline._trials.clear()
     dry = client.post("/api/transcript-trials", json={"engine": "gemini", "scope": "all", "dry_run": True}).json()
     assert [r["id"] for r in dry["meetings"]] == [ids[4], ids[3], ids[2]]     # newest first, three
-    assert dry["available"] == 5 and dry["minutes"] == 180.0                     # 3 x 30 min x 2 tracks
-    assert dry["cost"] == 0.9 and dry["per_minute"] == 0.005
+    assert dry["available"] == 5 and dry["minutes"] == 90.0                      # 3 x 30 min, the two tracks mixed into one
+    assert dry["cost"] == 0.45 and dry["per_minute"] == 0.005
     assert started == [] and pipeline._trials == {}                              # a dry run spends nothing
     real = client.post("/api/transcript-trials", json={"engine": "gemini", "scope": "all", "limit": 1}).json()
-    assert real["queued"] == 1 and real["cost"] == 0.3 and len(started) == 1
+    assert real["queued"] == 1 and real["cost"] == 0.15 and len(started) == 1
 
 
 def test_a_free_engine_estimates_to_zero_and_an_unknown_price_to_none(client, fresh_db, monkeypatch):
@@ -318,7 +318,7 @@ def test_a_free_engine_estimates_to_zero_and_an_unknown_price_to_none(client, fr
     monkeypatch.setattr(main.store, "audio_bytes", lambda m: 100)
     pipeline._trials.clear()
     unknown = client.post("/api/transcript-trials", json={"engine": "remote", "scope": "all", "dry_run": True}).json()
-    assert unknown["cost"] is None and unknown["minutes"] == 60.0
+    assert unknown["cost"] is None and unknown["minutes"] == 60.0   # a remote endpoint is sent each track
 
 
 def test_usage_is_tallied_by_engine_and_summed(client, fresh_db):
@@ -343,3 +343,30 @@ def test_a_gemini_transcript_is_logged_with_its_estimated_cost(fresh_db, monkeyp
     pipeline._transcribe_gemini(db.get_meeting(mid), {**pipeline.settings.DEFAULTS, "gemini_api_key": "k"})
     row = db.usage_since("2000-01-01")[0]
     assert (row["engine"], row["seconds"], row["cost"]) == ("gemini", 60.0, 0.005)
+
+
+def test_a_trial_can_send_the_tracks_separately_and_the_version_says_how(fresh_db, monkeypatch):
+    mid = meeting_with_transcript()
+    db.update_meeting(mid, audio_dir=str(fresh_db / "audio"))
+    seen = []
+
+    def fake(m, cfg):
+        seen.append(cfg["gemini_mix_tracks"])
+        return [{"start": 0, "end": 2, "speaker": "You", "text": "hello there"}], True, 2.0
+
+    monkeypatch.setattr(pipeline, "_transcribe_gemini", fake)
+    for mix in (True, False):
+        pipeline._trials[mid] = {"engine": "gemini", "model": None, "state": "queued", "detail": None, "version_id": None, "error": None}
+        pipeline._run_trial(mid, "gemini", None, False, False, mix)
+    assert seen == [True, False]
+    notes = [v["note"] for v in db.transcript_versions(mid) if v["source"] == "upgrade"]
+    assert notes == ["mic and call mixed into one recording", "mic and call sent as separate recordings"]
+
+
+def test_the_estimate_follows_whether_tracks_are_mixed(client, fresh_db, monkeypatch):
+    mid = meeting_with_transcript()
+    db.update_meeting(mid, duration_sec=3600, has_system=1)
+    monkeypatch.setattr(main.settings, "get_all", lambda: {**main.settings.DEFAULTS, "gemini_api_key": "k", "lockdown": False})
+    one = client.get(f"/api/meetings/{mid}/trial/estimate", params={"engine": "gemini"}).json()
+    two = client.get(f"/api/meetings/{mid}/trial/estimate", params={"engine": "gemini", "mix_tracks": "false"}).json()
+    assert (one["minutes"], one["cost"], two["minutes"], two["cost"]) == (60.0, 0.3, 120.0, 0.6)

@@ -70,6 +70,8 @@ export default function Versions({
   const [error, setError] = useState<string | null>(null);
   const [confirm, confirmDialog] = useConfirm();
   const [estimate, setEstimate] = useState<TrialEstimate | null>(null);
+  // Gemini: send the mic and the call as separate recordings (twice the cost) instead of mixed into one.
+  const [separate, setSeparate] = useState(false);
 
   const audioGone = m.audio_deleted || m.audio_bytes === 0;
   const finished = ["done", "error", "ready_summarize"].includes(m.status);
@@ -104,7 +106,7 @@ export default function Versions({
     let alive = true;
     const t = setTimeout(() => {
       api
-        .trialEstimate(m.id, engine, model.trim() || undefined)
+        .trialEstimate(m.id, engine, model.trim() || undefined, engine === "gemini" && m.has_system ? !separate : undefined)
         .then((e) => alive && setEstimate(e))
         .catch(() => alive && setEstimate(null));
     }, 250);
@@ -112,7 +114,7 @@ export default function Versions({
       alive = false;
       clearTimeout(t);
     };
-  }, [open, m.id, engine, model]);
+  }, [open, m.id, engine, model, separate]);
 
   if (!m.transcript || !finished) return null;
 
@@ -130,7 +132,13 @@ export default function Versions({
   };
 
   const startTrial = () =>
-    run(() => api.startTrial(m.id, { engine, model: model.trim() || undefined }));
+    run(() =>
+      api.startTrial(m.id, {
+        engine,
+        model: model.trim() || undefined,
+        mix_tracks: engine === "gemini" && m.has_system ? !separate : undefined,
+      }),
+    );
 
   const use = async (v: TranscriptVersion, summarize: boolean) => {
     const ok = await confirm({
@@ -203,6 +211,7 @@ export default function Versions({
                     {when(v.created_at)} · {v.words.toLocaleString()} words
                     {v.speakers.length > 0 && ` · ${v.speakers.length} ${v.speakers.length === 1 ? "speaker" : "speakers"}`}
                     {v.seconds != null && ` · took ${took(v.seconds)}`}
+                    {v.note && ` · ${v.note}`}
                   </div>
                 </div>
                 {!v.applied && (
@@ -307,6 +316,17 @@ export default function Versions({
                   <button className="btn btn-sm btn-soft" disabled={busy || trying} onClick={() => void startTrial()}>
                     {trying ? "Working…" : "Transcribe to compare"}
                   </button>
+                  {engine === "gemini" && m.has_system && (
+                    <label className="flex cursor-pointer items-center gap-2 text-hint">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-[var(--forest)]"
+                        checked={separate}
+                        onChange={(e) => setSeparate(e.target.checked)}
+                      />
+                      Send mic and call separately (twice the cost)
+                    </label>
+                  )}
                   {estimate && (
                     <span data-tip={`Up to ${Math.round(estimate.minutes)} minutes of audio (each track counts)${estimate.per_minute ? ` at $${estimate.per_minute}/min` : ""}; prices as of ${estimate.as_of}`}>
                       {estimate.cost == null ? "price unknown" : estimate.cost === 0 ? "free" : `about $${estimate.cost < 0.1 ? estimate.cost.toFixed(3) : estimate.cost.toFixed(2)}`}

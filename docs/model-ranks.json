@@ -30,6 +30,8 @@
     {"match": "gpt-4.1*", "score": 85},
     {"match": "gpt-4o-mini*", "score": 74},
     {"match": "gpt-4o*", "score": 83},
+    {"match": "gemini-flash-lite-latest*", "score": 80},
+    {"match": "gemini-flash-latest*", "score": 89},
     {"match": "gemini-3*flash-lite*", "score": 80},
     {"match": "gemini-3*pro*", "score": 95},
     {"match": "gemini-3*flash*", "score": 89},
