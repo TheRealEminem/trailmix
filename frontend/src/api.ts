@@ -58,6 +58,24 @@ export interface Upgrades {
   notes: { count: number; from: Record<string, number> };
   tags: { count: number; from: Record<string, number> };
   sorting: { count: number; from: Record<string, number> };
+  /** Transcripts a speech engine you have now would do better, where the audio is still kept. */
+  transcripts: {
+    best: { engine: TranscribeEngine; model: string; score: number | null } | null;
+    engines: { engine: TranscribeEngine; model: string; score: number | null }[];
+    count: number;
+    from: Record<string, number>;
+  };
+}
+
+/** One meeting's transcript being redone (or done) with another engine, in the batch of trials. */
+export interface TrialRow extends Trial {
+  meeting_id: number;
+  title: string;
+  /** how the transcript it would replace was made */
+  current: string | null;
+  /** the share of words that match that transcript (1 = identical), once it's made */
+  agreement: number | null;
+  apply: boolean;
 }
 
 /** What this Mac can comfortably run, for setup. */
@@ -138,7 +156,7 @@ export type TranscribeEngine = "local" | "remote" | "gemini";
 export interface Trial {
   engine: TranscribeEngine;
   model: string | null;
-  state: "queued" | "running" | "done" | "failed";
+  state: "queued" | "running" | "done" | "failed" | "cancelled";
   detail: string | null;
   version_id: number | null;
   error: string | null;
@@ -554,6 +572,16 @@ export const api = {
     request<OrganizeJob>("/organize", json("POST", { kind, only_older })),
   organizeStatus: () => request<OrganizeJob>("/organize"),
   upgrades: () => request<Upgrades>("/upgrades"),
+  startTrials: (body: {
+    engine: TranscribeEngine;
+    model?: string;
+    scope?: "better" | "all";
+    apply?: boolean;
+    summarize?: boolean;
+  }) => request<{ queued: number; skipped: number }>("/transcript-trials", json("POST", body)),
+  trials: () =>
+    request<{ trials: TrialRow[]; counts: Record<string, number> }>("/transcript-trials"),
+  cancelTrials: () => request<{ cancelled: number }>("/transcript-trials", json("DELETE")),
   upgradeNotes: () => request<{ queued: number }>("/upgrades/notes", json("POST")),
   retitle: (id: number) => request<{ title: string }>(`/meetings/${id}/retitle`, json("POST")),
   device: () => request<DeviceAdvice>("/device"),

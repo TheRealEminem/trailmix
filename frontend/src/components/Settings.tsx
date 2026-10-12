@@ -8,6 +8,8 @@ import type {
   LiveNotesPlan,
   StatsInfo,
   NativeRecorder,
+  TranscribeEngine,
+  TrialRow,
   Upgrades,
   Workspace,
   ProviderId,
@@ -56,6 +58,7 @@ import {
   Select,
   Skeleton,
   Spinner,
+  Switch,
   SwitchRow,
   TemplateSelect,
   useConfirm,
@@ -523,8 +526,152 @@ function UpgradesSection({ organize, onChanged }: { organize: ReturnType<typeof 
           </button>
         </Row>
       )}
+      <TranscriptUpgrades up={up} onChanged={onChanged} />
       {note && <p className="pb-3.5 text-hint text-ink-soft">{note}</p>}
     </Section>
+  );
+}
+
+const TRIAL_ENGINES: { value: TranscribeEngine; label: string }[] = [
+  { value: "gemini", label: "Google Gemini" },
+  { value: "local", label: "This Mac (MLX Whisper)" },
+  { value: "remote", label: "Remote endpoint" },
+];
+
+/** Redo transcripts with a better speech engine, or run any engine over every meeting to compare them. */
+function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => void }) {
+  const [engine, setEngine] = useState<TranscribeEngine>(up.transcripts.best?.engine ?? "gemini");
+  const [model, setModel] = useState("");
+  const [apply, setApply] = useState(false);
+  const [rows, setRows] = useState<TrialRow[]>([]);
+  const [message, setMessage] = useState<string | null>(null);
+  const t = up.transcripts;
+  const working = rows.some((r) => r.state === "queued" || r.state === "running");
+
+  const load = () =>
+    api
+      .trials()
+      .then((r) => setRows(r.trials))
+      .catch(() => undefined);
+  useEffect(() => {
+    void load();
+  }, []);
+  useEffect(() => {
+    if (!working) return;
+    const id = setInterval(() => void load(), 3000);
+    return () => clearInterval(id);
+  }, [working]);
+  useEffect(() => {
+    if (rows.length && !working) onChanged();
+  }, [working]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const start = (scope: "better" | "all") =>
+    api
+      .startTrials({ engine, model: model.trim() || undefined, scope, apply })
+      .then((r) => {
+        setMessage(
+          r.queued
+            ? `Transcribing ${r.queued} meeting${r.queued === 1 ? "" : "s"} again, one after another. ${apply ? "Each is switched over when it's made; the old transcript stays in its versions." : "The results are kept beside the current transcripts, to compare; nothing changes until you pick one."}`
+            : "Nothing to redo: no meeting with its audio kept needs it.",
+        );
+        void load();
+      })
+      .catch((e: Error) => setMessage(e.message));
+
+  const from = Object.entries(t.from).map(([m, n]) => `${m} (${n})`).join(", ");
+  const done = rows.filter((r) => r.state === "done" && r.agreement != null);
+  const average = done.length ? done.reduce((sum, r) => sum + (r.agreement ?? 0), 0) / done.length : null;
+
+  return (
+    <>
+      {t.best && (
+        <Row
+          label="Best speech engine you have"
+          hint={t.best.score != null ? `Rated ${Math.round(t.best.score)} of 100 for meeting transcripts` : "Not rated yet"}
+        >
+          <span className="font-mono text-hint">{t.best.model}</span>
+        </Row>
+      )}
+      {t.count > 0 && (
+        <Row
+          label={`Transcripts of ${t.count} meeting${t.count === 1 ? "" : "s"}`}
+          hint={`Made by ${from}; ${t.best?.model} would do better.`}
+        >
+          <button className="btn btn-sm btn-soft" disabled={working} onClick={() => void start("better")}>
+            Redo them
+          </button>
+        </Row>
+      )}
+      <div className="py-3.5">
+        <div className="mb-2 text-label font-medium">Compare engines on your meetings</div>
+        <p className="mb-2.5 text-hint text-ink-soft">
+          Transcribe every meeting whose audio is still kept with another engine or model. The results sit next to the
+          current transcripts (open a meeting, Transcript tab → Versions) so you can see how they differ.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            label="Engine"
+            size="sm"
+            value={engine}
+            onChange={(v) => setEngine(v as TranscribeEngine)}
+            options={TRIAL_ENGINES}
+            className="w-52"
+          />
+          {engine !== "local" && (
+            <input
+              className="field h-8 w-52 px-2.5 text-label"
+              placeholder="Model (default: Settings)"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              aria-label="Model"
+            />
+          )}
+          <label className="flex cursor-pointer items-center gap-2 text-hint">
+            <Switch checked={apply} onChange={setApply} label="Switch to each new transcript" />
+            Switch to each new transcript
+          </label>
+          <button className="btn btn-sm btn-soft" disabled={working} onClick={() => void start("all")}>
+            Run on all meetings
+          </button>
+        </div>
+      </div>
+      {message && <p className="pb-2 text-hint text-ink-soft">{message}</p>}
+      {rows.length > 0 && (
+        <div className="pb-3.5">
+          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 text-hint text-ink-soft">
+            <span>
+              {done.length} of {rows.length} done
+              {average != null && ` · on average ${Math.round(average * 1000) / 10}% of the words agree with the current transcripts`}
+            </span>
+            {working && (
+              <button className="btn btn-sm btn-ghost" onClick={() => void api.cancelTrials().then(load)}>
+                Stop the rest
+              </button>
+            )}
+          </div>
+          <ul className="max-h-64 divide-y divide-line overflow-y-auto rounded-xl border border-line text-hint">
+            {rows.map((r) => (
+              <li key={r.meeting_id} className="flex flex-wrap items-baseline justify-between gap-x-3 px-3 py-2">
+                <span className="min-w-0 truncate text-ink" data-private="meeting title">
+                  {r.title}
+                </span>
+                <span className="text-ink-soft">
+                  {r.state === "done"
+                    ? r.agreement != null
+                      ? `${Math.round(r.agreement * 1000) / 10}% agree${r.apply ? " · switched" : ""}`
+                      : "done"
+                    : r.state === "running"
+                      ? r.detail || "working…"
+                      : r.state === "failed"
+                        ? r.error
+                        : r.state}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -552,7 +699,7 @@ function CallReminders({ native }: { native: NativeRecorder }) {
 /** Settings → Privacy: the anonymous usage stats switch, and exactly what they contain. */
 const LOCKDOWN_COSTS = [
   "Trailmix stops checking for updates by itself, so you won't hear about fixes unless you check in Settings → Updates.",
-  "Notes can only be written by AI on this computer (Ollama). Cloud AI like Claude, OpenAI or Gemini is blocked, and so is a transcription server elsewhere.",
+  "Notes can only be written by AI on this computer (Ollama). Cloud AI like Claude, OpenAI or Gemini is blocked, and so is a transcription server elsewhere, including Google Gemini transcription and its live captions.",
   "No new speech or AI models can be downloaded. The ones you have keep working.",
   "The ranking of AI models stops updating, so “Better models” may suggest less.",
   "Anonymous usage stats stop.",

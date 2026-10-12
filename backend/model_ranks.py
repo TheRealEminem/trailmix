@@ -93,6 +93,14 @@ def score(model: str | None) -> float | None:
     return _by_size(name)
 
 
+def speech_model(made_with: str | None) -> str | None:
+    """The speech model in a transcript's note of how it was made: "whisper-large-v3-turbo, after the meeting" ->
+    "whisper-large-v3-turbo"."""
+    if not made_with:
+        return None
+    return made_with.split(",")[0].strip().rsplit("/", 1)[-1] or None
+
+
 def better(now: str | None, before: str | None) -> bool:
     """Is the model you have now clearly better than the one that did the work? Work whose model wasn't
     recorded (or isn't ranked) probably came from a model like yours, so only a strong one redoes it."""
