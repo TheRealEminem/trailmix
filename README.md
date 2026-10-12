@@ -77,6 +77,18 @@ API key for a cloud provider. First use downloads the Whisper models (base ≈ 1
   small model drafts live and the accurate one runs after. Silero VAD, hallucination and echo cleanup.
 - The live model is loaded at startup, after each meeting's processing, and when a call app opens audio.
 - Each meeting records what transcribed it (`whisper-large-v3-turbo, while recording`).
+- **Google Gemini** (`gemini-3.5-transcribe`) as a third engine: tells the individual speakers apart (Speaker 1,
+  Speaker 2… on the other side of a call; your mic stays *You*), with **live captions** streaming from Google while
+  you record (`gemini-3.5-transcribe-live`). Audio is sent to Google, so Lockdown mode switches it off. Long
+  recordings go in overlapping chunks whose speaker labels are matched. The engine can be switched on the Recorder
+  card right before you press Record.
+- **Versions and comparing.** Every transcript made of a meeting is kept. Re-transcribe the saved audio with any
+  engine or model (or all meetings at once) and the result sits beside the current one: compare them word by word,
+  and switch with one click (optionally rewriting the notes). Speech models are ranked like the notes models, so
+  Settings → Better models can offer to redo transcripts a better engine would do better.
+- **History.** Every change to a meeting (transcript, notes, title, date, speaker names, workspace, tags…) is
+  recorded with what it was, what it became, when and why, in the same database transaction (deleting a meeting
+  deletes its history).
 
 **Notes**
 - Summaries with templates (general, 1:1, standup, interview, sales call, or your own), long meetings summarized
