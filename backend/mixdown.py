@@ -10,6 +10,7 @@ import numpy as np
 SR = 16000
 FRAME_S = 0.25
 YOU_SHARE = 0.55   # a speaker is "you" if your microphone carries at least this much of the sound when they speak
+LOUD_FLOOR = 0.015  # a track whose loud moments are quieter than this (a muted mic's noise) isn't scaled up to look like speech
 
 
 def mix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
@@ -30,8 +31,8 @@ def _levels(audio: np.ndarray) -> np.ndarray:
     if n == 0:
         return np.zeros(1)
     rms = np.sqrt(np.mean(np.square(audio[:n * frame].reshape(n, frame)), axis=1))
-    loud = float(np.percentile(rms, 95))
-    return rms / loud if loud > 1e-6 else rms
+    loud = max(float(np.percentile(rms, 95)), LOUD_FLOOR)
+    return rms / loud
 
 
 def mic_share(segments: list[dict], mic: np.ndarray, system: np.ndarray) -> dict[str, float]:
