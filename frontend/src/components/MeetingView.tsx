@@ -27,6 +27,7 @@ import MeetingDate from "./MeetingDate";
 import MyNotes from "./MyNotes";
 import Summary from "./Summary";
 import Transcript from "./Transcript";
+import Versions from "./Versions";
 import { Segmented, Spinner, Switch } from "./ui";
 
 export type Tab = "summary" | "transcript" | "notes" | "ask";
@@ -296,6 +297,9 @@ export default function MeetingView({
               </p>
               <MyNotes meetingId={m.id} notes={m.my_notes} onChanged={on.onChanged} />
             </div>
+          )}
+          {tab === "transcript" && m.transcript && (
+            <Versions meeting={m} health={health} onChanged={on.onChanged} />
           )}
           {tab === "transcript" && (
             <Transcript
