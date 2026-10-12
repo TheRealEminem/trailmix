@@ -404,29 +404,30 @@ def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
     both = "system" in tracks and "mic" in tracks
     model = cfg["gemini_transcribe_model"]
     if both and cfg["gemini_mix_tracks"]:  # one mixed recording: half the cost; who is "you" is worked out here
-        audio = mixdown.mix(tracks["mic"], tracks["system"])
+        audio, used = mixdown.mix(tracks["mic"], tracks["system"]), {}
         try:
             segs = transcribe_gemini.transcribe(
-                audio, cfg["gemini_api_key"], mlx_engine.LANGUAGE, diarize=True, model=model,
+                audio, cfg["gemini_api_key"], mlx_engine.LANGUAGE, diarize=True, model=model, usage=used,
                 on_progress=lambda i, n: _progress(m["id"], f"Transcribing: {i}/{n}" if n > 1 else "Transcribing"))
         except transcribe_gemini.GeminiError as e:
             raise RuntimeError(str(e)) from e
         seconds = len(audio) / store.SAMPLE_RATE
-        db.log_usage(m["id"], "transcript", "gemini", model, seconds, pricing.cost(seconds / 60, "gemini", model))
+        db.log_usage(m["id"], "transcript", "gemini", model, seconds, pricing.transcript_cost(model, seconds, used))
         segs = mixdown.name_you(cleanup.drop_hallucinations(segs), tracks["mic"], tracks["system"])
         return cleanup.strip_metrics(sorted(segs, key=lambda s: s["start"])), True, duration
     per_track = {}
     for name, audio in tracks.items():
+        used = {}
         try:
             per_track[name] = transcribe_gemini.transcribe(
                 audio, cfg["gemini_api_key"], mlx_engine.LANGUAGE, diarize=not (both and name == "mic"),
-                model=cfg["gemini_transcribe_model"],
+                model=cfg["gemini_transcribe_model"], usage=used,
                 on_progress=lambda i, n, name=name: _progress(
                     m["id"], f"Transcribing {name} track: {i}/{n}" if n > 1 else f"Transcribing {name} track"))
         except transcribe_gemini.GeminiError as e:
             raise RuntimeError(str(e)) from e
         seconds = len(audio) / store.SAMPLE_RATE
-        db.log_usage(m["id"], "transcript", "gemini", model, seconds, pricing.cost(seconds / 60, "gemini", model))
+        db.log_usage(m["id"], "transcript", "gemini", model, seconds, pricing.transcript_cost(model, seconds, used))
     return _label(per_track, list(tracks), diarized=True), both, duration
 
 

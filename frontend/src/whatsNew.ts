@@ -9,6 +9,36 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.15.0",
+    items: [
+      {
+        title: "Who said what, with Google Gemini",
+        body: "Choose Google Gemini for transcription and every voice gets its own label, even in a room or a call with several people. Live captions appear as you talk, and the full transcript follows when you stop. Your recording is sent to Google, so Lockdown mode turns it off.",
+        where: "Settings → Transcription",
+      },
+      {
+        title: "Pick the engine before you record",
+        body: "Switch between this Mac and Google right on the recording card.",
+        where: "Home",
+      },
+      {
+        title: "Try another model, compare, switch back",
+        body: "Every transcript of a meeting is kept. Transcribe the saved audio again with another engine or model, see the two side by side word by word, and use whichever you like.",
+        where: "A meeting → Transcript → Versions",
+      },
+      {
+        title: "Better models, for speech too",
+        body: "Trailmix now rates speech models like it rates note-writing ones, and offers to redo old transcripts and notes with a better one. It shows what it will cost first and does a few meetings at a time. Notes can be rewritten at half price as a Google batch job that finishes in the background.",
+        where: "Settings → Better models",
+      },
+      {
+        title: "A history of every change",
+        body: "Titles, notes, transcripts, names and more are recorded with what they were, what they became and why. Exports keep it too.",
+        where: "A meeting → Transcript → Versions",
+      },
+    ],
+  },
+  {
     version: "0.14.1",
     items: [
       {

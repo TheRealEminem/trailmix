@@ -23,6 +23,8 @@ PATTERN_CASES = [
      ["zoom.us/j", "98234110921", "V1k5b2c0YjFpZ1Q1dz09"], ["whisper-large-v3-turbo", "Duration: 00:45:10"]),
     ("2026-10-09 11:57:00 [FATAL] Node sync timed out contacting relay 100.101.12.7:8080.\nError: Ollama isn't reachable at localhost:11434",
      ["100.101.12.7"], ["2026-10-09 11:57:00", "localhost:11434"]),
+    ("Google said no to wss://generativelanguage.googleapis.com/ws/x.BidiGenerateContent?key=AQ.Zx9fakefakefake_demoKEY12345 twice\nKey was AQ.Zx9fakeKEY12345abc",
+     ["AQ.Zx9", "demoKEY12345", "KEY12345abc"], ["Google said no"]),
     ("Engine at http://127.0.0.1:8765/api/health, models from https://huggingface.co/mlx-community/whisper",
      ["huggingface.co/mlx-community"], ["http://127.0.0.1:8765/api/health"]),
 ]

@@ -94,7 +94,8 @@ class Channel:
     # -- internals ----------------------------------------------------------
 
     async def _connect(self, meeting_pos: int) -> _Stream:
-        ws = await websockets.connect(f"{self.url}?key={self.api_key}", max_size=None, open_timeout=15)
+        ws = await websockets.connect(self.url, additional_headers={"x-goog-api-key": self.api_key}, max_size=None,
+                                      open_timeout=15)  # the key goes in a header: addresses end up in logs and errors
         config = {"languageCodes": [self.language] if self.language else []}
         await ws.send(json.dumps({"setup": {"model": MODEL, "generationConfig": {"responseModalities": ["TEXT"]},
                                             "inputAudioTranscription": config}}))

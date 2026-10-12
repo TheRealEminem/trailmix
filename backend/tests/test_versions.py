@@ -370,3 +370,67 @@ def test_the_estimate_follows_whether_tracks_are_mixed(client, fresh_db, monkeyp
     one = client.get(f"/api/meetings/{mid}/trial/estimate", params={"engine": "gemini"}).json()
     two = client.get(f"/api/meetings/{mid}/trial/estimate", params={"engine": "gemini", "mix_tracks": "false"}).json()
     assert (one["minutes"], one["cost"], two["minutes"], two["cost"]) == (60.0, 0.3, 120.0, 0.6)
+
+
+# ── economy transcripts from a general model ──
+
+def test_the_economy_model_is_routed_through_generate_content_not_the_transcribe_api():
+    import transcribe_gemini as g
+
+    assert g.uses_transcribe_api("gemini-3.5-transcribe") and not g.uses_transcribe_api("gemini-3.5-flash-lite")
+
+
+def test_turns_from_a_general_model_become_timed_segments():
+    import transcribe_gemini as g
+
+    turns = g.parse_turns(json.dumps([
+        {"start": "00:00", "speaker": "Speaker 1", "text": "Okay, let's get started."},
+        {"start": "00:05", "speaker": "Speaker 2", "text": "Thanks."},
+        {"start": "1:02:03", "speaker": "Speaker 1", "text": "  "},                      # empty: dropped
+        {"start": "1:02:10", "speaker": "Speaker 2", "text": "Back after the break, everyone."}]))
+    assert [(t["speaker"], t["start"]) for t in turns] == [("Speaker 1", 0.0), ("Speaker 2", 5.0), ("Speaker 2", 3730.0)]
+    assert turns[0]["end"] <= 5.0 and turns[1]["end"] > 5.0      # a turn ends where the next begins, or by word count
+
+
+def test_a_reply_that_is_not_the_asked_for_json_is_an_error_after_one_retry(monkeypatch):
+    import transcribe_gemini as g
+
+    calls = []
+
+    class Reply:
+        def json(self):
+            calls.append(1)
+            return {"candidates": [{"content": {"parts": [{"text": "Sure! Here's the transcript: ..."}]}, "finishReason": "STOP"}]}
+
+    monkeypatch.setattr(g, "_request", lambda *a, **k: Reply())
+    with pytest.raises(g.GeminiError, match="form asked for"):
+        g.call_llm({"uri": "u"}, "audio/ogg", "k", None, "gemini-3.5-flash-lite")
+    assert len(calls) == 2
+
+
+def test_the_economy_path_sends_the_audio_and_reports_the_tokens_used(monkeypatch):
+    import transcribe_gemini as g
+
+    seen = {}
+
+    class Reply:
+        def json(self):
+            return {"candidates": [{"content": {"parts": [{"text": json.dumps([{"start": "00:01", "speaker": "Speaker 1", "text": "hello"}])}]},
+                                    "finishReason": "STOP"}],
+                    "usageMetadata": {"promptTokenCount": 34000, "candidatesTokenCount": 7000, "thoughtsTokenCount": 0}}
+
+    def request(method, url, key, **kw):
+        seen["url"], seen["body"] = url, kw["json"]
+        return Reply()
+
+    monkeypatch.setattr(g, "_request", request)
+    usage = {}
+    turns = g.call_llm({"uri": "files/abc"}, "audio/ogg", "k", "en", "gemini-3.5-flash-lite", usage)
+    assert seen["url"].endswith("models/gemini-3.5-flash-lite:generateContent")
+    assert seen["body"]["contents"][0]["parts"][0]["fileData"]["fileUri"] == "files/abc"
+    assert "(the language is en)" in seen["body"]["contents"][0]["parts"][1]["text"]
+    assert usage == {"in": 34000, "out": 7000} and turns[0]["text"] == "hello"
+    import pricing
+
+    assert pricing.transcript_cost("gemini-3.5-flash-lite", 1368, usage) == pytest.approx(0.0277, abs=0.0005)   # exact tokens
+    assert pricing.transcript_cost("gemini-3.5-flash-lite", 60, None) == 0.0013                                # a guess before

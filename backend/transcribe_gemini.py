@@ -1,4 +1,6 @@
-"""Transcription with speaker labels through Google's gemini-3.5-transcribe (batch, not streaming).
+"""Transcription with speaker labels through Google's gemini-3.5-transcribe (batch, not streaming), or, for a cheaper
+"economy" transcript, through a general Gemini model such as gemini-3.5-flash-lite that is asked to transcribe the audio
+(about a quarter of the price and faster; it splits speakers more readily and times each turn only to the second).
 
 An audio file is uploaded through the Files API, then transcribed with word timestamps and speaker
 diarization. The model takes at most 30 minutes per request when diarizing, so longer audio is cut into
@@ -8,6 +10,7 @@ the overlap (a chunk's "spk_1" isn't necessarily the last chunk's "spk_1").
 Returns the same [{start, end, speaker, text}] segments as the other engines, with speakers named
 "Speaker 1", "Speaker 2"... in order of first appearance.
 """
+import json
 import re
 import subprocess
 import time
@@ -147,7 +150,81 @@ def parse_words(body) -> list[dict]:
     return words
 
 
-def call(file: dict, mime: str, api_key: str, language: str | None, diarize: bool, model: str = MODEL) -> list[dict]:
+def uses_transcribe_api(model: str) -> bool:
+    """gemini-3.5-transcribe has an API of its own; every other model transcribes through generateContent."""
+    return "transcribe" in model
+
+
+LLM_PROMPT = ("Transcribe this recording of a meeting completely and verbatim{language}. Tell the different speakers apart "
+              "and label them 'Speaker 1', 'Speaker 2' and so on, consistently through the whole recording. Return JSON: a "
+              'list of turns, each {{"start": "MM:SS" (when the turn begins), "speaker": "Speaker N", "text": "what they '
+              'said"}}. Do not summarize or skip anything.')
+LLM_SCHEMA = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
+    "start": {"type": "STRING"}, "speaker": {"type": "STRING"}, "text": {"type": "STRING"}},
+    "required": ["start", "speaker", "text"]}}
+WORDS_PER_SECOND = 2.2     # to guess how long a turn lasted when only its start is known
+
+
+def _clock(text: str) -> float:
+    parts = [int(x) for x in re.findall(r"\d+", str(text))][:3]
+    return float(sum(v * 60 ** i for i, v in enumerate(reversed(parts)))) if parts else 0.0
+
+
+def llm_request_body(file: dict, mime: str, language: str | None) -> dict:
+    said = f" (the language is {language})" if language else ""
+    return {"contents": [{"parts": [{"fileData": {"mimeType": mime, "fileUri": file["uri"]}},
+                                    {"text": LLM_PROMPT.format(language=said)}]}],
+            "generationConfig": {"responseMimeType": "application/json", "responseSchema": LLM_SCHEMA,
+                                 "temperature": 0.0, "maxOutputTokens": 32768}}
+
+
+def parse_turns(text: str) -> list[dict]:
+    """The model's JSON turns -> the same word-like items the transcribe API gives: {text, speaker, start, end}.
+    A turn lasts until the next one starts, or as long as that many words take to say."""
+    try:
+        turns = json.loads(text)
+        starts = [_clock(t["start"]) for t in turns]
+    except (ValueError, KeyError, TypeError) as e:
+        raise GeminiError("The model didn't return a transcript in the form asked for") from e
+    out = []
+    for i, t in enumerate(turns):
+        said = str(t.get("text", "")).strip()
+        if not said:
+            continue
+        guess = starts[i] + max(1.0, len(said.split()) / WORDS_PER_SECOND)
+        end = min(starts[i + 1], guess) if i + 1 < len(turns) and starts[i + 1] > starts[i] else guess
+        out.append({"text": said, "speaker": str(t.get("speaker") or "Speaker 1"), "start": starts[i], "end": end})
+    return sorted(out, key=lambda w: w["start"])
+
+
+def call_llm(file: dict, mime: str, api_key: str, language: str | None, model: str, usage: dict | None = None) -> list[dict]:
+    """A transcript from a general Gemini model: the audio and a prompt, answered in JSON turns."""
+    for attempt in range(2):  # an answer that isn't valid JSON is worth one more try
+        r = _request("POST", f"{API}/v1beta/models/{model}:generateContent", api_key, json=llm_request_body(file, mime, language))
+        j = r.json()
+        if usage is not None:
+            meta = j.get("usageMetadata") or {}
+            usage["in"] = usage.get("in", 0) + meta.get("promptTokenCount", 0)
+            usage["out"] = usage.get("out", 0) + meta.get("candidatesTokenCount", 0) + meta.get("thoughtsTokenCount", 0)
+        try:
+            cand = j["candidates"][0]
+            text = "".join(p.get("text", "") for p in cand["content"]["parts"] if not p.get("thought"))
+        except (KeyError, IndexError):
+            raise GeminiError("Gemini returned no transcript (it may have blocked the audio)")
+        if cand.get("finishReason") == "MAX_TOKENS":
+            raise GeminiError("This stretch of audio was too long for the model to transcribe in one go")
+        try:
+            return parse_turns(text)
+        except GeminiError:
+            if attempt:
+                raise
+    raise GeminiError("unreachable")
+
+
+def call(file: dict, mime: str, api_key: str, language: str | None, diarize: bool, model: str = MODEL,
+         usage: dict | None = None) -> list[dict]:
+    if not uses_transcribe_api(model):
+        return call_llm(file, mime, api_key, language, model, usage)
     body = {"model": model, "input": [{"type": "audio", "uri": file["uri"], "mime_type": mime}],
             "generation_config": _config(language, diarize)}
     r = _request("POST", f"{API}/v1beta/interactions", api_key, json=body)
@@ -258,7 +335,7 @@ def encode(audio: np.ndarray) -> bytes:
 
 
 def transcribe(audio: np.ndarray, api_key: str, language: str | None = None, diarize: bool = True,
-               on_progress=None, model: str = MODEL) -> list[dict]:
+               on_progress=None, model: str = MODEL, usage: dict | None = None) -> list[dict]:
     """[{start, end, speaker, text}] for the whole of `audio` (16 kHz mono float). `diarize` False still
     gives timestamps but no speaker labels (every word is one speaker). `on_progress(i, n)` after each chunk."""
     import settings
@@ -272,7 +349,7 @@ def transcribe(audio: np.ndarray, api_key: str, language: str | None = None, dia
     for i, (a, b) in enumerate(chunks):
         file = upload(encode(audio[int(a * SR):int(b * SR)]), "audio/ogg", api_key, name=f"chunk-{i + 1}")
         try:
-            per_chunk.append(((a, b), call(file, "audio/ogg", api_key, language, diarize, model)))
+            per_chunk.append(((a, b), call(file, "audio/ogg", api_key, language, diarize, model, usage)))
         finally:
             delete_file(file, api_key)
         if on_progress:

@@ -1095,6 +1095,7 @@ class TrialRequest(BaseModel):
     apply: bool = False             # use the result straight away (otherwise it's kept to compare)
     summarize: bool = False         # with apply: write the notes again from it
     mix_tracks: bool | None = None  # Gemini: one mixed recording (half the cost) or each track; None: as in Settings
+    batch: bool = False             # an economy model only: as a half-price Batch job, answers back later
 
 
 class ApplyRequest(BaseModel):
@@ -1172,10 +1173,26 @@ def start_trial(meeting_id: int, body: TrialRequest):
     current = pipeline.trial_status(meeting_id)
     if current and current["state"] in ("queued", "running"):
         raise HTTPException(409, "Another transcript is already being made for this meeting")
-    _check_engine(body.engine, settings.get_all())
+    cfg = settings.get_all()
+    _check_engine(body.engine, cfg)
+    if body.batch:
+        return _submit_transcript_batch([meeting_id], body, cfg)
     pipeline.enqueue_trial(meeting_id, body.engine, body.model, apply=body.apply, summarize=body.summarize,
                            mix_tracks=body.mix_tracks)
     return pipeline.trial_status(meeting_id)
+
+
+def _submit_transcript_batch(ids: list[int], body, cfg: dict) -> dict:
+    """Sends these meetings' audio to Google to be transcribed by an economy model at half price (a Batch job)."""
+    if body.engine != "gemini":
+        raise HTTPException(422, "Only Google Gemini can run as a batch job")
+    model = body.model or cfg["gemini_transcribe_model"]
+    try:
+        return {"batch": True, **batch_jobs.submit_transcripts(ids, cfg, model, apply=body.apply)}
+    except batch_jobs.NotReady as e:
+        raise HTTPException(409, str(e))
+    except (gemini_batch.BatchError, transcribe_gemini.GeminiError) as e:
+        raise HTTPException(502, str(e))
 
 
 @app.get("/api/meetings/{meeting_id}/trial")
@@ -1554,6 +1571,7 @@ class TrialsRequest(BaseModel):
     meeting_ids: list[int] | None = None   # None: see scope
     scope: str = "better"                  # "better": the meetings this engine would transcribe better than the one that did;
                                            # "all": every meeting whose audio is still kept (to compare engines)
+    batch: bool = False                    # an economy model only: as a half-price Batch job, answers back later
     limit: int = 3                         # at most this many meetings (newest first): spend a little at a time
     dry_run: bool = False                  # only say which meetings, how much audio, and about what it would cost
     apply: bool = False                    # use each result when it's made (otherwise they're kept to compare)
@@ -1587,8 +1605,13 @@ def start_trials(body: TrialsRequest):
         eligible.append(m)
     eligible = sorted(eligible, key=lambda m: m["created_at"], reverse=True)[:max(1, body.limit)]
     estimate = _estimate(eligible, body.engine, model, cfg)
+    if body.batch and estimate["cost"] is not None:
+        estimate["cost"] = round(estimate["cost"] * pricing.BATCH_DISCOUNT, 4)
     if body.dry_run:
         return {**estimate, "available": len(ids), "limit": body.limit}
+    if body.batch:
+        out = _submit_transcript_batch([m["id"] for m in eligible], body, cfg)
+        return {"queued": out["submitted"], "skipped": len(ids) - out["submitted"], **estimate}
     for m in eligible:
         pipeline.enqueue_trial(m["id"], body.engine, body.model, apply=body.apply, summarize=body.summarize)
     return {"queued": len(eligible), "skipped": len(ids) - len(eligible), **estimate}

@@ -72,6 +72,11 @@ export default function Versions({
   const [estimate, setEstimate] = useState<TrialEstimate | null>(null);
   // Gemini: send the mic and the call as separate recordings (twice the cost) instead of mixed into one.
   const [separate, setSeparate] = useState(false);
+  // An economy model can run as a half-price batch job (the answer comes back later).
+  const [batch, setBatch] = useState(false);
+  const [defaultModel, setDefaultModel] = useState("");
+  const [waitingFor, setWaitingFor] = useState<number | null>(null); // number of versions when a batch was sent
+  const economy = engine === "gemini" && !(model.trim() || defaultModel).includes("transcribe");
 
   const audioGone = m.audio_deleted || m.audio_bytes === 0;
   const finished = ["done", "error", "ready_summarize"].includes(m.status);
@@ -94,6 +99,22 @@ export default function Versions({
   }, [m.id, m.transcribed_with]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // While another transcript is being made, check on it.
+  useEffect(() => {
+    if (!open) return;
+    api
+      .getSettings()
+      .then((s) => setDefaultModel(s.gemini_transcribe_model))
+      .catch(() => undefined);
+  }, [open]);
+
+  // After a batch job was sent, look for its transcript now and then (also the app brings it in by itself).
+  useEffect(() => {
+    if (waitingFor === null) return;
+    if (versions.length > waitingFor) return setWaitingFor(null);
+    const t = setInterval(() => void load(), 20000);
+    return () => clearInterval(t);
+  }, [waitingFor, versions.length, m.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (!trying) return;
     const t = setInterval(() => void load(), 2000);
@@ -132,13 +153,15 @@ export default function Versions({
   };
 
   const startTrial = () =>
-    run(() =>
-      api.startTrial(m.id, {
+    run(async () => {
+      const sent = await api.startTrial(m.id, {
         engine,
         model: model.trim() || undefined,
         mix_tracks: engine === "gemini" && m.has_system ? !separate : undefined,
-      }),
-    );
+        batch: economy && batch ? true : undefined,
+      });
+      if (sent.batch) setWaitingFor(versions.length);
+    });
 
   const use = async (v: TranscriptVersion, summarize: boolean) => {
     const ok = await confirm({
@@ -327,13 +350,37 @@ export default function Versions({
                       Send mic and call separately (twice the cost)
                     </label>
                   )}
+                  {economy && (
+                    <label className="flex cursor-pointer items-center gap-2 text-hint">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-[var(--forest)]"
+                        checked={batch}
+                        onChange={(e) => setBatch(e.target.checked)}
+                      />
+                      Half price: as a batch (back in minutes to hours)
+                    </label>
+                  )}
                   {estimate && (
                     <span data-tip={`Up to ${Math.round(estimate.minutes)} minutes of audio (each track counts)${estimate.per_minute ? ` at $${estimate.per_minute}/min` : ""}; prices as of ${estimate.as_of}`}>
-                      {estimate.cost == null ? "price unknown" : estimate.cost === 0 ? "free" : `about $${estimate.cost < 0.1 ? estimate.cost.toFixed(3) : estimate.cost.toFixed(2)}`}
+                      {estimate.cost == null
+                        ? "price unknown"
+                        : estimate.cost === 0
+                          ? "free"
+                          : (() => {
+                              const c = estimate.cost * (economy && batch ? 0.5 : 1);
+                              return `about $${c < 0.1 ? c.toFixed(3) : c.toFixed(2)}`;
+                            })()}
                     </span>
                   )}
                 </div>
               </>
+            )}
+            {waitingFor !== null && (
+              <p className="mt-2 text-forest-deep">
+                Sent to Google as a batch job. The transcript appears in the list above when it's back, usually within
+                minutes.
+              </p>
             )}
             {trial?.state === "failed" && <p className="mt-2 text-trail-deep">{trial.error}</p>}
             {trial?.state === "done" && !trying && <p className="mt-2 text-forest-deep">Done: it's in the list above.</p>}

@@ -194,7 +194,7 @@ export interface NotesBatchEstimate {
 /** Work sent to Google's Batch API: answers come back later and are put in the meetings by themselves. */
 export interface BatchJob {
   id: number;
-  kind: "notes";
+  kind: "notes" | "transcripts";
   model: string;
   state: "pending" | "running" | "succeeded" | "failed" | "cancelled" | "expired";
   created_at: string;
@@ -635,11 +635,12 @@ export const api = {
     scope?: "better" | "all";
     /** at most this many meetings, newest first */
     limit?: number;
+    batch?: boolean;
     apply?: boolean;
     summarize?: boolean;
   }) => request<{ queued: number; skipped: number } & TrialEstimate>("/transcript-trials", json("POST", body)),
   /** What starting these would cost, without starting anything. */
-  estimateTrials: (body: { engine: TranscribeEngine; model?: string; scope: "better" | "all"; limit: number }) =>
+  estimateTrials: (body: { engine: TranscribeEngine; model?: string; scope: "better" | "all"; limit: number; batch?: boolean }) =>
     request<TrialEstimate>("/transcript-trials", json("POST", { ...body, dry_run: true })),
   trialEstimate: (id: number, engine: TranscribeEngine, model?: string, mixTracks?: boolean) =>
     request<TrialEstimate>(
@@ -741,9 +742,16 @@ export const api = {
     request<{ versions: TranscriptVersion[]; trial: Trial | null }>(`/meetings/${id}/versions`),
   startTrial: (
     id: number,
-    body: { engine: TranscribeEngine; model?: string; apply?: boolean; summarize?: boolean; mix_tracks?: boolean },
-  ) =>
-    request<Trial>(`/meetings/${id}/trial`, json("POST", body)),
+    body: {
+      engine: TranscribeEngine;
+      model?: string;
+      apply?: boolean;
+      summarize?: boolean;
+      mix_tracks?: boolean;
+      /** an economy model only: send as a half-price batch job, answers back later */
+      batch?: boolean;
+    },
+  ) => request<Trial & { batch?: boolean; submitted?: number; cost?: number }>(`/meetings/${id}/trial`, json("POST", body)),
   applyVersion: (id: number, versionId: number, summarize = false) =>
     request<{ ok: true }>(`/meetings/${id}/versions/${versionId}/apply`, json("POST", { summarize })),
   compareVersions: (id: number, a: number, b: number) =>

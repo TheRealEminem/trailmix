@@ -4,6 +4,8 @@ answers coming back later (the target is within 24 hours; small jobs often take 
 The jobs are sent inline (up to 20 MB of requests at a time) and polled for. Used for work nobody is waiting for,
 like rewriting the notes of old meetings with a better model.
 """
+import json
+
 import httpx
 
 API = "https://generativelanguage.googleapis.com/v1beta"
@@ -36,12 +38,17 @@ def request_body(system: str | None, prompt: str) -> dict:
     return body
 
 
+def _body(r: dict) -> dict:
+    """The generateContent request: `body` as given (audio and the like), or a text one from system and prompt."""
+    return r["body"] if r.get("body") else request_body(r.get("system"), r["prompt"])
+
+
 def size(requests: list[dict]) -> int:
-    return sum(len(r["prompt"].encode()) + len((r.get("system") or "").encode()) + 200 for r in requests)
+    return sum(len(json.dumps(_body(r)).encode()) + 200 for r in requests)
 
 
 def split(requests: list[dict]) -> list[list[dict]]:
-    """[{key, system, prompt}] in groups small enough to send as one job each."""
+    """Requests in groups small enough to send as one job each."""
     groups, current, used = [], [], 0
     for r in requests:
         n = size([r])
@@ -54,9 +61,9 @@ def split(requests: list[dict]) -> list[list[dict]]:
 
 
 def create(model: str, requests: list[dict], api_key: str, name: str = "trailmix") -> str:
-    """Submits [{key, system, prompt}] as one job; returns its name ("batches/...")."""
+    """Submits [{key, system, prompt}] (or {key, body}) as one job; returns its name ("batches/...")."""
     body = {"batch": {"display_name": name, "input_config": {"requests": {"requests": [
-        {"request": request_body(r.get("system"), r["prompt"]), "metadata": {"key": r["key"]}} for r in requests]}}}}
+        {"request": _body(r), "metadata": {"key": r["key"]}} for r in requests]}}}}
     out = _call("POST", f"models/{model}:batchGenerateContent", api_key, json=body)
     if not out.get("name"):
         raise BatchError("Google didn't give the job a name")

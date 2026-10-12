@@ -652,7 +652,7 @@ function BatchNotes({ up, onChanged }: { up: Upgrades; onChanged: () => void }) 
             {jobs.map((j) => (
               <li key={j.id} className="flex flex-wrap items-baseline justify-between gap-x-3 px-3 py-2">
                 <span className="text-ink">
-                  Notes for {j.meetings} meeting{j.meetings === 1 ? "" : "s"} · {j.model} ·{" "}
+                  {j.kind === "transcripts" ? "Transcripts" : "Notes"} for {j.meetings} meeting{j.meetings === 1 ? "" : "s"} · {j.model} ·{" "}
                   {new Date(j.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
                 </span>
                 <span className="flex items-center gap-2 text-ink-soft">
@@ -708,6 +708,10 @@ function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => 
   const [model, setModel] = useState("");
   const [apply, setApply] = useState(false);
   const [limit, setLimit] = useState(3);
+  const [batch, setBatch] = useState(false);
+  const geminiModel = model.trim() || up.transcripts.engines.find((e) => e.engine === "gemini")?.model || "";
+  const economy = engine === "gemini" && !geminiModel.includes("transcribe"); // can run as a half-price batch job
+  const useBatch = economy && batch;
   const [estimates, setEstimates] = useState<Partial<Record<"better" | "all", TrialEstimate>>>({});
   const [confirm, confirmDialog] = useConfirm();
   const [rows, setRows] = useState<TrialRow[]>([]);
@@ -739,7 +743,7 @@ function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => 
     const t0 = setTimeout(() => {
       wanted.forEach((scope) =>
         api
-          .estimateTrials({ engine, model: model.trim() || undefined, scope, limit })
+          .estimateTrials({ engine, model: model.trim() || undefined, scope, limit, batch: useBatch })
           .then((e) => alive && setEstimates((old) => ({ ...old, [scope]: e })))
           .catch(() => alive && setEstimates((old) => ({ ...old, [scope]: undefined }))),
       );
@@ -748,7 +752,7 @@ function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => 
       alive = false;
       clearTimeout(t0);
     };
-  }, [engine, model, limit, t.count, rows.length]);
+  }, [engine, model, limit, useBatch, t.count, rows.length]);
 
   const start = async (scope: "better" | "all") => {
     const e = estimates[scope];
@@ -768,11 +772,13 @@ function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => 
 
   const startNow = (scope: "better" | "all") =>
     api
-      .startTrials({ engine, model: model.trim() || undefined, scope, limit, apply })
+      .startTrials({ engine, model: model.trim() || undefined, scope, limit, apply, batch: useBatch })
       .then((r) => {
         setMessage(
           r.queued
-            ? `Transcribing ${r.queued} meeting${r.queued === 1 ? "" : "s"} again (${money(r.cost)}), one after another. ${apply ? "Each is switched over when it's made; the old transcript stays in its versions." : "The results are kept beside the current transcripts, to compare; nothing changes until you pick one."}`
+            ? useBatch
+              ? `Sent ${r.queued} meeting${r.queued === 1 ? "" : "s"} to Google as a batch job (${money(r.cost)}). The new transcripts appear in each meeting's Versions when they're back (see Batch jobs above).`
+              : `Transcribing ${r.queued} meeting${r.queued === 1 ? "" : "s"} again (${money(r.cost)}), one after another. ${apply ? "Each is switched over when it's made; the old transcript stays in its versions." : "The results are kept beside the current transcripts, to compare; nothing changes until you pick one."}`
             : "Nothing to redo: no meeting with its audio kept needs it.",
         );
         void load();
@@ -832,6 +838,12 @@ function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => 
             <Switch checked={apply} onChange={setApply} label="Switch to each new transcript" />
             Switch to each new transcript
           </label>
+          {economy && (
+            <label className="flex cursor-pointer items-center gap-2 text-hint">
+              <Switch checked={batch} onChange={setBatch} label="Half price: as a batch" />
+              Half price: as a batch (answers come back later)
+            </label>
+          )}
           <label className="flex items-center gap-1.5 text-hint">
             At a time
             <input
@@ -1957,6 +1969,29 @@ export default function Settings({
                 label="Google API key"
                 hint={s.secret_hints?.gemini_api_key}
                 onSave={(v) => void saveTranscription({ gemini_api_key: v })}
+              />
+            </Row>
+            <Row
+              label="Transcription quality"
+              hint={
+                s.gemini_transcribe_model === "gemini-3.5-transcribe"
+                  ? "Best: Google's transcription model, the most reliable at telling speakers apart."
+                  : s.gemini_transcribe_model === "gemini-3.5-flash-lite"
+                    ? "Economy: about a quarter of the price and faster, and it can run as a half-price batch. It splits speakers more readily and times each turn only to the second."
+                    : `Using ${s.gemini_transcribe_model}.`
+              }
+            >
+              <Segmented
+                label="Transcription quality"
+                value={s.gemini_transcribe_model}
+                onChange={(v) => void saveTranscription({ gemini_transcribe_model: v })}
+                options={[
+                  { id: "gemini-3.5-transcribe", label: "Best" },
+                  { id: "gemini-3.5-flash-lite", label: "Economy" },
+                  ...(["gemini-3.5-transcribe", "gemini-3.5-flash-lite"].includes(s.gemini_transcribe_model)
+                    ? []
+                    : [{ id: s.gemini_transcribe_model, label: "Custom" }]),
+                ]}
               />
             </Row>
             <SwitchRow

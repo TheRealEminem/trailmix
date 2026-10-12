@@ -173,3 +173,125 @@ def test_the_notes_the_job_would_replace_are_found_by_rank(world):
     meeting()  # written by qwen2.5:7b (rated 60)
     up = main._upgradable({**main.settings.DEFAULTS, **cfg}, "gemini-3.8-flash")
     assert up["notes"]["count"] == 1 and up["notes"]["from"] == {"qwen2.5:7b": 1}
+
+
+# ── transcripts as a batch job ──
+
+import numpy as np  # noqa: E402
+
+import audio_store  # noqa: E402
+import transcribe_gemini as tg  # noqa: E402
+
+
+@pytest.fixture
+def audio_world(world, monkeypatch, tmp_path):
+    cfg, sent = world
+    cfg.update(transcribe_engine="gemini", gemini_transcribe_model="gemini-3.5-flash-lite", gemini_mix_tracks=True)
+    deleted, uploads = [], []
+    monkeypatch.setattr(tg, "upload", lambda data, mime, key, name="audio": uploads.append(name) or {"name": f"files/{name}", "uri": f"https://f/{name}"})
+    monkeypatch.setattr(tg, "delete_file", lambda file, key: deleted.append(file["name"]))
+    monkeypatch.setattr(tg, "encode", lambda audio: b"ogg")
+
+    def track(folder, name):
+        rng = np.random.default_rng(1 if name == "mic" else 2)
+        return (rng.standard_normal(16000 * 20) * 0.2).astype(np.float32)
+
+    monkeypatch.setattr(audio_store, "load_track", track)
+    monkeypatch.setattr(batch_jobs.store, "load_track", track)
+    return cfg, sent, deleted, uploads
+
+
+def meeting_with_audio(tmp_path):
+    mid = meeting()
+    (tmp_path / "audio").mkdir(exist_ok=True)
+    db.update_meeting(mid, audio_dir=str(tmp_path / "audio"), has_system=1, duration_sec=20)
+    return mid
+
+
+def turns(*items):
+    return json.dumps([{"start": s, "speaker": who, "text": t} for s, who, t in items])
+
+
+def test_audio_is_uploaded_per_chunk_and_sent_as_one_job_of_file_requests(audio_world, tmp_path):
+    cfg, sent, deleted, uploads = audio_world
+    mid = meeting_with_audio(tmp_path)
+    out = batch_jobs.submit_transcripts([mid], cfg, "gemini-3.5-flash-lite")
+    assert out["submitted"] == 1 and uploads == [f"batch-m{mid}-c0"] and deleted == []
+    request = sent["requests"][0]
+    assert request["key"] == f"t{mid}c0"
+    assert request["body"]["contents"][0]["parts"][0]["fileData"]["fileUri"] == f"https://f/batch-m{mid}-c0"
+    job = db.batch_jobs()[0]
+    assert job["kind"] == "transcripts" and job["est_cost"] > 0
+
+
+def test_the_transcribe_model_cannot_be_batched(audio_world, tmp_path):
+    cfg, sent, _, _ = audio_world
+    with pytest.raises(batch_jobs.NotReady, match="can't run as a batch job"):
+        batch_jobs.submit_transcripts([meeting_with_audio(tmp_path)], cfg, "gemini-3.5-transcribe")
+    assert sent == {}
+
+
+def test_finished_transcripts_become_versions_and_the_audio_is_deleted_at_google(audio_world, monkeypatch, tmp_path):
+    cfg, _, deleted, _ = audio_world
+    mid = meeting_with_audio(tmp_path)
+    batch_jobs.submit_transcripts([mid], cfg, "gemini-3.5-flash-lite")
+    answer = {"text": turns(("00:00", "Speaker 1", "Dana will send the budget on Friday."), ("00:05", "Speaker 2", "Thanks Dana.")),
+              "error": None, "usage": {"promptTokenCount": 10000, "candidatesTokenCount": 2000}}
+    monkeypatch.setattr(gemini_batch, "status", lambda n, k: {"state": "succeeded", "results": {f"t{mid}c0": answer}})
+    batch_jobs.check()
+    versions = db.transcript_versions(mid)
+    assert [(v["source"], v["applied"]) for v in versions] == [("original", 1), ("upgrade", 0)]
+    new = versions[1]
+    assert new["made_with"] == "gemini-3.5-flash-lite, redone later (batch)" and "budget" in new["transcript"]
+    assert "batch job" in new["note"]
+    assert db.get_meeting(mid)["transcript"].startswith("[00:00] You: Dana")      # the meeting itself is untouched
+    assert deleted == [f"files/batch-m{mid}-c0"]
+    assert db.usage_since("2000-01-01")[0]["kind"] == "transcript (batch)"
+    assert json.loads(db.batch_jobs()[0]["result_json"])["applied"] == 1
+
+
+def test_with_apply_the_new_transcript_is_used_unless_you_changed_it_meanwhile(audio_world, monkeypatch, tmp_path):
+    cfg, _, _, _ = audio_world
+    a, b = meeting_with_audio(tmp_path), meeting_with_audio(tmp_path)
+    batch_jobs.submit_transcripts([a, b], cfg, "gemini-3.5-flash-lite", apply=True)
+    db.update_meeting(b, transcript="[00:00] You: I fixed this by hand.")
+    ok = {"text": turns(("00:00", "Speaker 1", "A brand new transcript.")), "error": None, "usage": {}}
+    monkeypatch.setattr(gemini_batch, "status", lambda n, k: {"state": "succeeded", "results": {f"t{a}c0": ok, f"t{b}c0": ok}})
+    batch_jobs.check()
+    assert "brand new" in db.get_meeting(a)["transcript"]
+    assert db.get_meeting(b)["transcript"] == "[00:00] You: I fixed this by hand."
+    assert any(v["source"] == "upgrade" for v in db.transcript_versions(b))        # but its version is kept
+
+
+def test_a_chunk_that_did_not_come_back_fails_the_meeting_not_the_rest(audio_world, monkeypatch, tmp_path):
+    cfg, _, _, _ = audio_world
+    a, b = meeting_with_audio(tmp_path), meeting_with_audio(tmp_path)
+    batch_jobs.submit_transcripts([a, b], cfg, "gemini-3.5-flash-lite")
+    good = {"text": turns(("00:00", "Speaker 1", "Fine.")), "error": None, "usage": {}}
+    monkeypatch.setattr(gemini_batch, "status", lambda n, k: {"state": "succeeded", "results": {
+        f"t{a}c0": good, f"t{b}c0": {"text": None, "error": "blocked", "usage": {}}}})
+    batch_jobs.check()
+    result = json.loads(db.batch_jobs()[0]["result_json"])
+    assert (result["applied"], result["failed"]) == (1, 1)
+
+
+def test_audio_is_deleted_at_google_when_a_job_fails_or_is_cancelled(audio_world, monkeypatch, tmp_path):
+    cfg, _, deleted, _ = audio_world
+    mid = meeting_with_audio(tmp_path)
+    batch_jobs.submit_transcripts([mid], cfg, "gemini-3.5-flash-lite")
+    monkeypatch.setattr(gemini_batch, "status", lambda n, k: {"state": "failed", "results": None, "error": "quota"})
+    batch_jobs.check()
+    assert deleted == [f"files/batch-m{mid}-c0"]
+
+
+def test_a_failed_submission_deletes_the_audio_it_had_uploaded(audio_world, monkeypatch, tmp_path):
+    cfg, _, deleted, _ = audio_world
+    mid = meeting_with_audio(tmp_path)
+
+    def boom(*a, **k):
+        raise gemini_batch.BatchError("Google is down")
+
+    monkeypatch.setattr(gemini_batch, "create", boom)
+    with pytest.raises(gemini_batch.BatchError):
+        batch_jobs.submit_transcripts([mid], cfg, "gemini-3.5-flash-lite")
+    assert deleted == [f"files/batch-m{mid}-c0"] and db.batch_jobs() == []

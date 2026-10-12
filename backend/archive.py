@@ -46,12 +46,31 @@ def record(m: dict, audio: dict | None) -> dict:
         "my_notes": meeting_text.my_notes(m),
         "qa": json.loads(m["qa_json"]) if m.get("qa_json") else [],
         "transcript": meeting_text.segments(m),
+        # Every transcript ever made of it, and the receipt of every change (so an export loses nothing).
+        "versions": [{"created_at": v["created_at"], "engine": v["engine"], "model": v["model"], "made_with": v["made_with"],
+                      "source": v["source"], "applied": bool(v["applied"]), "note": v["note"], "seconds": v["seconds"],
+                      "has_system": bool(v["has_system"]), "duration_sec": v["duration_sec"],
+                      "transcript": json.loads(v["segments_json"]) if v["segments_json"] else []}
+                     for v in db.transcript_versions(m["id"])],
+        "history": [{k: h[k] for k in ("at", "field", "old_value", "new_value", "why")}
+                    for h in reversed(db.history_for(m["id"], limit=100000))],
         "audio": audio,
         "keep_audio": bool(m.get("keep_audio")),
         "workspace": (db.get_workspace(m["workspace_id"]) or {}).get("name") if m.get("workspace_id") else None,
         "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "app_version": APP_VERSION,
     }
+
+
+def _lines(segments: list[dict]) -> str:
+    """The transcript as text: one "[mm:ss] Speaker: words" line per segment."""
+    lines = []
+    for s in segments:
+        m, sec = divmod(int(s["start"] or 0), 60)
+        h, m = divmod(m, 60)
+        stamp = f"{h}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
+        lines.append(f"[{stamp}] {s['speaker'] + ': ' if s.get('speaker') else ''}{s['text']}")
+    return "\n".join(lines)
 
 
 def looks_like_record(data: object) -> bool:
@@ -67,12 +86,7 @@ def restore(data: dict, folder: Path | None) -> int | None:
     if uid and db.meeting_by_uid(uid):
         return None
     segments = [{k: s.get(k) for k in ("start", "end", "speaker", "text")} for s in data.get("transcript", []) if s.get("text")]
-    lines = []
-    for s in segments:
-        m, sec = divmod(int(s["start"] or 0), 60)
-        h, m = divmod(m, 60)
-        stamp = f"{h}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
-        lines.append(f"[{stamp}] {s['speaker'] + ': ' if s.get('speaker') else ''}{s['text']}")
+    lines = _lines(segments).split("\n") if segments else []
     meeting_id = db.create_imported_meeting(data.get("title") or "Imported meeting", data["created_at"],
                                             data.get("source") or "trailmix", uid, uid)
     db.update_meeting(
@@ -94,6 +108,15 @@ def restore(data: dict, folder: Path | None) -> int | None:
     for i, t in enumerate(db.tasks_for(meeting_id)):
         if i < len(tasks) and tasks[i].get("done"):
             db.set_task_done(t["id"], True)
+    for v in data.get("versions") or []:
+        segs = [{k: s.get(k) for k in ("start", "end", "speaker", "text")} for s in v.get("transcript", []) if s.get("text")]
+        db.add_transcript_version(
+            meeting_id, transcript=_lines(segs), segments_json=json.dumps(segs), engine=v.get("engine"), model=v.get("model"),
+            made_with=v.get("made_with"), source=v.get("source") or "original", duration_sec=v.get("duration_sec") or 0,
+            has_system=bool(v.get("has_system")), seconds=v.get("seconds"), applied=bool(v.get("applied")), note=v.get("note"),
+            created_at=v.get("created_at"))
+    if data.get("history"):
+        db.replace_history(meeting_id, data["history"])
     if folder:
         _restore_audio(meeting_id, data.get("audio") or {}, folder)
     return meeting_id
