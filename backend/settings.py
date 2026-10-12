@@ -54,6 +54,7 @@ DEFAULTS = {
     "transcribe_api_key": "",
     "transcribe_model": "whisper-1",
     "transcribe_live_model": "",        # empty = same as transcribe_model
+    "gemini_transcribe_model": "gemini-3.5-transcribe",   # the Google model for transcripts made after a recording
     "live_final": _ROOMY,               # transcribe with the accurate model while recording (see live.py)
     "live_notes": "auto",               # notes written during the meeting: auto | on | off (live_notes.py)
     "whats_new_seen": "",               # the version whose "What's new" you last closed
