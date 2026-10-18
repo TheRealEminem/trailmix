@@ -12,6 +12,11 @@ export const RELEASES: Release[] = [
     version: "0.15.0",
     items: [
       {
+        title: "Choose the AI before it runs",
+        body: "Before an import is processed, or notes are written again, Trailmix shows what each choice would take: how many passes a long transcript needs on this Mac, how much memory, or what the cloud would cost. Pick one for this time, or make it your default. The switch under your workspace changes the default in a click.",
+        where: "Sidebar → AI · Settings → Automatic mode",
+      },
+      {
         title: "Who said what, with Google Gemini",
         body: "Choose Google Gemini for transcription and every voice gets its own label, even in a room or a call with several people. Live captions appear as you talk, and the full transcript follows when you stop. Your recording is sent to Google, so Lockdown mode turns it off.",
         where: "Settings → Transcription",

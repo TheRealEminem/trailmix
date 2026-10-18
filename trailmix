@@ -10,7 +10,7 @@
 #   ./trailmix helper       build (if needed) and open Trailmix Helper, the menu bar recorder
 #   ./trailmix worker       run the Mac transcription worker for a server install (port 8770)
 #   ./trailmix dev          development mode: backend with reload + Vite on :5173 (foreground)
-#   ./trailmix app          (re)build Trailmix.app, the double-clickable launcher
+#   ./trailmix app          (re)build "Trailmix Dev.app", the double-clickable launcher for this folder
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -132,7 +132,7 @@ PLIST
       stop >/dev/null 2>&1 || true
       launchctl bootout "gui/$(id -u)" "$AGENT" 2>/dev/null || true
       launchctl bootstrap "gui/$(id -u)" "$AGENT"
-      say "Trailmix now starts when you log in. Open the app with ./trailmix or Trailmix.app."
+      say "Trailmix now starts when you log in. Open the app with ./trailmix or Trailmix Dev.app."
       ;;
     off)
       launchctl bootout "gui/$(id -u)" "$AGENT" 2>/dev/null || true

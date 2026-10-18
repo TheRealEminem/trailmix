@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# Builds Trailmix.app: a double-clickable launcher for Finder, the Dock or Spotlight.
-# It starts the background server if needed and opens Trailmix in its own window.
+# Builds "Trailmix Dev.app": a double-clickable launcher for this source folder (Finder, the Dock or Spotlight).
+# It starts the background server from source if needed and opens Trailmix in its own window. It's named, and its
+# icon badged, so it can't be mistaken for the installed Trailmix.app (the release, stable or beta).
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP="$ROOT/Trailmix.app"
+APP="$ROOT/Trailmix Dev.app"
 
-rm -rf "$APP"
+rm -rf "$APP" "$ROOT/Trailmix.app"  # (the launcher's old name)
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cat >"$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>CFBundleName</key><string>Trailmix</string>
-  <key>CFBundleDisplayName</key><string>Trailmix</string>
-  <key>CFBundleIdentifier</key><string>local.trailmix.launcher</string>
+  <key>CFBundleName</key><string>Trailmix Dev</string>
+  <key>CFBundleDisplayName</key><string>Trailmix Dev</string>
+  <key>CFBundleIdentifier</key><string>local.trailmix.dev</string>
   <key>CFBundleVersion</key><string>1.0</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>Trailmix</string>
@@ -34,7 +35,22 @@ fi
 SH
 chmod +x "$APP/Contents/MacOS/Trailmix"
 
-"$ROOT/scripts/make-icon.sh" "$APP/Contents/Resources/AppIcon.icns" || true
+# The app icon with a DEV badge.
+ICON_TMP="$(mktemp -d)"
+trap 'rm -rf "$ICON_TMP"' EXIT
+if "$ROOT/scripts/make-icon.sh" "$ICON_TMP/AppIcon.icns" \
+  && sips -s format png "$ICON_TMP/AppIcon.icns" --out "$ICON_TMP/base.png" >/dev/null \
+  && swift "$ROOT/scripts/badge-icon.swift" "$ICON_TMP/base.png" "$ICON_TMP/dev.png" DEV >/dev/null; then
+  SET="$ICON_TMP/AppIcon.iconset"
+  mkdir -p "$SET"
+  for s in 16 32 128 256 512; do
+    sips -z $s $s "$ICON_TMP/dev.png" --out "$SET/icon_${s}x${s}.png" >/dev/null
+    sips -z $((s * 2)) $((s * 2)) "$ICON_TMP/dev.png" --out "$SET/icon_${s}x${s}@2x.png" >/dev/null
+  done
+  iconutil -c icns "$SET" -o "$APP/Contents/Resources/AppIcon.icns"
+else
+  "$ROOT/scripts/make-icon.sh" "$APP/Contents/Resources/AppIcon.icns" || true
+fi
 
 touch "$APP"  # nudge Finder to pick up the icon
 echo "Built $APP"

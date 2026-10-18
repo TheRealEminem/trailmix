@@ -390,6 +390,8 @@ export interface Health {
   };
   /** This copy of Trailmix, e.g. "0.14.0" ("dev" from source) */
   version: string;
+  /** "app": the installed Trailmix.app (stable or beta); "source": run from the code folder (Trailmix Dev) */
+  build: "app" | "source";
   templates: { id: string; name: string }[];
   providers: (ProviderInfo & { kind: "local" | "cloud" | "custom" })[];
   /** Imports wait for you to choose which AI processes them. */
