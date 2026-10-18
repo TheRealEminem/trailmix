@@ -690,6 +690,7 @@ def health():
             "remote_ready": preflight.engine_problem("remote", cfg) is None,
         },
         "version": archive.APP_VERSION,
+        "build": "app" if "/Contents/Resources/" in sys.executable else "source",  # the installed app, or from source
         "templates": templates.listing(),
         "providers": [{**provider_info(p), "kind": v["kind"]} for p, v in llm_engine.PROVIDERS.items()],
         "ask_before_ai": cfg["ask_before_ai"],

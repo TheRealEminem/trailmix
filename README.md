@@ -52,7 +52,7 @@ sets up Python and builds the web app, which takes a minute or two. Quit from **
 ./trailmix autostart on      # start the server when you log in
 ./trailmix dev               # development: backend with reload + Vite on :5173
 ./trailmix worker            # transcription worker for a server install (see docs/self-hosting.md)
-./trailmix app               # build Trailmix.app, a double-clickable launcher for this folder
+./trailmix app               # build "Trailmix Dev.app", a launcher for this folder (DEV badge on its icon)
 ./trailmix helper            # build and open Trailmix Helper, the menu bar recorder (below)
 ```
 
