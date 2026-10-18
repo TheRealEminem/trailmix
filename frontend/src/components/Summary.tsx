@@ -1,17 +1,17 @@
-import { useState } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Health, Meeting, Provider, Task } from "../api";
+import type { Health, Meeting, Task } from "../api";
 import { AlertIcon, CheckIcon, CompassIcon, FlagIcon, LeafIcon, RefreshIcon, SignpostIcon, SparkleIcon } from "./icons";
 import { ContourBadge } from "./illustrations";
 import TaskItem from "./TaskItem";
-import { CopyButton, ProviderSelect, TemplateSelect } from "./ui";
+import { CopyButton } from "./ui";
 
 interface Props {
   meeting: Meeting;
   health: Health | null;
-  onResummarize: (provider: Provider, template: string) => void;
+  /** Opens the sheet for picking which AI writes the notes. */
+  onResummarize: () => void;
   onToggleTask: (task: Task, done: boolean) => void;
 }
 
@@ -49,8 +49,6 @@ function textOf(node: ReactNode): string {
 }
 
 export default function Summary({ meeting, health, onResummarize, onToggleTask }: Props) {
-  const [provider, setProvider] = useState<Provider>("auto");
-  const [template, setTemplate] = useState("");
   const busy = !["done", "error"].includes(meeting.status);
   const canRegenerate = !!meeting.transcript && meeting.status !== "ready_summarize";
 
@@ -107,11 +105,9 @@ export default function Summary({ meeting, health, onResummarize, onToggleTask }
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <TemplateSelect value={template} onChange={setTemplate} health={health} disabled={busy} />
-            <ProviderSelect value={provider} onChange={setProvider} health={health} disabled={busy} />
-            <button onClick={() => onResummarize(provider, template)} disabled={busy} className="btn btn-sm btn-soft">
+            <button onClick={onResummarize} disabled={busy} className="btn btn-sm btn-soft">
               <RefreshIcon size={16} />
-              {meeting.summary ? "Regenerate" : "Summarize"}
+              {meeting.summary ? "Write again…" : "Summarize…"}
             </button>
           </div>
         </div>

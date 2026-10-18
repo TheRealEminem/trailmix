@@ -6,9 +6,10 @@
                  (or, when it was transcribed while recording: just the last few seconds, no approval or gate)
                  -> [approve] -> [RAM gate] -> summary + title + action items (any provider) -> export
 
-[approve]: automatic when the matching "auto" setting is on; otherwise the meeting parks as
-'ready_transcribe' / 'ready_summarize' until you press the button. [RAM gate]: only for models that
-run on this machine; parks as 'waiting_confirm' when free RAM is short, regardless of auto mode.
+[approve]: automatic when the matching "auto" setting is on (and it isn't an import waiting for you to choose which
+AI processes it: ask_first); otherwise the meeting parks as 'ready_transcribe' / 'ready_summarize' until you press
+the button. [RAM gate]: only for models that run on this machine; parks as 'waiting_confirm' when free RAM is short,
+regardless of auto mode.
 Each stage is resumable: state lives in the database, so a parked job or a server restart
 just re-enters at the first unfinished stage.
 """
@@ -175,6 +176,11 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
     cfg = settings.get_all()
     if m.get("requested_engine"):  # picked for this recording (or "Transcribe again with ..."), not the Settings one
         cfg["transcribe_engine"] = m["requested_engine"]
+    if m.get("requested_transcribe_model") and cfg["transcribe_engine"] != "local":  # picked before processing
+        cfg["gemini_transcribe_model" if cfg["transcribe_engine"] == "gemini" else "transcribe_model"] = m["requested_transcribe_model"]
+    if m.get("requested_model") and m["requested_provider"] in llm_engine.PROVIDERS:
+        cfg[llm_engine.model_key(m["requested_provider"])] = m["requested_model"]
+    ask = bool(m.get("ask_first"))  # an import waiting for you to choose which AI processes it
     stats: dict = {}  # for the anonymous usage stats (telemetry.py): durations and choices, nothing said
     started = time.monotonic()
 
@@ -194,7 +200,7 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
             log.warning("Meeting %s: the transcript made while recording missed a part; transcribing it all again",
                         meeting_id)
     if not m["transcribed"]:
-        if "transcribe" not in go and not cfg["auto_transcribe"]:
+        if "transcribe" not in go and (ask or not cfg["auto_transcribe"]):
             db.update_meeting(meeting_id, status="ready_transcribe", wait_reason=None)
             return
         engine = cfg["transcribe_engine"]
@@ -218,7 +224,7 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
 
     # summarize (also the entry point for "Regenerate")
     if m["transcript"] and not m["summary"]:
-        if "summarize" not in go and not cfg["auto_summarize"]:
+        if "summarize" not in go and (ask or not cfg["auto_summarize"]):
             db.update_meeting(meeting_id, status="ready_summarize", wait_reason=None)
             _export(meeting_id, cfg)  # save the transcript now; re-exported with the summary later
             return

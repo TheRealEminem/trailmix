@@ -8,7 +8,6 @@ import type {
   Meeting,
   MeetingListItem,
   NativeRecorder,
-  Provider,
   Task,
   Workspace,
   WorkspaceFilter,
@@ -17,6 +16,7 @@ import type {
 import { startRecording } from "./capture";
 import type { ActiveRecording } from "./capture";
 import { formatDuration, tildePath } from "./format";
+import { PreflightSheet } from "./components/AIChoice";
 import AskPanel from "./components/AskPanel";
 import { MenuIcon, MicIcon } from "./components/icons";
 import { Ambient, Logo, TrailScene } from "./components/illustrations";
@@ -129,6 +129,10 @@ export default function App() {
   const [view, setView] = useState<View>("main");
   const [toast, setToast] = useState<ToastState | null>(null);
   const [confirm, confirmDialog] = useConfirm();
+  // The meetings whose AI you're choosing (the pre-flight sheet), and whether an import just finished: then the
+  // sheet opens by itself for the imports waiting on that choice.
+  const [preflightIds, setPreflightIds] = useState<number[] | null>(null);
+  const [justImported, setJustImported] = useState(false);
 
   const [micDeviceId, setMicDeviceId] = useState(savedMicId);
   const [includeMeetingAudio, setIncludeMeetingAudio] = usePref(
@@ -272,6 +276,14 @@ export default function App() {
   useEffect(() => {
     if (authState === "ok") void refreshTasks();
   }, [meetings, authState, refreshTasks]);
+
+  // Once an import's meetings are in the list, ask which AI should process the ones waiting on that choice.
+  useEffect(() => {
+    if (!justImported) return;
+    setJustImported(false);
+    const ids = meetings.filter((m) => m.ask_first).map((m) => m.id);
+    if (ids.length) setPreflightIds(ids);
+  }, [meetings]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (selectedId === null) {
@@ -678,6 +690,7 @@ export default function App() {
     );
   }
 
+  const waiting = meetings.filter((m) => m.ask_first).map((m) => m.id);
   const showRecorder = selectedId === null;
   onRecorderScreenRef.current = showRecorder && view === "main";
   const liveId = rec?.meetingId ?? remote?.id ?? null;
@@ -729,6 +742,8 @@ export default function App() {
           workspace={workspace}
           onWorkspace={setWorkspace}
           questions={questionCounts}
+          health={health}
+          onAIChanged={() => void refreshHealth()}
         />
       </div>
       {drawer && !wide && (
@@ -783,6 +798,19 @@ export default function App() {
         <div className="relative mx-auto w-full max-w-[872px] px-5 pb-24 pt-7 sm:px-8 lg:px-10 lg:pt-12">
           <UpdateBanner native={native} />
           <ModelsBanner />
+          {waiting.some((id) => id !== selectedId || view !== "main") && !preflightIds && (
+            <div className="panel mb-6 flex animate-enter flex-wrap items-center justify-between gap-3 px-4 py-3 text-label">
+              <span className="text-ink-soft">
+                <span className="font-medium text-ink">
+                  {waiting.length === 1 ? "An import is" : `${waiting.length} imports are`} waiting
+                </span>{" "}
+                for you to choose which AI processes {waiting.length === 1 ? "it" : "them"}.
+              </span>
+              <button className="btn btn-sm btn-primary" onClick={() => setPreflightIds(waiting)}>
+                Choose AI…
+              </button>
+            </div>
+          )}
           {view === "settings" ? (
             <Settings
               health={health}
@@ -807,7 +835,10 @@ export default function App() {
             />
           ) : view === "import" ? (
             <ImportPanel
-              onImported={() => void refreshList()}
+              onImported={() => {
+                setJustImported(true);
+                void refreshList();
+              }}
               onOpenMeeting={openMeeting}
               onError={fail}
             />
@@ -943,12 +974,7 @@ export default function App() {
               onRetry={() =>
                 void guarded(() => api.retry(meeting.id), meeting.id)
               }
-              onSummarize={(p: Provider, template?: string) =>
-                void guarded(
-                  () => api.summarize(meeting.id, p, template),
-                  meeting.id,
-                )
-              }
+              onChooseAI={() => setPreflightIds([meeting.id])}
               onBookmarks={(b) =>
                 void guarded(() => api.setBookmarks(meeting.id, b), meeting.id)
               }
@@ -982,6 +1008,20 @@ export default function App() {
       />
       <TooltipLayer />
       {confirmDialog}
+      {preflightIds && (
+        <PreflightSheet
+          key={preflightIds.join(",")}
+          ids={preflightIds}
+          health={health}
+          onClose={() => setPreflightIds(null)}
+          onStarted={(n) => {
+            setPreflightIds(null);
+            setToast({ tone: "success", text: n === 1 ? "Started." : `Started ${n} meetings, one after another.` });
+            void refreshList();
+            if (selectedId !== null) void refreshSelected(selectedId);
+          }}
+        />
+      )}
     </div>
   );
 }

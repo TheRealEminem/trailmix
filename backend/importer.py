@@ -13,6 +13,7 @@ import httpx
 
 import database as db
 import pipeline
+import settings
 
 
 # Where an imported transcript (and notes) came from, as shown in "Transcribed with" and "Notes by".
@@ -65,6 +66,7 @@ def save_imported(title: str, when: datetime, segments: list[dict], source: str,
         summary_model=SOURCE_NAMES.get(source, source) if summary else None,
         transcribed_with=SOURCE_NAMES.get(source, source),
         status="done" if summary else "queued",
+        ask_first=int(not summary and settings.get_all()["ask_before_ai"]),  # you pick which AI writes the notes
     )
     if summary:
         db.replace_tasks(meeting_id, meeting_text.action_items(summary))

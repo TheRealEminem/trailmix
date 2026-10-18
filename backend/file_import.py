@@ -22,6 +22,7 @@ import audio_store as store
 import database as db
 import importer
 import pipeline
+import settings
 
 log = logging.getLogger("trailmix.import")
 
@@ -190,7 +191,7 @@ def import_recording(name: str, temp: Path, modified: datetime) -> int | None:
         db.update_meeting(
             meeting_id, audio_dir=str(folder), audio_deleted=0, duration_sec=duration, title_auto=1,
             imported_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"), status="queued",
-            transcribed=0,
+            transcribed=0, ask_first=int(settings.get_all()["ask_before_ai"]),
         )
         pipeline.enqueue(meeting_id)
         return meeting_id
