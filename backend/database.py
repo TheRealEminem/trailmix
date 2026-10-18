@@ -161,6 +161,9 @@ _ADDED_COLUMNS = {
     "tags_model": "TEXT",
     "imported_at": "TEXT",                           # when an imported recording came in (its audio's 30 days)
     "requested_engine": "TEXT",                      # speech engine picked for this recording (NULL: the one in Settings)
+    "requested_transcribe_model": "TEXT",            # its speech model, picked before processing (NULL: Settings')
+    "requested_model": "TEXT",                       # the notes model for requested_provider (NULL: Settings')
+    "ask_first": "INTEGER NOT NULL DEFAULT 0",       # waits for you to choose which AI processes it (an import)
 }
 
 _FTS_FIELDS = ("title", "transcript", "summary", "tags_json")
@@ -301,7 +304,8 @@ def count_meetings() -> int:
 def list_meetings() -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, title, created_at, duration_sec, status, workspace_id FROM meetings ORDER BY created_at DESC, id DESC"
+            "SELECT id, title, created_at, duration_sec, status, workspace_id, ask_first FROM meetings "
+            "ORDER BY created_at DESC, id DESC"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -352,7 +356,7 @@ _UPDATABLE = {
     "requested_provider", "requested_template", "title_auto", "draft_json", "exported_paths", "export_error",
     "bookmarks_json", "speaker_names_json", "qa_json", "keep_audio", "audio_dir", "live_json", "workspace_id", "workspace_auto",
     "live_notes_json", "my_notes_json", "transcribed_with", "summary_model", "workspace_model", "tags_json", "tags_model", "imported_at",
-    "created_at", "requested_engine",
+    "created_at", "requested_engine", "requested_transcribe_model", "requested_model", "ask_first",
 }
 _JSON_FIELDS = {"my_notes_json", "live_notes_json", "tags_json", "segments_json", "draft_json", "exported_paths", "bookmarks_json", "speaker_names_json", "qa_json"}
 

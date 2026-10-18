@@ -91,6 +91,11 @@ def configured(pid: str, cfg: dict) -> tuple[bool, str]:
     return True, ""
 
 
+def model_key(pid: str) -> str:
+    """The setting that holds this provider's model."""
+    return f"{pid}_model"
+
+
 def model_for(pid: str, cfg: dict) -> str:
     if pid == "ollama":
         if cfg["ollama_model"]:
@@ -624,18 +629,18 @@ def summarize(transcript: str, cfg: dict, choice: str, template: str, moments: l
                 on_draft("\n\n".join(shown))
             rest = after(transcript, until)
             if rest.strip():
-                take_notes(split_lines(rest, budget), "Notes on the rest of the meeting ({i} of {n})")
+                take_notes(split_lines(rest, budget), "Reading the rest of the meeting, part {i} of {n}")
             material, from_notes = "\n\n".join(notes), True
         for _ in range(3):  # notes on notes for very long meetings; each round is much shorter than the last
             if len(material) <= budget:
                 break
             parts = split_lines(material, budget)
             notes, shown = [], []
-            take_notes(parts, "Summarizing part {i} of {n}")
+            take_notes(parts, "Too long to read in one go: reading part {i} of {n}")
             material, from_notes = "\n\n".join(notes), True
         material = material[:budget]  # only reached if the notes somehow didn't shrink
         if on_progress and from_notes:
-            on_progress("Writing up the notes")
+            on_progress("Writing up the notes from all the parts")
         system, prompt = templates.final_prompt(template, cfg["custom_template"], material, from_notes, moments, about, minutes,
                                                 mine)
         show = (lambda t: on_draft(tidy(t))) if on_draft else None

@@ -1,9 +1,8 @@
-import { useState } from "react";
 import type { ReactNode } from "react";
-import type { Health, Meeting, Provider } from "../api";
+import type { Health, Meeting } from "../api";
 import { shortModel } from "../format";
 import { AlertIcon, CheckIcon, LinesIcon, MicIcon, RefreshIcon, SignpostIcon, SparkleIcon } from "./icons";
-import { ProviderSelect, Spinner, TemplateSelect } from "./ui";
+import { Spinner } from "./ui";
 
 type StepState = "done" | "active" | "waiting" | "todo" | "error";
 
@@ -12,7 +11,8 @@ interface Props {
   health: Health | null;
   onConfirm: () => void;
   onRetry: () => void;
-  onSummarize: (p: Provider, template?: string) => void;
+  /** Opens the sheet for picking which AI processes it. */
+  onChooseAI: () => void;
 }
 
 function stepStates(m: Meeting): [StepState, StepState, StepState] {
@@ -73,9 +73,7 @@ function Waypoint({ state, label, Icon, sub }: { state: StepState; label: string
   );
 }
 
-export default function PipelineStatus({ meeting: m, health, onConfirm, onRetry, onSummarize }: Props) {
-  const [provider, setProvider] = useState<Provider>("auto");
-  const [template, setTemplate] = useState("");
+export default function PipelineStatus({ meeting: m, health, onConfirm, onRetry, onChooseAI }: Props) {
   const states = stepStates(m);
   const progress = parseProgress(m.wait_reason);
   const reached = states[2] === "done" ? 100 : states[1] === "done" ? 50 : 0;
@@ -109,39 +107,53 @@ export default function PipelineStatus({ meeting: m, health, onConfirm, onRetry,
       </div>
 
       <div className="border-t border-line bg-surface-subtle/40 px-5 py-4 text-label sm:px-6">
-        {m.status === "ready_transcribe" && (
-          <ActionRow
-            icon={<SignpostIcon size={18} />}
-            tone="sun"
-            title="Recording saved. Ready to transcribe?"
-            body={
-              health?.transcription.engine === "remote"
-                ? `Sends the audio to your transcription endpoint (${health.transcription.url}).`
-                : "Runs the full-quality model (about 3 GB of RAM) and frees it when it's finished."
-            }
-          >
-            <button onClick={onConfirm} className="btn btn-md btn-primary">
-              <LinesIcon size={16} />
-              Generate transcript
-            </button>
-          </ActionRow>
-        )}
+        {m.status === "ready_transcribe" &&
+          (m.ask_first ? (
+            <ActionRow
+              icon={<SignpostIcon size={18} />}
+              tone="sun"
+              title="Imported. How should it be processed?"
+              body="Pick where it's transcribed and which AI writes the notes, and see what each would take first."
+            >
+              <button onClick={onChooseAI} className="btn btn-md btn-primary">
+                <SparkleIcon size={16} />
+                Choose AI…
+              </button>
+            </ActionRow>
+          ) : (
+            <ActionRow
+              icon={<SignpostIcon size={18} />}
+              tone="sun"
+              title="Recording saved. Ready to transcribe?"
+              body={
+                health?.transcription.engine === "remote"
+                  ? `Sends the audio to your transcription endpoint (${health.transcription.url}).`
+                  : "Runs the full-quality model (about 3 GB of RAM) and frees it when it's finished."
+              }
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={onChooseAI} className="btn btn-md btn-ghost">
+                  Choose AI…
+                </button>
+                <button onClick={onConfirm} className="btn btn-md btn-primary">
+                  <LinesIcon size={16} />
+                  Generate transcript
+                </button>
+              </div>
+            </ActionRow>
+          ))}
 
         {m.status === "ready_summarize" && (
           <ActionRow
             icon={<SignpostIcon size={18} />}
             tone="sun"
-            title="Transcript's done. Summarize it?"
-            body="Writes notes, action items and a title. Pick a template for the kind of meeting it was."
+            title={m.ask_first ? "Imported. Which AI should write the notes?" : "Transcript's done. Summarize it?"}
+            body="Writes notes, action items and a title. You'll see what each AI would take before it starts."
           >
-            <div className="flex flex-wrap items-center gap-2">
-              <TemplateSelect value={template} onChange={setTemplate} health={health} />
-              <ProviderSelect value={provider} onChange={setProvider} health={health} />
-              <button onClick={() => onSummarize(provider, template || undefined)} className="btn btn-md btn-primary">
-                <SparkleIcon size={16} />
-                Summarize
-              </button>
-            </div>
+            <button onClick={onChooseAI} className="btn btn-md btn-primary">
+              <SparkleIcon size={16} />
+              Choose AI and summarize…
+            </button>
           </ActionRow>
         )}
 
@@ -175,7 +187,10 @@ export default function PipelineStatus({ meeting: m, health, onConfirm, onRetry,
                   (progress
                     ? `Transcribing ${progress.track} with ${shortModel(health?.transcription.model ?? "the full model")}…`
                     : `Transcribing with ${shortModel(health?.transcription.model ?? "the full model")}…`)}
-                {m.status === "summarizing" && `Writing the summary with ${health?.summary.label ?? "your provider"}…`}
+                {m.status === "summarizing" &&
+                  `Writing the notes with ${m.notes_with ?? (health ? `${health.summary.label} · ${health.summary.model}` : "your provider")}${
+                    m.wait_reason ? `. ${m.wait_reason}` : ""
+                  }…`}
               </span>{" "}
               You can keep browsing; this runs in the background.
             </span>
