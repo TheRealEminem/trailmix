@@ -21,6 +21,9 @@ DEFAULTS = {
     # Two-step flow: when off, the meeting waits for you to start that step.
     "auto_transcribe": True,
     "auto_summarize": True,
+    # Imports wait for you to pick which AI transcribes them and writes their notes (and see what each would take)
+    # instead of starting with the defaults below. (Recordings use the defaults; notes you rewrite always ask.)
+    "ask_before_ai": True,
     "auto_title": True,
     "auto_workspace": True,             # sort each new meeting into a workspace from its notes (workspaces.py)
     "ask_questions": True,              # quick questions about what the AI wasn't sure of (questions.py)

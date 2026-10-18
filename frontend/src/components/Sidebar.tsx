@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../api";
-import type { MeetingListItem, SearchHit, Workspace, WorkspaceFilter } from "../api";
+import type { Health, MeetingListItem, SearchHit, Workspace, WorkspaceFilter } from "../api";
 import { dayGroup, formatDuration, formatTime } from "../format";
 import { ChatIcon, CheckSquareIcon, CloseIcon, DownloadIcon, MicIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons";
+import { AISwitch } from "./AIChoice";
 import { Logo } from "./illustrations";
 import SystemStatus from "./SystemStatus";
 import { Pulse, Skeleton, Spinner, StatusChip } from "./ui";
@@ -30,6 +31,9 @@ interface Props {
   onWorkspace: (w: WorkspaceFilter) => void;
   /** Meeting id → questions waiting for you. */
   questions: Record<string, number>;
+  health: Health | null;
+  /** The AI defaults were changed from the quick switch. */
+  onAIChanged: () => void;
 }
 
 /** Renders a search snippet, turning the … markers into highlights. */
@@ -148,6 +152,8 @@ export default function Sidebar({
   workspace,
   onWorkspace,
   questions,
+  health,
+  onAIChanged,
 }: Props) {
   const meetings = everyMeeting.filter((m) => inWorkspace(workspace, m.workspace_id));
   const spaceOf = (id: number | null) => (workspace === "all" && id ? workspaces.find((w) => w.id === id) : undefined);
@@ -225,6 +231,16 @@ export default function Sidebar({
             onManage={() => {
               onView("settings");
               setTimeout(() => document.getElementById("workspaces")?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+            }}
+          />
+        </div>
+        <div className="mb-3">
+          <AISwitch
+            health={health}
+            onChanged={onAIChanged}
+            onOpenSettings={() => {
+              onView("settings");
+              setTimeout(() => document.getElementById("automatic")?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
             }}
           />
         </div>

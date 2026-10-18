@@ -16,6 +16,8 @@ export interface MeetingListItem {
   duration_sec: number;
   status: MeetingStatus;
   workspace_id: number | null;
+  /** An import waiting for you to choose which AI processes it. */
+  ask_first: number;
 }
 
 export type WorkspaceColor = "forest" | "sky" | "sun" | "trail" | "ink";
@@ -268,6 +270,8 @@ export type ProviderId = "ollama" | "anthropic" | "openai" | "gemini" | "deepsee
 export interface Settings {
   auto_transcribe: boolean;
   auto_summarize: boolean;
+  /** Imports wait for you to pick which AI transcribes them and writes their notes. */
+  ask_before_ai: boolean;
   auto_title: boolean;
   auto_workspace: boolean;
   current_workspace: number;
@@ -344,6 +348,8 @@ export interface Meeting extends MeetingListItem {
   transcribed_with: string | null;
   /** The model that wrote the notes, e.g. "qwen2.5:7b". */
   summary_model: string | null;
+  /** The AI picked for its notes when it isn't the default, e.g. "Google Gemini · gemini-3.6-flash". */
+  notes_with: string | null;
   tags: string[];
   exported_paths: string[];
   export_error: string | null;
@@ -379,11 +385,15 @@ export interface Health {
     live_final: boolean;
     /** A Google API key is saved and Lockdown is off: "Label speakers" (Gemini) can be used */
     gemini_ready: boolean;
+    /** A transcription endpoint is set (and allowed) */
+    remote_ready: boolean;
   };
   /** This copy of Trailmix, e.g. "0.14.0" ("dev" from source) */
   version: string;
   templates: { id: string; name: string }[];
-  providers: { id: ProviderId; label: string; kind: "local" | "cloud" | "custom" }[];
+  providers: (ProviderInfo & { kind: "local" | "cloud" | "custom" })[];
+  /** Imports wait for you to choose which AI processes them. */
+  ask_before_ai: boolean;
   audio_retention_days: number;
   auth: boolean;
   recording: boolean;
@@ -456,6 +466,48 @@ export interface SystemInfo {
 }
 
 export type Provider = "auto" | ProviderId;
+
+/** Which AI could process some meetings, and what the picked one would take (see backend/preflight.py). */
+export interface Preflight {
+  meetings: { id: number; title: string; minutes: number; needs_transcript: boolean }[];
+  defaults: { engine: TranscribeEngine; provider: ProviderId; model: string; template: string; transcribe_model: string };
+  notes: {
+    options: { provider: ProviderId; label: string; kind: "local" | "cloud" | "custom"; local: boolean; model: string; ready: boolean; reason: string }[];
+    plan: {
+      provider: ProviderId;
+      label: string;
+      model: string;
+      /** Ollama on this computer */
+      local: boolean;
+      runs_here: boolean;
+      /** parts: how many pieces the transcript is read in (1 = in one go) */
+      meetings: { id: number; chars: number; parts: number; estimated: boolean }[];
+      calls: number;
+      tokens_in: number;
+      tokens_out: number;
+      /** dollars; 0 on this computer, null when the price isn't known */
+      cost: number | null;
+      window_chars: number;
+      ram_needed_gb: number | null;
+      ram_free_gb: number;
+      ram_total_gb: number;
+    };
+  };
+  transcribe: {
+    options: { engine: TranscribeEngine; label: string; local: boolean; ready: boolean; reason: string; models: { id: string; label: string }[] }[];
+    plan: { engine: TranscribeEngine; model: string; minutes: number; cost: number | null; per_minute: number | null; ram_needed_gb: number | null; ram_free_gb: number };
+  } | null;
+  as_of: string;
+  recording: boolean;
+}
+
+export interface AIChoice {
+  meeting_ids: number[];
+  engine?: TranscribeEngine;
+  transcribe_model?: string;
+  provider?: ProviderId;
+  model?: string;
+}
 
 /** Fired when the server says we need to sign in (hosted installs only). */
 export const AUTH_EVENT = "trailmix:auth-required";
@@ -760,6 +812,10 @@ export const api = {
   /** engine: use this one just this time (Settings' engine otherwise) */
   retranscribe: (id: number, engine?: "local" | "remote" | "gemini") =>
     request<{ ok: true }>(`/meetings/${id}/retranscribe`, json("POST", engine ? { engine } : undefined)),
+  preflight: (choice: AIChoice) => request<Preflight>("/preflight", json("POST", choice)),
+  /** Transcribe (if needed) and write notes with this AI; `remember` makes it the default too. */
+  process: (choice: AIChoice & { template?: string; remember?: boolean }) =>
+    request<{ queued: number }>("/process", json("POST", choice)),
   summarize: (id: number, provider: Provider, template?: string) =>
     request<{ ok: true }>(`/meetings/${id}/summarize`, json("POST", { provider, template })),
   askMeeting: (id: number, question: string) => request<QA>(`/meetings/${id}/ask`, json("POST", { question })),

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { inApp, revealInFinder } from "../api";
-import type { Bookmark, Health, Meeting, Provider, Task, Workspace } from "../api";
+import type { Bookmark, Health, Meeting, Task, Workspace } from "../api";
 import {
   formatBytes,
   tildePath,
@@ -48,7 +48,8 @@ interface Props {
   onExport: () => void;
   onConfirm: () => void;
   onRetry: () => void;
-  onSummarize: (p: Provider, template?: string) => void;
+  /** Opens the sheet for picking which AI processes this meeting. */
+  onChooseAI: () => void;
   onBookmarks: (b: Bookmark[]) => void;
   onSpeakers: (names: Record<string, string>) => void;
   onToggleTask: (t: Task, done: boolean) => void;
@@ -244,7 +245,7 @@ export default function MeetingView({
           health={health}
           onConfirm={on.onConfirm}
           onRetry={on.onRetry}
-          onSummarize={on.onSummarize}
+          onChooseAI={on.onChooseAI}
         />
       )}
 
@@ -285,7 +286,7 @@ export default function MeetingView({
             <Summary
               meeting={m}
               health={health}
-              onResummarize={(p, t) => on.onSummarize(p, t || undefined)}
+              onResummarize={on.onChooseAI}
               onToggleTask={on.onToggleTask}
             />
           )}

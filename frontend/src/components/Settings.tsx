@@ -1808,7 +1808,15 @@ export default function Settings({
         title="Automatic mode"
         blurb="What happens on its own once a meeting ends."
         delay={80}
+        id="automatic"
       >
+        <SwitchRow
+          icon={<SparkleIcon size={16} />}
+          label="Ask which AI to use for imports"
+          hint="On: an imported recording or transcript waits while you pick where it's transcribed and which AI writes its notes, with what each would take (passes, memory, cost). Off: imports start right away with the defaults below. Rewriting notes always asks."
+          checked={s.ask_before_ai}
+          onChange={(v) => save({ ask_before_ai: v })}
+        />
         <SwitchRow
           icon={<LinesIcon size={16} />}
           label="Auto-generate transcript"

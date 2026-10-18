@@ -42,6 +42,7 @@ import mlx_engine
 import models
 import ollama_setup
 import pipeline
+import preflight
 import recorder
 import resources
 import settings
@@ -294,6 +295,10 @@ def _present(m: dict) -> dict:
     out["audio_deleted"] = bool(m["audio_deleted"])
     out["has_system"] = bool(m["has_system"])
     out["keep_audio"] = bool(m.get("keep_audio"))
+    out["ask_first"] = bool(m.get("ask_first"))
+    pid = m.get("requested_provider")  # the AI picked for its notes, if not the default
+    out["notes_with"] = (f"{llm_engine.label(pid, cfg)} · {m['requested_model'] or llm_engine.model_for(pid, cfg)}"
+                         if pid in llm_engine.PROVIDERS else None)
     folder = next((str(Path(p).parent) for p in out["exported_paths"] if p.endswith("meeting.json")), None)
     out["export_folder"] = folder
     return out
@@ -682,10 +687,12 @@ def health():
             "local_available": mlx_engine.available(),
             "live_final": cfg["live_final"] and not gemini,  # the transcript made while recording is the final one
             "gemini_ready": bool(cfg["gemini_api_key"]) and not settings.locked(cfg),  # Google can be used for speaker labels
+            "remote_ready": preflight.engine_problem("remote", cfg) is None,
         },
         "version": archive.APP_VERSION,
         "templates": templates.listing(),
-        "providers": [{"id": p, "label": llm_engine.label(p, cfg), "kind": v["kind"]} for p, v in llm_engine.PROVIDERS.items()],
+        "providers": [{**provider_info(p), "kind": v["kind"]} for p, v in llm_engine.PROVIDERS.items()],
+        "ask_before_ai": cfg["ask_before_ai"],
         "audio_retention_days": store.RETENTION_DAYS,
         "auth": auth.required(),
         "recording": live.active_count() > 0,
@@ -1076,7 +1083,7 @@ def retranscribe(meeting_id: int, body: RetranscribeRequest | None = None):
         raise HTTPException(409, "The audio for this meeting has been deleted, so it can't be transcribed again")
     db.update_meeting(meeting_id, status="queued", wait_reason=None, error=None, transcribed=0, summary=None,
                       summary_error=None, live_json=None,  # the whole recording, from scratch
-                      requested_engine=engine)  # (None: with whatever Settings says now)
+                      requested_engine=engine, requested_transcribe_model=None)  # (None: with whatever Settings says now)
     pipeline.enqueue(meeting_id, go=frozenset({"transcribe", "summarize"}))
     return {"ok": True}
 
@@ -1098,20 +1105,9 @@ class ApplyRequest(BaseModel):
 
 def _check_engine(engine: str, cfg: dict) -> None:
     """Fails now, in plain words, if this engine can't be used (rather than after the job was queued)."""
-    if engine not in settings.CHOICES["transcribe_engine"]:
-        raise HTTPException(422, "Unknown transcription engine")
-    if engine == "gemini":
-        if settings.locked(cfg):
-            raise HTTPException(409, f"{settings.LOCKDOWN}, so recordings can't be sent to Google")
-        if not cfg["gemini_api_key"]:
-            raise HTTPException(409, "Add a Google API key first (Settings → Transcription)")
-    elif engine == "remote":
-        if not cfg["transcribe_url"]:
-            raise HTTPException(409, "Set the transcription endpoint first (Settings → Transcription)")
-        if settings.locked(cfg) and not settings.on_this_computer(cfg["transcribe_url"]):
-            raise HTTPException(409, f"{settings.LOCKDOWN}, so recordings can't go to a transcription server elsewhere")
-    elif not mlx_engine.available():
-        raise HTTPException(409, "Transcribing on this Mac needs a Mac with MLX")
+    problem = preflight.engine_problem(engine, cfg)
+    if problem:
+        raise HTTPException(422 if problem.startswith("Unknown") else 409, problem)
 
 
 def _version_summary(v: dict) -> dict:
@@ -1225,10 +1221,95 @@ def resummarize(meeting_id: int, body: SummarizeRequest):
         raise HTTPException(409, "Meeting has no finished transcript to summarize")
     db.update_meeting(
         meeting_id, status="queued", wait_reason=None, summary=None, summary_provider=None,
-        summary_error=None, requested_provider=body.provider, requested_template=body.template,
+        summary_error=None, requested_provider=body.provider, requested_template=body.template, requested_model=None,
     )
     pipeline.enqueue(meeting_id, go=frozenset({"summarize"}))
     return {"ok": True}
+
+
+class PreflightRequest(BaseModel):
+    meeting_ids: list[int]
+    engine: str | None = None             # speech engine (None: Settings')
+    transcribe_model: str | None = None
+    provider: str | None = None           # notes provider (None: Settings')
+    model: str | None = None              # its model (None: Settings')
+
+
+class ProcessRequest(PreflightRequest):
+    template: str | None = None
+    remember: bool = False                # also make these choices the defaults in Settings
+
+
+_PROCESSABLE = ("done", "error", "ready_transcribe", "ready_summarize")
+
+
+def _preflight_meetings(ids: list[int]) -> list[dict]:
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        raise HTTPException(422, "Pick at least one meeting")
+    found = db.get_meetings(ids)
+    if len(found) != len(ids):
+        raise HTTPException(404, "Meeting not found")
+    return found
+
+
+@app.post("/api/preflight")
+def preflight_estimate(body: PreflightRequest):
+    """Which AI could process these meetings and what the chosen one would take, before anything runs."""
+    if body.provider and body.provider not in llm_engine.PROVIDERS:
+        raise HTTPException(422, "Unknown provider")
+    if body.engine and body.engine not in settings.CHOICES["transcribe_engine"]:
+        raise HTTPException(422, "Unknown transcription engine")
+    meetings = _preflight_meetings(body.meeting_ids)
+    return {**preflight.preflight(meetings, settings.get_all(), body.engine, body.transcribe_model, body.provider,
+                                  body.model), "recording": live.active_count() > 0}
+
+
+@app.post("/api/process", status_code=202)
+def process(body: ProcessRequest):
+    """Transcribes (if needed) and writes notes for these meetings with the AI you picked. Notes already written are
+    written again; ticked-off tasks stay ticked."""
+    cfg = settings.get_all()
+    meetings = _preflight_meetings(body.meeting_ids)
+    provider = body.provider or cfg["summary_provider"]
+    if provider not in llm_engine.PROVIDERS:
+        raise HTTPException(422, "Unknown provider")
+    if body.template and body.template not in templates.TEMPLATES:
+        raise HTTPException(422, "Unknown template")
+    check = dict(cfg)
+    if body.model:
+        check[llm_engine.model_key(provider)] = body.model
+    ready, why = llm_engine.configured(provider, check)
+    if not ready:
+        raise HTTPException(409, why)
+    untranscribed = [m for m in meetings if not m["transcribed"]]
+    engine = body.engine or cfg["transcribe_engine"]
+    if untranscribed:
+        _check_engine(engine, cfg)
+        if any(m["audio_deleted"] or not store.audio_bytes(m) for m in untranscribed):
+            raise HTTPException(409, "The audio for a meeting that still needs a transcript has been deleted")
+    # (an import waiting for this choice may not have reached ready_* yet; its queued run then uses this choice too)
+    busy = [m["title"] for m in meetings if m["status"] not in _PROCESSABLE and not m["ask_first"]]
+    if busy:
+        raise HTTPException(409, f"Still being processed: {', '.join(busy)}")
+    for m in meetings:
+        fields = dict(status="queued", wait_reason=None, error=None, summary=None, summary_provider=None,
+                      summary_error=None, ask_first=0, requested_provider=provider, requested_model=body.model or None,
+                      requested_template=body.template or None)
+        if not m["transcribed"]:
+            fields.update(requested_engine=engine, requested_transcribe_model=body.transcribe_model or None)
+        db.update_meeting(m["id"], **fields)
+        pipeline.enqueue(m["id"], go=frozenset({"transcribe", "summarize"}))
+    if body.remember:
+        defaults = {"summary_provider": provider}
+        if body.model:
+            defaults[llm_engine.model_key(provider)] = body.model
+        if untranscribed:
+            defaults["transcribe_engine"] = engine
+            if body.transcribe_model and engine == "gemini":
+                defaults["gemini_transcribe_model"] = body.transcribe_model
+        settings.update(defaults)
+    return {"queued": len(meetings)}
 
 
 @app.post("/api/meetings/{meeting_id}/ask")
@@ -1639,7 +1720,7 @@ def upgrade_notes():
     ids = _upgradable(cfg)["notes"]["ids"]
     for meeting_id in ids:
         db.update_meeting(meeting_id, status="queued", wait_reason=None, summary=None, summary_error=None,
-                          requested_provider="auto")
+                          requested_provider="auto", requested_model=None)
         pipeline.enqueue(meeting_id, go=frozenset({"summarize"}))
     return {"queued": len(ids)}
 
