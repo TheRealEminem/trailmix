@@ -34,6 +34,8 @@ interface Props {
   health: Health | null;
   /** The AI defaults were changed from the quick switch. */
   onAIChanged: () => void;
+  /** Which Trailmix this is, when it isn't the stable release: shown next to the name. */
+  channel: "dev" | "beta" | null;
 }
 
 /** Renders a search snippet, turning the … markers into highlights. */
@@ -154,6 +156,7 @@ export default function Sidebar({
   questions,
   health,
   onAIChanged,
+  channel,
 }: Props) {
   const meetings = everyMeeting.filter((m) => inWorkspace(workspace, m.workspace_id));
   const spaceOf = (id: number | null) => (workspace === "all" && id ? workspaces.find((w) => w.id === id) : undefined);
@@ -215,7 +218,23 @@ export default function Sidebar({
       <div className="flex items-center gap-3 px-6 pb-5 pt-7">
         <Logo size={40} />
         <div className="min-w-0">
-          <div className="font-display text-wordmark font-semibold leading-none tracking-[-0.02em] text-ink">Trailmix</div>
+          <div className="flex items-center gap-2">
+            <span className="font-display text-wordmark font-semibold leading-none tracking-[-0.02em] text-ink">Trailmix</span>
+            {channel && (
+              <span
+                className={`rounded-full px-2 py-0.5 text-caption font-semibold uppercase tracking-wide ${
+                  channel === "dev" ? "bg-sky-soft text-sky-deep" : "bg-sun-soft text-sun-deep"
+                }`}
+                data-tip={
+                  channel === "dev"
+                    ? "Running from the code folder (Trailmix Dev), not the installed app"
+                    : "You get beta updates (Settings → Updates)"
+                }
+              >
+                {channel}
+              </span>
+            )}
+          </div>
           <div className="mt-1.5 text-caption leading-none text-ink-faint">notes from along the way</div>
         </div>
       </div>

@@ -402,6 +402,12 @@ export default function App() {
     return () => window.removeEventListener("hashchange", follow);
   }, [openMeeting]);
 
+  // The window's title says which Trailmix this is when it isn't the stable release.
+  const titleChannel = health?.build === "source" ? " Dev" : native?.update?.beta ? " Beta" : "";
+  useEffect(() => {
+    document.title = `Trailmix${titleChannel}`;
+  }, [titleChannel]);
+
   // The drawer only exists on narrow windows; close it on Escape or when the window widens.
   useEffect(() => {
     if (wide) setDrawer(false);
@@ -691,6 +697,7 @@ export default function App() {
   }
 
   const waiting = meetings.filter((m) => m.ask_first).map((m) => m.id);
+  const channel = health?.build === "source" ? "dev" : native?.update?.beta ? "beta" : null;
   const showRecorder = selectedId === null;
   onRecorderScreenRef.current = showRecorder && view === "main";
   const liveId = rec?.meetingId ?? remote?.id ?? null;
@@ -744,6 +751,7 @@ export default function App() {
           questions={questionCounts}
           health={health}
           onAIChanged={() => void refreshHealth()}
+          channel={channel}
         />
       </div>
       {drawer && !wide && (
