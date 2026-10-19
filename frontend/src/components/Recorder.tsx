@@ -24,6 +24,7 @@ import remarkGfm from "remark-gfm";
 import { TrailScene } from "./illustrations";
 import LevelMeters from "./LevelMeter";
 import MicPicker from "./MicPicker";
+import CatchUp from "./CatchUp";
 import MyNotes from "./MyNotes";
 import SoundCheck from "./SoundCheck";
 import { ControlRow, Pulse, Segmented, SpeakerChip, Spinner, SwitchRow } from "./ui";
@@ -263,9 +264,28 @@ export default function Recorder(p: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [recording, p.onMark]);
 
+  // A timestamp clicked in a catch-up answer: that line of the live transcript, highlighted for a moment. New
+  // lines don't scroll it away for a few seconds.
+  const [seeked, setSeeked] = useState<number | null>(null);
+  const holdUntil = useRef(0);
+  const seek = (t: number) => {
+    const box = draftBox.current;
+    const lines = box ? [...box.querySelectorAll<HTMLElement>("[data-start]")] : [];
+    const line = lines.filter((el) => Number(el.dataset.start) <= t + 1).pop() ?? lines[0];
+    if (!box || !line) return;
+    holdUntil.current = Date.now() + 8000;
+    box.scrollTo({
+      top: box.scrollTop + line.getBoundingClientRect().top - box.getBoundingClientRect().top - box.clientHeight / 3,
+      behavior: "smooth",
+    });
+    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    setSeeked(Number(line.dataset.start));
+    setTimeout(() => setSeeked(null), 2500);
+  };
+
   useEffect(() => {
     const box = draftBox.current;
-    if (box) box.scrollTo({ top: box.scrollHeight, behavior: "smooth" });
+    if (box && Date.now() > holdUntil.current) box.scrollTo({ top: box.scrollHeight, behavior: "smooth" });
   }, [drafts.length]);
 
   return (
@@ -411,9 +431,10 @@ export default function Recorder(p: Props) {
                     [...drafts, ...interims.map((d) => ({ ...d, interim: true }))].map((d, i) => (
                       <p
                         key={i}
-                        className={`flex animate-enter items-start gap-2.5 text-body leading-relaxed ${
+                        data-start={"interim" in d ? undefined : d.start}
+                        className={`-mx-1.5 flex animate-enter items-start gap-2.5 rounded-sm px-1.5 text-body leading-relaxed transition-colors duration-500 ${
                           "interim" in d ? "text-ink-soft" : ""
-                        }`}
+                        } ${seeked !== null && d.start === seeked && !("interim" in d) ? "bg-sun-soft" : ""}`}
                       >
                         {d.speaker && (
                           <span className="pt-[3px]">
@@ -432,6 +453,7 @@ export default function Recorder(p: Props) {
                 stop.
               </p>
             )}
+            {p.live && <CatchUp meetingId={p.live.id} onSeek={seek} />}
             {p.live && (
               <div className="border-t border-line px-5 py-5 sm:px-6">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

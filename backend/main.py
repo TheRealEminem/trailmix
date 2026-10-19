@@ -31,6 +31,7 @@ import database as db
 import duplicates
 import archive
 import batch_jobs
+import catch_up
 import compare
 import exporter
 import importer
@@ -237,6 +238,11 @@ class LoginRequest(BaseModel):
 class Question(BaseModel):
     question: str
     workspace_id: int | None = None  # only meetings in this workspace
+
+
+class CatchUpRequest(BaseModel):
+    kind: str = "question"  # "missed", "explain", "decided", or "question" (yours, in `question`)
+    question: str = ""
 
 
 class Bookmark(BaseModel):
@@ -962,6 +968,26 @@ async def mark_live(meeting_id: int, body: MarkRequest | None = None):
         except Exception:
             pass
     return mark
+
+
+@app.get("/api/meetings/{meeting_id}/catch-up")
+def catch_up_plan(meeting_id: int):
+    """Before asking about a meeting that's still recording: which AI would answer, about what a question costs, any
+    warning about memory on this Mac, and the questions asked so far (catch_up.py)."""
+    session = _live_or_409(meeting_id)
+    return catch_up.plan(session, _get_or_404(meeting_id), settings.get_all())
+
+
+@app.post("/api/meetings/{meeting_id}/catch-up")
+def catch_up_ask(meeting_id: int, body: CatchUpRequest):
+    """"What did I miss?", "Explain that", "What's been decided?" or your question, answered from the meeting so far."""
+    session = _live_or_409(meeting_id)
+    try:
+        return catch_up.ask(session, _get_or_404(meeting_id), settings.get_all(), body.kind, body.question[:2000])
+    except catch_up.NotReady as e:
+        raise HTTPException(409, str(e))
+    except llm_engine.LLMError as e:
+        raise HTTPException(502, str(e))
 
 
 @app.post("/api/meetings/{meeting_id}/stop", status_code=202)
