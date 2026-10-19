@@ -9,6 +9,16 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.15.2",
+    items: [
+      {
+        title: "Catch me up, while the meeting is still going",
+        body: "Zoned out or got pulled away? While you're recording, ask \"What did I miss?\" for the last five minutes, \"Explain that\" for the last thing said in plainer words, \"What's been decided?\", or a question of your own. Answers come from the meeting so far, with times you can click to find that moment in the live transcript. Each one shows about what it costs before you ask. On a small AI on this Mac it stays basic and private.",
+        where: "Home, while recording",
+      },
+    ],
+  },
+  {
     version: "0.15.1",
     items: [
       {
