@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import httpx
 
 import database as db
+import duplicates
 import pipeline
 import settings
 
@@ -53,7 +54,9 @@ def _line(s: dict) -> str:
 
 def save_imported(title: str, when: datetime, segments: list[dict], source: str, external_id: str | None,
                   summary: str | None) -> int:
-    """Creates the meeting. With a summary it's done; without one it goes to the summarizer like any meeting."""
+    """Creates the meeting. With a summary it's done; without one it goes to the summarizer like any meeting. A copy of
+    a meeting that's already here (Trailmix recorded it too) is merged into it: returns the id of the meeting that
+    stayed."""
     import meeting_text
 
     labeled = any(s.get("speaker") for s in segments)
@@ -70,7 +73,10 @@ def save_imported(title: str, when: datetime, segments: list[dict], source: str,
     )
     if summary:
         db.replace_tasks(meeting_id, meeting_text.action_items(summary))
-    else:
+    kept = duplicates.check(meeting_id, settings.get_all())
+    if kept != meeting_id:
+        return kept
+    if not summary:
         pipeline.enqueue(meeting_id)
     return meeting_id
 
@@ -270,6 +276,42 @@ _job: dict = {}
 def job_status() -> dict:
     with _lock:
         return dict(_job)
+
+
+def pull_granola_for(meeting_id: int, key: str) -> int:
+    """Brings in the Granola notes made at the same time as this recording (Granola was taking notes too), which then
+    merge into it if they're the same meeting. Returns how many came in."""
+    m = db.get_meeting(meeting_id)
+    start = _parse_time(m["created_at"]) if m else None
+    if not start:
+        return 0
+    end = start.timestamp() + (m["duration_sec"] or 0)
+    made = 0
+    for note in granola_notes(key):
+        when = _parse_time(note["created_at"])
+        if note["imported"] or not when or not (start.timestamp() - 1800 <= when.timestamp() <= end + 1800):
+            continue
+        if import_granola_note(key, note["id"], keep_summary=True):
+            made += 1
+        time.sleep(_REQUEST_GAP_S)
+    return made
+
+
+def pull_granola_soon(meeting_id: int, waits: tuple[int, ...] = (180, 900, 2700)) -> None:
+    """After a recording: looks for Granola's notes on it a few times (Granola finishes its notes a little after the
+    meeting does), until they've come in."""
+    def run():
+        for wait in waits:
+            time.sleep(wait)
+            cfg = settings.get_all()
+            if not cfg["granola_api_key"] or settings.locked(cfg) or cfg.get("duplicates") == "keep":
+                return
+            try:
+                if pull_granola_for(meeting_id, cfg["granola_api_key"]):
+                    return
+            except Exception as e:  # offline, Granola down: try again later
+                log.info("Looking for Granola's notes on meeting %s: %s", meeting_id, e)
+    threading.Thread(target=run, daemon=True, name=f"granola-pull-{meeting_id}").start()
 
 
 def start_granola_import(key: str, note_ids: list[str], keep_summary: bool) -> bool:
