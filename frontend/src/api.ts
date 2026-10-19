@@ -289,6 +289,12 @@ export interface CatchUpPlan {
   local: boolean;
   /** about what one question costs in dollars: 0 on this computer, null where the price isn't known */
   cost: number | null;
+  /** the same for each quick question, and for one you type */
+  costs: Partial<Record<CatchUpKind, number | null>>;
+  /** the token estimate behind it */
+  tokens: { in: number; out: number } | null;
+  /** the estimate follows the tokens Google counted for earlier answers (else a cautious guess) */
+  measured: boolean;
   /** e.g. "Answered by qwen2.5:3b, a small model that fits next to your call" */
   note: string | null;
   /** a model on this Mac that may slow the call down */
