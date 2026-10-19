@@ -164,6 +164,9 @@ _ADDED_COLUMNS = {
     "requested_transcribe_model": "TEXT",            # its speech model, picked before processing (NULL: Settings')
     "requested_model": "TEXT",                       # the notes model for requested_provider (NULL: Settings')
     "ask_first": "INTEGER NOT NULL DEFAULT 0",       # waits for you to choose which AI processes it (an import)
+    "merged_json": "TEXT",                           # copies of this meeting merged into it (duplicates.py), to undo
+    "duplicate_of": "INTEGER",                       # looks like the same meeting as this one: waiting for you to say
+    "not_duplicate_json": "TEXT",                    # meetings you said aren't the same as this one
 }
 
 _FTS_FIELDS = ("title", "transcript", "summary", "tags_json")
@@ -290,10 +293,16 @@ def all_meeting_ids() -> list[int]:
 
 
 def imported_ids(source: str) -> dict[str, int]:
-    """external id -> meeting id, for meetings already imported from `source`."""
+    """external id -> meeting id, for meetings already imported from `source` (also those merged into another meeting
+    as a duplicate: that meeting has them now)."""
     with connect() as conn:
         rows = conn.execute("SELECT id, external_id FROM meetings WHERE source = ? AND external_id IS NOT NULL", (source,))
-        return {r["external_id"]: r["id"] for r in rows}
+        out = {r["external_id"]: r["id"] for r in rows}
+        for r in conn.execute("SELECT id, merged_json FROM meetings WHERE merged_json IS NOT NULL"):
+            for merged in json.loads(r["merged_json"]):
+                if merged["meeting"].get("source") == source and merged["meeting"].get("external_id"):
+                    out[merged["meeting"]["external_id"]] = r["id"]
+        return out
 
 
 def count_meetings() -> int:
@@ -357,8 +366,9 @@ _UPDATABLE = {
     "bookmarks_json", "speaker_names_json", "qa_json", "keep_audio", "audio_dir", "live_json", "workspace_id", "workspace_auto",
     "live_notes_json", "my_notes_json", "transcribed_with", "summary_model", "workspace_model", "tags_json", "tags_model", "imported_at",
     "created_at", "requested_engine", "requested_transcribe_model", "requested_model", "ask_first",
+    "merged_json", "duplicate_of", "not_duplicate_json", "source", "external_id",
 }
-_JSON_FIELDS = {"my_notes_json", "live_notes_json", "tags_json", "segments_json", "draft_json", "exported_paths", "bookmarks_json", "speaker_names_json", "qa_json"}
+_JSON_FIELDS = {"merged_json", "not_duplicate_json", "my_notes_json", "live_notes_json", "tags_json", "segments_json", "draft_json", "exported_paths", "bookmarks_json", "speaker_names_json", "qa_json"}
 
 
 # What the history keeps. Not the transient bookkeeping (status, progress, live drafts), and not segments_json: its

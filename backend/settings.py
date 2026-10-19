@@ -24,6 +24,9 @@ DEFAULTS = {
     # Imports wait for you to pick which AI transcribes them and writes their notes (and see what each would take)
     # instead of starting with the defaults below. (Recordings use the defaults; notes you rewrite always ask.)
     "ask_before_ai": True,
+    # The same meeting from Trailmix and from Granola (or a pasted transcript): merge into one meeting, keeping the
+    # recording but preferring the import's transcript and notes | ask on the meeting | keep both (duplicates.py)
+    "duplicates": "merge",
     "auto_title": True,
     "auto_workspace": True,             # sort each new meeting into a workspace from its notes (workspaces.py)
     "ask_questions": True,              # quick questions about what the AI wasn't sure of (questions.py)
@@ -93,6 +96,7 @@ CHOICES = {
     "summary_fallback": ("none", "ollama", "anthropic", "openai", "gemini", "deepseek", "custom"),
     "transcribe_engine": ("local", "remote", "gemini"),
     "live_notes": ("auto", "on", "off"),
+    "duplicates": ("merge", "ask", "keep"),
 }
 
 

@@ -28,6 +28,7 @@ from pydantic import BaseModel
 import audio_store as store
 import auth
 import database as db
+import duplicates
 import archive
 import batch_jobs
 import compare
@@ -275,7 +276,7 @@ def _get_or_404(meeting_id: int) -> dict:
 
 def _present(m: dict) -> dict:
     """Public shape of a meeting: hides file paths, adds parsed fields and audio info."""
-    hidden = ("audio_path", "audio_dir", "segments_json", "requested_provider", "draft_json", "exported_paths", "live_json", "live_notes_json", "my_notes_json",
+    hidden = ("audio_path", "audio_dir", "segments_json", "requested_provider", "merged_json", "not_duplicate_json", "draft_json", "exported_paths", "live_json", "live_notes_json", "my_notes_json",
               "tags_json",
               "bookmarks_json", "speaker_names_json", "qa_json")
     out = {k: v for k, v in m.items() if k not in hidden}
@@ -296,6 +297,13 @@ def _present(m: dict) -> dict:
     out["has_system"] = bool(m["has_system"])
     out["keep_audio"] = bool(m.get("keep_audio"))
     out["ask_first"] = bool(m.get("ask_first"))
+    # Copies of this meeting merged into it (newest last), and a copy it may be the same as (you're asked).
+    out["merged"] = [{"from": duplicates._label(r["meeting"]), "title": r["meeting"]["title"], "at": r["at"],
+                      "offset": r.get("offset") or 0}
+                     for r in (json.loads(m["merged_json"]) if m.get("merged_json") else [])]
+    other = db.get_meeting(m["duplicate_of"]) if m.get("duplicate_of") else None
+    out["duplicate_of"] = ({"id": other["id"], "title": other["title"], "from": duplicates._label(other),
+                            "created_at": other["created_at"]} if other else None)
     pid = m.get("requested_provider")  # the AI picked for its notes, if not the default
     out["notes_with"] = (f"{llm_engine.label(pid, cfg)} · {m['requested_model'] or llm_engine.model_for(pid, cfg)}"
                          if pid in llm_engine.PROVIDERS else None)
@@ -1311,6 +1319,51 @@ def process(body: ProcessRequest):
                 defaults["gemini_transcribe_model"] = body.transcribe_model
         settings.update(defaults)
     return {"queued": len(meetings)}
+
+
+class MergeRequest(BaseModel):
+    pairs: list[list[int]] = []   # [[a, b], ...]; empty with `all`: every pair "Find duplicates" sees
+    all: bool = False
+
+
+class ApartRequest(BaseModel):
+    a: int
+    b: int
+
+
+@app.get("/api/duplicates")
+def find_duplicates():
+    """Meetings that look like the same meeting twice (Trailmix and Granola both had it), with which one would stay."""
+    return {"pairs": duplicates.find_all()}
+
+
+@app.post("/api/duplicates/merge")
+def merge_duplicates(body: MergeRequest):
+    pairs = [(p["keep"]["id"], p["other"]["id"]) for p in duplicates.find_all()] if body.all else \
+        [tuple(p) for p in body.pairs if len(p) == 2]
+    kept, problems = [], []
+    for a, b in pairs:
+        try:
+            kept.append(duplicates.merge(a, b))
+        except ValueError as e:
+            problems.append(str(e))
+    return {"merged": len(kept), "kept": kept, "problems": problems}
+
+
+@app.post("/api/duplicates/apart", status_code=204)
+def keep_duplicates_apart(body: ApartRequest):
+    """Not the same meeting after all: never suggested or merged again."""
+    duplicates.keep_apart(body.a, body.b)
+
+
+@app.post("/api/meetings/{meeting_id}/unmerge")
+def unmerge(meeting_id: int):
+    """Undoes the last merge into this meeting: the other copy is its own meeting again."""
+    _get_or_404(meeting_id)
+    try:
+        return {"id": duplicates.unmerge(meeting_id)}
+    except ValueError as e:
+        raise HTTPException(409, str(e))
 
 
 @app.post("/api/meetings/{meeting_id}/ask")

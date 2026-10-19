@@ -31,6 +31,7 @@ import {
   ChevronDownIcon,
   CloseIcon,
   CloudIcon,
+  ColumnsIcon,
   ExportIcon,
   FolderIcon,
   KeyIcon,
@@ -54,6 +55,7 @@ import {
   WorkspaceSuggestions,
   useOrganize,
 } from "./Workspaces";
+import { FindDuplicates } from "./Duplicates";
 import {
   Collapse,
   ControlRow,
@@ -1817,6 +1819,25 @@ export default function Settings({
           checked={s.ask_before_ai}
           onChange={(v) => save({ ask_before_ai: v })}
         />
+        <ControlRow
+          icon={<ColumnsIcon size={16} />}
+          label="Same meeting from Trailmix and Granola"
+          hint="When Granola (or a pasted transcript) has a meeting Trailmix recorded too. Merging keeps the recording, your flags and notes, and uses the better transcript and notes (Granola's); it can be undone from the meeting."
+          wrap
+        >
+          <Select
+            label="Same meeting twice"
+            value={s.duplicates}
+            onChange={(v) => save({ duplicates: v as SettingsT["duplicates"] })}
+            className="w-full sm:w-56"
+            options={[
+              { value: "merge", label: "Merge, prefer Granola" },
+              { value: "ask", label: "Ask me" },
+              { value: "keep", label: "Keep both" },
+            ]}
+          />
+        </ControlRow>
+        <FindDuplicates onChanged={onWorkspacesChanged} />
         <SwitchRow
           icon={<LinesIcon size={16} />}
           label="Auto-generate transcript"

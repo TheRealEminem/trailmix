@@ -28,6 +28,7 @@ import MyNotes from "./MyNotes";
 import Summary from "./Summary";
 import Transcript from "./Transcript";
 import Versions from "./Versions";
+import { DuplicateNotice } from "./Duplicates";
 import { Segmented, Spinner, Switch } from "./ui";
 
 export type Tab = "summary" | "transcript" | "notes" | "ask";
@@ -60,6 +61,8 @@ interface Props {
   onRetitle: () => Promise<void>;
   /** Something about the meeting changed (e.g. a question was answered): reload it. */
   onChanged: () => void;
+  /** Shows another meeting (the one a merge kept). */
+  onOpenMeeting: (id: number) => void;
 }
 
 const WORKING = ["recording", "queued", "transcribing", "summarizing"];
@@ -232,6 +235,8 @@ export default function MeetingView({
           </div>
         )}
       </header>
+
+      <DuplicateNotice meeting={m} onOpenMeeting={on.onOpenMeeting} onChanged={on.onChanged} onError={on.onError} />
 
       <Questions
         meetingId={m.id}
