@@ -33,7 +33,7 @@ EXPLAIN_S = 60          # "Explain that": the last minute or so
 LOCAL_RECENT_S = 20 * 60  # a model on this Mac reads at most the last 20 minutes (and the notes so far)
 SMALL_MAX_B = 4.5       # "a small model": up to about 4B parameters, roughly 2-3 GB loaded
 KEEP_ALIVE = "1m"       # long enough for a follow-up question, short enough not to sit through the call
-CHARS_PER_TOKEN = 3.1
+CHARS_PER_TOKEN = 3.1   # a cautious guess (Gemini counts English at about 4) until Google has counted an answer
 PROMPT_TOKENS = 400     # the instructions and the question
 ANSWER_TOKENS = 1000    # a short answer, plus the thinking some models do first (billed as output)
 HISTORY = 50
@@ -46,6 +46,35 @@ and their own notes. Answer at a glance: a few short lines or bullets they can r
 most useful thing first. Use only the material provided; if it doesn't say, say so plainly instead of guessing.
 End each point with the timestamp of the moment it comes from, like [12:34], so they can find it in the transcript.
 "You" in the transcript is the person asking; say "you" for them."""
+
+
+# Google's own counts for the latest answers, per model: characters per token sent, and tokens written (thinking
+# included). Estimates start from CHARS_PER_TOKEN and ANSWER_TOKENS and follow these once an answer has been counted.
+_measured: dict[str, dict] = {}
+TYPICAL_QUESTION = "Who is doing what next, and by when? What did they say about the budget?"
+
+
+def _rates(model: str) -> tuple[float, int]:
+    seen = _measured.get(model) or {}
+    return seen.get("chars_per_token", CHARS_PER_TOKEN), seen.get("out", ANSWER_TOKENS)
+
+
+def _learn(model: str, prompt_chars: int, usage: dict) -> None:
+    """Keeps what Google counted for an answer, so the next estimates are closer (half the old, half the new)."""
+    if not usage.get("in"):
+        return
+    cpt, out = prompt_chars / usage["in"], usage.get("out", 0)
+    seen = _measured.get(model)
+    _measured[model] = ({"chars_per_token": (seen["chars_per_token"] + cpt) / 2, "out": round((seen["out"] + out) / 2)}
+                        if seen else {"chars_per_token": cpt, "out": out})
+
+
+def estimate(model: str, prompt_chars: int) -> dict:
+    """{"in", "out", "cost"} for sending this many characters to a Gemini model: tokens counted the way Google counted
+    the latest answers (or a cautious guess before any), cost from its published prices (None if unknown)."""
+    cpt, out = _rates(model)
+    tokens = int(prompt_chars / cpt)
+    return {"in": tokens, "out": out, "cost": pricing.text_cost(model, tokens, out)}
 
 
 class NotReady(Exception):
@@ -188,10 +217,12 @@ def history(m: dict) -> list[dict]:
 
 
 def plan(session: "live.LiveSession", m: dict, cfg: dict) -> dict:
-    """What asking would take right now: {ready, reason, provider, label, model, local, cost, note, warning, history}.
-    `cost` is about what one question costs in dollars (0 on this computer, None where the price isn't known)."""
+    """What asking would take right now: {ready, reason, provider, label, model, local, cost, costs, tokens, measured,
+    note, warning, off, history}. `costs` is about what each quick question (and a typed one) costs in dollars: 0 on this
+    computer, None where the price isn't known; `cost` is the one for "What did I miss?". `tokens` is the estimate
+    behind it, {"in", "out"}, and `measured` says it follows Google's counts for earlier answers."""
     out = {"ready": False, "reason": None, "provider": None, "label": None, "model": None, "local": False,
-           "cost": None, "note": None, "warning": None, "off": {}, "kinds": KINDS, "history": history(m), "as_of": pricing.AS_OF}
+           "cost": None, "costs": {}, "tokens": None, "measured": False, "note": None, "warning": None, "off": {}, "kinds": KINDS, "history": history(m), "as_of": pricing.AS_OF}
     if not (session.draft or session.final):
         return {**out, "reason": ("Catch me up reads the live transcript, and this recording doesn't have one. Turn on "
                                   "the live draft or captions before you start recording.")}
@@ -210,14 +241,17 @@ def plan(session: "live.LiveSession", m: dict, cfg: dict) -> dict:
     setup = _setup(pid, cfg)
     model = llm_engine.model_for(pid, setup["cfg"])
     local = llm_engine.runs_here(pid, cfg)
-    cost = 0.0
+    costs: dict = {kind: 0.0 for kind in (*KINDS, "question")}
+    tokens = None
     if not local:
-        since = _since(pid, cfg, session)
-        chars = min(_material_chars(pid, cfg), len(material(session, m, cfg, 10**9, since)))
-        cost = (pricing.text_cost(model, int(chars / CHARS_PER_TOKEN) + PROMPT_TOKENS, ANSWER_TOKENS)
-                if pid == "gemini" else None)
-    return {**out, "ready": True, "provider": pid, "label": llm_engine.label(pid, cfg), "model": model,
-            "local": local, "cost": cost, "note": setup["note"], "warning": setup["warning"], "off": kinds_off(setup)}
+        base = len(material(session, m, cfg, _material_chars(pid, cfg), _since(pid, cfg, session))) + len(SYSTEM) + 12
+        for kind in costs:
+            sized = estimate(model, base + len(question_for(kind, session, TYPICAL_QUESTION)))
+            costs[kind] = sized["cost"] if pid == "gemini" else None
+            tokens = tokens or {"in": sized["in"], "out": sized["out"]}
+    return {**out, "ready": True, "provider": pid, "label": llm_engine.label(pid, cfg), "model": model, "local": local,
+            "cost": costs["missed"], "costs": costs, "tokens": tokens, "measured": model in _measured,
+            "note": setup["note"], "warning": setup["warning"], "off": kinds_off(setup)}
 
 
 # ── Asking ──────────────────────────────────────────────────────────────
@@ -239,6 +273,7 @@ def ask(session: "live.LiveSession", m: dict, cfg: dict, kind: str, text: str = 
     question = question_for(kind, session, text.strip())
 
     usage: dict = {}  # the tokens Gemini reports, for the spend tally
+    sent: dict[str, int] = {}  # characters sent to each AI tried
 
     def answer(pid: str) -> str:
         setup = _setup(pid, cfg)
@@ -248,8 +283,9 @@ def ask(session: "live.LiveSession", m: dict, cfg: dict, kind: str, text: str = 
             raise llm_engine.LLMError("macOS reports critically low memory, so the model on this Mac waits. Ask again "
                                       "in a moment.")
         context = material(session, m, cfg, _material_chars(pid, cfg), _since(pid, cfg, session))
-        return llm_engine.generate(pid, setup["cfg"], f"{context}\n\nQUESTION: {question}", system=SYSTEM,
-                                   keep_alive=KEEP_ALIVE, usage=usage)
+        prompt = f"{context}\n\nQUESTION: {question}"
+        sent[pid] = len(prompt) + len(SYSTEM)
+        return llm_engine.generate(pid, setup["cfg"], prompt, system=SYSTEM, keep_alive=KEEP_ALIVE, usage=usage)
 
     errors = []
     for pid in providers(cfg):
@@ -263,7 +299,8 @@ def ask(session: "live.LiveSession", m: dict, cfg: dict, kind: str, text: str = 
     if used == "gemini":
         model = cfg["gemini_model"]
         spent = (pricing.text_cost(model, usage["in"], usage["out"]) if usage.get("in")  # what Google billed
-                 else before["cost"] if before["provider"] == "gemini" else None)      # else the estimate
+                 else before["costs"].get(kind) if before["provider"] == "gemini" else None)  # else the estimate
+        _learn(model, sent["gemini"], usage)
         db.log_usage(session.meeting_id, "catch up", "gemini", model, 0, spent)
     entry = {"q": KINDS.get(kind, question), "a": reply.strip(), "provider": used, "label": llm_engine.label(used, cfg),
              "at": datetime.now(timezone.utc).isoformat(), "live": True, "kind": kind, "t": round(session.duration, 1)}

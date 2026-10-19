@@ -24,11 +24,25 @@ const PLAN_REFRESH_MS = 30_000; // the price grows with the transcript
 const SHOWN = 3;
 const PLUGINS = [remarkGfm];
 
-function price(plan: CatchUpPlan) {
+/** About what one question costs: "free" on this Mac, "0.4¢", "$0.012"; null where the price isn't known. */
+function money(c: number | null | undefined, local: boolean) {
+  if (local) return "free";
+  if (c === null || c === undefined) return null;
+  return c < 0.01 ? `${(c * 100).toFixed(c < 0.001 ? 2 : 1)}¢` : `$${c.toFixed(3)}`;
+}
+
+function priceNote(plan: CatchUpPlan) {
   if (plan.local) return "on this Mac · free";
-  if (plan.cost === null) return "paid per question (price not known to Trailmix)";
-  if (plan.cost < 0.01) return "under 1¢ a question";
-  return `about $${plan.cost < 0.1 ? plan.cost.toFixed(3) : plan.cost.toFixed(2)} a question`;
+  const each = money(plan.cost, false);
+  return each ? `about ${each} a question` : "paid per question (price not known to Trailmix)";
+}
+
+function priceTip(plan: CatchUpPlan) {
+  if (plan.local || !plan.tokens || plan.cost === null) return undefined;
+  const n = (x: number) => x.toLocaleString();
+  return `About ${n(plan.tokens.in)} tokens sent and ${n(plan.tokens.out)} written (thinking included), ${
+    plan.measured ? "counted the way Google counted your last answer" : "a cautious guess until Google has counted an answer"
+  }, at Google's prices as of ${plan.as_of}. It grows as the meeting goes on.`;
 }
 
 /** [12:34] and [1:02:03] in an answer become links that show that moment in the live transcript. */
@@ -118,9 +132,9 @@ export default function CatchUp({ meetingId, onSeek }: Props) {
           <span className="text-label font-medium">Catch me up</span>
         </div>
         {plan?.ready && (
-          <span className="text-meta text-ink-soft">
+          <span className="text-meta text-ink-soft" data-tip={priceTip(plan)}>
             {plan.label}
-            {plan.model ? ` · ${plan.model}` : ""} · {price(plan)}
+            {plan.model ? ` · ${plan.model}` : ""} · {priceNote(plan)}
           </span>
         )}
       </div>
@@ -139,15 +153,17 @@ export default function CatchUp({ meetingId, onSeek }: Props) {
           <div className="flex flex-wrap gap-2">
             {QUICK.map((q) => {
               const off = plan?.off[q.kind];
+              const cost = plan && !plan.local ? money(plan.costs[q.kind], false) : null;
               return (
                 <button
                   key={q.kind}
                   onClick={() => void ask(q.kind, q.label)}
                   disabled={busy || !ready || !!off}
                   className="btn btn-sm btn-soft rounded-full px-3.5 font-normal"
-                  data-tip={off ?? q.tip}
+                  data-tip={off ?? (cost ? `${q.tip} · about ${cost}` : q.tip)}
                 >
                   {q.label}
+                  {cost && !off && <span className="text-meta tabular-nums text-ink-soft">~{cost}</span>}
                 </button>
               );
             })}
@@ -169,6 +185,11 @@ export default function CatchUp({ meetingId, onSeek }: Props) {
                 disabled={busy || !ready}
                 aria-label="Question about the meeting so far"
               />
+              {plan && !plan.local && money(plan.costs.question, false) && (
+                <span className="shrink-0 text-meta tabular-nums text-ink-soft" data-tip="About what this question costs">
+                  ~{money(plan.costs.question, false)}
+                </span>
+              )}
               <button
                 type="submit"
                 disabled={busy || !ready || !question.trim()}

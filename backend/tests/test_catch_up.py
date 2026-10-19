@@ -55,6 +55,7 @@ def world(tmp_path, monkeypatch):
     session.interim = {1: {"start": 715.0, "speaker": "Them", "text": "so the real question is"}}
     state.session, state.mid = session, mid
     live_notes._state.clear()
+    catch_up._measured.clear()
     yield state
     session.close()
 
@@ -200,3 +201,23 @@ def test_gemini_reports_its_tokens(monkeypatch):
     streamed = {}
     assert llm_engine.generate("gemini", cfg, "q", on_text=lambda t: None, usage=streamed) == "Hi"
     assert streamed == {"in": 1200, "out": 480}  # the last event's totals, counted once
+
+
+def test_each_action_has_its_estimate_and_it_learns_from_googles_counts(world):
+    plan = catch_up.plan(world.session, db.get_meeting(world.mid), world.cfg)
+    assert set(plan["costs"]) == {"missed", "explain", "decided", "question"}
+    assert all(0 < c < 0.01 for c in plan["costs"].values()) and not plan["measured"]
+    guess = plan["tokens"]
+    assert guess["out"] == catch_up.ANSWER_TOKENS
+    # Google counted fewer tokens than the cautious guess (about 4 characters each) and a shorter answer.
+    world.reported.update({"in": int(guess["in"] * catch_up.CHARS_PER_TOKEN / 4), "out": 400})
+    catch_up.ask(world.session, db.get_meeting(world.mid), world.cfg, "missed")
+    after = catch_up.plan(world.session, db.get_meeting(world.mid), world.cfg)
+    assert after["measured"] and after["tokens"]["out"] == 400
+    assert after["tokens"]["in"] < guess["in"] and after["costs"]["missed"] < plan["costs"]["missed"]
+
+
+def test_on_this_mac_every_action_is_free(world):
+    world.cfg = {**world.cfg, "summary_provider": "ollama", "summary_fallback": "none"}
+    plan = catch_up.plan(world.session, db.get_meeting(world.mid), world.cfg)
+    assert plan["costs"] == {"missed": 0.0, "explain": 0.0, "decided": 0.0, "question": 0.0} and plan["tokens"] is None
