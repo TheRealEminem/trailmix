@@ -983,6 +983,10 @@ export default function App() {
                 void guarded(() => api.retry(meeting.id), meeting.id)
               }
               onChooseAI={() => setPreflightIds([meeting.id])}
+              onOpenMeeting={(id) => {
+                openMeeting(id);
+                void refreshList();
+              }}
               onBookmarks={(b) =>
                 void guarded(() => api.setBookmarks(meeting.id, b), meeting.id)
               }

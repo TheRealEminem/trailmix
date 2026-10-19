@@ -272,6 +272,8 @@ export interface Settings {
   auto_summarize: boolean;
   /** Imports wait for you to pick which AI transcribes them and writes their notes. */
   ask_before_ai: boolean;
+  /** The same meeting from Trailmix and Granola (or a pasted transcript): merge, ask, or keep both */
+  duplicates: "merge" | "ask" | "keep";
   auto_title: boolean;
   auto_workspace: boolean;
   current_workspace: number;
@@ -350,6 +352,10 @@ export interface Meeting extends MeetingListItem {
   summary_model: string | null;
   /** The AI picked for its notes when it isn't the default, e.g. "Google Gemini · gemini-3.6-flash". */
   notes_with: string | null;
+  /** Copies of this meeting merged into it (Granola's, a pasted one), oldest first. offset: seconds its transcript was moved. */
+  merged: { from: string; title: string; at: string; offset: number }[];
+  /** A meeting that looks like the same one (you're asked whether to merge them). */
+  duplicate_of: { id: number; title: string; from: string; created_at: string } | null;
   tags: string[];
   exported_paths: string[];
   export_error: string | null;
@@ -501,6 +507,23 @@ export interface Preflight {
   } | null;
   as_of: string;
   recording: boolean;
+}
+
+/** One meeting found twice. keep: the meeting that stays (the one with the recording). */
+export interface DuplicatePair {
+  keep: DuplicateSide;
+  other: DuplicateSide;
+  score: number;
+}
+export interface DuplicateSide {
+  id: number;
+  title: string;
+  created_at: string;
+  source: string;
+  label: string;
+  minutes: number;
+  has_audio: boolean;
+  has_notes: boolean;
 }
 
 export interface AIChoice {
@@ -717,6 +740,15 @@ export const api = {
   checkBatches: () => request<{ changed: number; jobs: BatchJob[] }>("/batches/check", json("POST")),
   cancelBatch: (id: number) => request<{ ok: true }>(`/batches/${id}/cancel`, json("POST")),
   upgradeNotes: () => request<{ queued: number }>("/upgrades/notes", json("POST")),
+  duplicates: () => request<{ pairs: DuplicatePair[] }>("/duplicates"),
+  mergeDuplicates: (pairs: [number, number][] | "all") =>
+    request<{ merged: number; kept: number[]; problems: string[] }>(
+      "/duplicates/merge",
+      json("POST", pairs === "all" ? { all: true } : { pairs }),
+    ),
+  keepApart: (a: number, b: number) => request<void>("/duplicates/apart", json("POST", { a, b })),
+  /** Undoes the last merge into this meeting; returns the meeting that came back. */
+  unmerge: (id: number) => request<{ id: number }>(`/meetings/${id}/unmerge`, json("POST")),
   retitle: (id: number) => request<{ title: string }>(`/meetings/${id}/retitle`, json("POST")),
   device: () => request<DeviceAdvice>("/device"),
   questions: (meetingId: number) => request<MeetingQuestion[]>(`/meetings/${meetingId}/questions`),

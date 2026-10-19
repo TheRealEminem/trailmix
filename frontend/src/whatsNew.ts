@@ -9,6 +9,21 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.15.1",
+    items: [
+      {
+        title: "One meeting, not two",
+        body: "When Granola was taking notes while Trailmix recorded, importing Granola's copy no longer leaves the meeting there twice. Trailmix spots it by the words both transcripts share and merges them: you keep the recording, your flags and your notes, with Granola's transcript (lined up with the recording) and Granola's notes. Trailmix's own transcript stays under Versions, and Undo merge splits them again. With a Granola API key, Granola's notes are brought in by themselves after a recording.",
+        where: "A meeting · Settings → Automatic mode",
+      },
+      {
+        title: "Already have duplicates?",
+        body: "Find duplicates looks through every meeting for ones that are there twice and merges them in one click.",
+        where: "Settings → Automatic mode → Find duplicates",
+      },
+    ],
+  },
+  {
     version: "0.15.0",
     items: [
       {

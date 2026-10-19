@@ -27,6 +27,7 @@ import audio_store as store
 import cleanup
 import compare
 import database as db
+import duplicates
 import exporter
 import live
 import live_notes
@@ -183,6 +184,7 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
     ask = bool(m.get("ask_first"))  # an import waiting for you to choose which AI processes it
     stats: dict = {}  # for the anonymous usage stats (telemetry.py): durations and choices, nothing said
     started = time.monotonic()
+    fresh = False  # transcribed in this run
 
     if not m["transcribed"]:
         if m["audio_deleted"] or not m["audio_dir"]:
@@ -196,6 +198,7 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
                              seconds=round(time.monotonic() - started))
             stats.update(transcribed="while recording", transcribe_seconds=round(time.monotonic() - started))
             m = db.get_meeting(meeting_id)
+            fresh = True
         elif had_live:
             log.warning("Meeting %s: the transcript made while recording missed a part; transcribing it all again",
                         meeting_id)
@@ -219,8 +222,19 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
                          note=_gemini_note(cfg, labeled))
         stats.update(transcribed="after the meeting", transcribe_seconds=round(time.monotonic() - began))
         m = db.get_meeting(meeting_id)
+        fresh = True
         if store.RETENTION_DAYS == 0:
             store.delete_audio(m)
+
+    # Granola (or a pasted transcript) may have this meeting too: merged now, its notes save writing them here.
+    if fresh:
+        db.update_meeting(meeting_id, status="queued", wait_reason=None)
+        if duplicates.check(meeting_id, cfg) != meeting_id:
+            return  # folded into the copy that was already here
+        m = db.get_meeting(meeting_id)
+        if not m.get("source") and cfg["granola_api_key"] and not settings.locked(cfg) and cfg["duplicates"] != "keep":
+            import importer
+            importer.pull_granola_soon(meeting_id)
 
     # summarize (also the entry point for "Regenerate")
     if m["transcript"] and not m["summary"]:
