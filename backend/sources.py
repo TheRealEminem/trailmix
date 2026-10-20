@@ -132,6 +132,17 @@ def set_auto(name: str, on: bool, start: str = "now") -> None:
                            last_ok=None, error=None)
 
 
+def check(name: str, key: str) -> None:
+    """Asks the source for its newest notes, to see the key works (raises importer.ImportError_ if not)."""
+    SOURCES[name].notes(key, _now())
+
+
+def disconnect(name: str) -> None:
+    """Off, and its key forgotten. The meetings it brought in stay."""
+    set_auto(name, False)
+    settings.update({SOURCES[name].key_setting: ""})
+
+
 def status() -> list[dict]:
     cfg = settings.get_all()
     out = []
@@ -191,3 +202,26 @@ def pull_soon(meeting_id: int, waits: tuple[int, ...] = (180, 900, 2700)) -> Non
             if made:
                 return
     threading.Thread(target=run, daemon=True, name=f"sources-pull-{meeting_id}").start()
+
+
+# ── Everything that brings meetings in by itself ────────────────────────
+
+def connections() -> dict:
+    """Services with a key and watched folders as one list, each the same shape for the Import page, and what could
+    be connected: services without a key, and folders other meeting apps save into found on this Mac."""
+    import watched
+
+    rows = []
+    for s in status():
+        if s["has_key"]:
+            rows.append({"id": s["name"], "kind": "service", "label": s["label"], "path": None, "auto": s["auto"],
+                         "running": s["running"], "last": s["last_try"] or s["last_ok"], "last_count": s["last_count"],
+                         "total": s["total"] or 0, "waiting": 0, "failed": 0, "error": s["error"], "since": s["since"]})
+    folders = watched.status()
+    for f in folders["folders"]:
+        rows.append({"id": f"folder:{f['path']}", "kind": "folder", "label": watched.label_for(f["path"]),
+                     "path": f["path"], "auto": True, "running": False, "last": f["last_scan"],
+                     "last_count": f["last_count"], "total": f["imported"], "waiting": f["waiting"],
+                     "failed": f["failed"], "error": f["error"], "since": None})
+    services = [{"name": s["name"], "label": s["label"]} for s in status() if not s["has_key"]]
+    return {"connections": rows, "available": {"services": services, "folders": folders["suggestions"]}}
