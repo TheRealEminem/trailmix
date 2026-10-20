@@ -124,6 +124,17 @@ CREATE TABLE IF NOT EXISTS batch_jobs (
     est_cost      REAL,
     error         TEXT
 );
+
+-- Other note takers whose new meetings come in by themselves (sources.py): where each one's sync stands.
+CREATE TABLE IF NOT EXISTS source_sync (
+    source        TEXT PRIMARY KEY,                -- granola
+    since         TEXT,                            -- bring in notes made from this time on (NULL: all of them)
+    last_ok       TEXT,                            -- when the last sync that got through started
+    last_try      TEXT,
+    last_count    INTEGER NOT NULL DEFAULT 0,      -- meetings the last sync brought in
+    total         INTEGER NOT NULL DEFAULT 0,      -- meetings brought in automatically, all told
+    error         TEXT
+);
 """
 
 
@@ -508,6 +519,22 @@ def update_batch_job(job_id: int, **fields) -> None:
     assert set(fields) <= allowed
     with connect() as conn:
         conn.execute(f"UPDATE batch_jobs SET {', '.join(f'{k} = ?' for k in fields)} WHERE id = ?", (*fields.values(), job_id))
+
+
+def source_sync(source: str) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM source_sync WHERE source = ?", (source,)).fetchone()
+    return dict(row) if row else None
+
+
+def set_source_sync(source: str, **fields) -> None:
+    allowed = {"since", "last_ok", "last_try", "last_count", "total", "error"}
+    assert set(fields) <= allowed
+    with connect() as conn:
+        conn.execute("INSERT OR IGNORE INTO source_sync (source) VALUES (?)", (source,))
+        if fields:
+            conn.execute(f"UPDATE source_sync SET {', '.join(f'{k} = ?' for k in fields)} WHERE source = ?",
+                         (*fields.values(), source))
 
 
 def delete_meeting(meeting_id: int) -> None:

@@ -56,6 +56,7 @@ import file_import
 import feedback
 import questions
 import gemini_batch
+import sources
 import transcribe_gemini
 import transcribe_remote
 
@@ -146,6 +147,21 @@ async def _batch_loop():
         await asyncio.sleep(BATCH_CHECK_EVERY_S)
 
 
+SYNC_EVERY_S = 15 * 60
+
+
+async def _sources_loop():
+    """Other note takers' new meetings (sources.py): every 15 minutes, from each source that's turned on. Off with
+    TRAILMIX_SYNC=0 (a test run on a copy of your database)."""
+    await asyncio.sleep(60)  # after start-up's own work
+    while True:
+        try:
+            await run_in_threadpool(sources.sync_all)
+        except Exception:
+            log.exception("Syncing other note takers failed")
+        await asyncio.sleep(SYNC_EVERY_S)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _exit_with_parent()
@@ -165,7 +181,10 @@ async def lifespan(_: FastAPI):
     note_taker = asyncio.create_task(_live_notes_loop())
     batches = asyncio.create_task(_batch_loop())
     stats = asyncio.create_task(_stats_loop())
+    syncer = asyncio.create_task(_sources_loop()) if os.getenv("TRAILMIX_SYNC") != "0" else None
     yield
+    if syncer:
+        syncer.cancel()
     batches.cancel()
     stats.cancel()
     note_taker.cancel()
@@ -425,6 +444,53 @@ def granola_import(body: GranolaImport):
 @app.get("/api/import/granola")
 def granola_import_status():
     return importer.job_status()
+
+
+class SourceAuto(BaseModel):
+    auto: bool
+    start: str = "now"  # where to start when turning it on: now | week | all
+
+
+def _source(name: str) -> sources.Source:
+    if name not in sources.SOURCES:
+        raise HTTPException(404, "No such source")
+    return sources.SOURCES[name]
+
+
+@app.get("/api/import/sources")
+def import_sources():
+    """Other note takers whose new meetings can come in by themselves, and how each one's sync is going."""
+    return {"sources": sources.status()}
+
+
+@app.put("/api/import/sources/{name}")
+def set_import_source(name: str, body: SourceAuto):
+    src = _source(name)
+    cfg = settings.get_all()
+    if body.auto:
+        if not cfg[src.key_setting]:
+            raise HTTPException(400, f"Add your {src.label} API key first")
+        if settings.locked(cfg):
+            raise HTTPException(409, settings.LOCKDOWN)
+        if body.start not in sources.STARTS:
+            raise HTTPException(422, f"start must be one of {', '.join(sources.STARTS)}")
+    sources.set_auto(name, body.auto, body.start)
+    if body.auto:
+        sources.sync_soon(name)
+    return {"sources": sources.status()}
+
+
+@app.post("/api/import/sources/{name}/sync", status_code=202)
+def sync_import_source(name: str):
+    """Look for new meetings now instead of at the next round."""
+    src = _source(name)
+    cfg = settings.get_all()
+    if not cfg[src.key_setting]:
+        raise HTTPException(400, f"Add your {src.label} API key first")
+    if settings.locked(cfg):
+        raise HTTPException(409, settings.LOCKDOWN)
+    sources.sync_soon(name)
+    return {"sources": sources.status()}
 
 
 @app.post("/api/import/text", status_code=201)
