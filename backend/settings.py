@@ -76,6 +76,7 @@ DEFAULTS = {
     "granola_api_key": "",              # grn_… from Granola → Settings → Connectors → API keys (Business plan)
     "auto_import": [],                  # sources whose new meetings come in by themselves (sources.py)
     "auto_import_keep_notes": True,     # with their notes as the summary (off: Trailmix writes new ones)
+    "watch_folders": [],                # folders whose new recordings and transcripts come in by themselves (watched.py)
     # Export
     "auto_export": False,
     "export_dir": str(Path.home() / "Documents" / "Trailmix"),
@@ -151,6 +152,8 @@ def update(changes: dict) -> dict:
             import sources
             if any(n not in sources.SOURCES for n in value):
                 raise ValueError(f"auto_import can include {', '.join(sources.SOURCES)}")
+        if key == "watch_folders" and any(not isinstance(f, str) or not f.startswith("/") for f in value):
+            raise ValueError("watch_folders must be full paths")
         if key == "export_formats" and any(f not in ("pdf", "docx", "odt", "md", "txt") for f in value):
             raise ValueError("export_formats can include pdf, docx, odt, md and txt")
     if changes.get("share_stats") is False:

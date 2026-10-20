@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import type { GranolaNote, ImportJob, ImportSource, SyncStart } from "../api";
-import { formatLongDate, formatTime } from "../format";
-import { CheckIcon, DownloadIcon } from "./icons";
+import type { GranolaNote, ImportJob, ImportSource, SyncStart, WatchedFolders } from "../api";
+import { formatLongDate, formatTime, tildePath } from "../format";
+import { CheckIcon, CloseIcon, DownloadIcon, FolderIcon } from "./icons";
 import { Collapse, PageHeader, Segmented, Spinner, Switch } from "./ui";
 
 interface Props {
@@ -29,6 +29,7 @@ export default function ImportPanel({
           onOpenMeeting={onOpenMeeting}
           onError={onError}
         />
+        <WatchSection onImported={onImported} onError={onError} />
         <TrailmixSection
           onImported={onImported}
           onOpenMeeting={onOpenMeeting}
@@ -312,6 +313,158 @@ function GranolaSection({
           )}
         </div>
       )}
+    </section>
+  );
+}
+
+/** Folders other apps save recordings and transcripts into, looked through every minute. */
+function WatchSection({ onImported, onError }: Pick<Props, "onImported" | "onError">) {
+  const [data, setData] = useState<WatchedFolders | null>(null);
+  const [path, setPath] = useState("");
+  const [existing, setExisting] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const total = useRef<number | null>(null);
+
+  const take = (d: WatchedFolders) => {
+    setData(d);
+    const n = d.folders.reduce((sum, f) => sum + f.imported, 0);
+    if (total.current !== null && n > total.current) onImported();
+    total.current = n;
+  };
+
+  useEffect(() => {
+    const load = () =>
+      api
+        .watchedFolders()
+        .then(take)
+        .catch(() => undefined);
+    void load();
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const watch = async (p: string) => {
+    if (!p.trim()) return;
+    setBusy(true);
+    try {
+      take(await api.watchFolder(p.trim(), existing));
+      setPath("");
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unwatch = async (p: string) => {
+    try {
+      take(await api.unwatchFolder(p));
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  };
+
+  return (
+    <section
+      className="panel animate-enter p-5 sm:p-7"
+      aria-labelledby="watch-heading"
+    >
+      <h2 id="watch-heading" className="font-display text-lead font-semibold">
+        Watched folders
+      </h2>
+      <p className="mt-1 text-label leading-relaxed text-ink-soft">
+        New recordings and transcripts saved into these folders come in by
+        themselves, like Zoom's recordings or Meet and Teams transcripts synced
+        by Google Drive or OneDrive. Trailmix looks every minute while it's
+        open, and only reads your files.
+      </p>
+
+      {data && data.folders.length > 0 && (
+        <ul className="mt-4 divide-y divide-line rounded-lg border border-line">
+          {data.folders.map((f) => (
+            <li key={f.path} className="flex items-start gap-3 p-3">
+              <FolderIcon size={16} className="mt-0.5 shrink-0 text-ink-soft" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-mono text-hint text-ink" title={f.path}>
+                  {tildePath(f.path)}
+                </div>
+                <div className="mt-0.5 text-hint text-ink-soft" role="status">
+                  {f.error ? (
+                    <span className="text-trail-deep">{f.error}</span>
+                  ) : (
+                    <>
+                      {f.imported} imported
+                      {f.waiting > 0 && ` · ${f.waiting} arriving`}
+                      {f.failed > 0 && ` · ${f.failed} couldn't be read`}
+                      {f.last_scan
+                        ? ` · looked ${formatTime(f.last_scan)}`
+                        : " · first look in a moment"}
+                    </>
+                  )}
+                </div>
+              </div>
+              <button
+                className="btn btn-sm btn-ghost"
+                onClick={() => void unwatch(f.path)}
+                aria-label={`Stop watching ${f.path}`}
+              >
+                <CloseIcon size={14} />
+                Stop
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {data && data.suggestions.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-2 text-hint text-ink-soft">
+          Found on this Mac:
+          {data.suggestions.map((s) => (
+            <button
+              key={s.path}
+              className="btn btn-sm btn-ghost"
+              title={s.path}
+              disabled={busy}
+              onClick={() => void watch(s.path)}
+            >
+              <FolderIcon size={14} />
+              {s.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <input
+          value={path}
+          onChange={(e) => setPath(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && void watch(path)}
+          placeholder="~/Documents/Zoom"
+          aria-label="Folder to watch"
+          spellCheck={false}
+          className="field min-w-0 flex-1 font-mono text-hint"
+        />
+        <button
+          className="btn btn-sm btn-primary"
+          disabled={!path.trim() || busy}
+          onClick={() => void watch(path)}
+        >
+          {busy ? <Spinner /> : <FolderIcon size={14} />}
+          Watch folder
+        </button>
+      </div>
+      <label className="mt-3 flex cursor-pointer items-center gap-2 text-label">
+        <input
+          type="checkbox"
+          checked={existing}
+          onChange={(e) => setExisting(e.target.checked)}
+          className="h-4 w-4 accent-[var(--forest)]"
+        />
+        Also import what's in it now
+        <span className="text-hint text-ink-soft">
+          (off: only files that arrive from now on)
+        </span>
+      </label>
     </section>
   );
 }
