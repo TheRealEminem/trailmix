@@ -665,6 +665,31 @@ export interface WatchedFolder {
   error: string | null;
 }
 
+/** Anything that brings meetings in by itself, one shape for both kinds: a service (Granola) or a watched folder. */
+export interface Connection {
+  id: string;
+  kind: "service" | "folder";
+  label: string;
+  /** a folder's full path (null for a service) */
+  path: string | null;
+  /** a service: bringing in new meetings automatically (folders always are) */
+  auto: boolean;
+  running: boolean;
+  /** when it was last checked */
+  last: string | null;
+  last_count: number | null;
+  total: number;
+  waiting: number;
+  failed: number;
+  error: string | null;
+  since: string | null;
+}
+
+export interface Connections {
+  connections: Connection[];
+  available: { services: { name: string; label: string }[]; folders: { label: string; path: string }[] };
+}
+
 export interface WatchedFolders {
   folders: WatchedFolder[];
   /** folders other meeting apps save into, found on this Mac and not watched yet */
@@ -828,10 +853,11 @@ export const api = {
   granolaNotes: () => request<{ notes: GranolaNote[] }>("/import/granola/notes"),
   importGranola: (note_ids: string[], keep_summary: boolean) => request<ImportJob>("/import/granola", json("POST", { note_ids, keep_summary })),
   granolaImportStatus: () => request<ImportJob>("/import/granola"),
-  importSources: () => request<{ sources: ImportSource[] }>("/import/sources"),
   setImportSource: (name: string, auto: boolean, start: SyncStart = "now") =>
     request<{ sources: ImportSource[] }>(`/import/sources/${name}`, json("PUT", { auto, start })),
-  watchedFolders: () => request<WatchedFolders>("/import/folders"),
+  importConnections: () => request<Connections>("/import/connections"),
+  disconnectImportSource: (name: string) => request<Connections>(`/import/sources/${name}`, json("DELETE")),
+  scanFolders: () => request<WatchedFolders>("/import/folders/scan", json("POST", {})),
   watchFolder: (path: string, existing: boolean) => request<WatchedFolders>("/import/folders", json("POST", { path, existing })),
   unwatchFolder: (path: string) => request<WatchedFolders>(`/import/folders?path=${encodeURIComponent(path)}`, json("DELETE")),
   syncImportSource: (name: string) => request<{ sources: ImportSource[] }>(`/import/sources/${name}/sync`, json("POST", {})),
