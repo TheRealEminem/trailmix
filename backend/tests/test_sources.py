@@ -150,3 +150,35 @@ def test_the_api_turns_a_source_on_and_reports_it(fresh_db, monkeypatch):
     assert client.put("/api/import/sources/granola", json={"auto": False}).status_code == 200  # off is fine
     settings.update({"lockdown": False, "granola_api_key": ""})
     assert "API key" in client.put("/api/import/sources/granola", json={"auto": True}).json()["detail"]
+
+
+def test_connections_list_services_and_folders_alike(fresh_db, monkeypatch, tmp_path):
+    import watched
+
+    FakeGranola(monkeypatch, {})
+    monkeypatch.setattr(watched, "_suggestions", lambda watching: [])
+    folder = tmp_path / "Zoomish"
+    folder.mkdir()
+    watched.add(str(folder))
+    rows = sources.connections()["connections"]
+    assert [(r["kind"], r["label"]) for r in rows] == [("service", "Granola"), ("folder", "Zoomish")]
+    assert set(rows[0]) == set(rows[1])  # one shape for the page
+    sources.disconnect("granola")
+    out = sources.connections()
+    assert [r["kind"] for r in out["connections"]] == ["folder"]
+    assert out["available"]["services"] == [{"name": "granola", "label": "Granola"}]
+
+
+def test_a_key_that_doesnt_work_is_refused_when_connecting(fresh_db, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import main
+
+    def refuse(key, after):
+        raise importer.ImportError_("Granola didn't accept that API key.")
+
+    monkeypatch.setitem(sources.SOURCES, "granola", sources.Source("granola", "Granola", "granola_api_key", refuse,
+                                                                   lambda *a: None))
+    r = TestClient(main.app).put("/api/import/sources/granola", json={"auto": True})
+    assert r.status_code == 422 and "didn't accept" in r.json()["detail"]
+    assert settings.get_all()["auto_import"] == []

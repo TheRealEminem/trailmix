@@ -330,6 +330,8 @@ export interface Settings {
   auto_import: string[];
   /** with their notes as the summary (off: Trailmix writes new ones) */
   auto_import_keep_notes: boolean;
+  /** folders whose new recordings and transcripts come in by themselves */
+  watch_folders: string[];
 }
 
 export interface Meeting extends MeetingListItem {
@@ -650,6 +652,25 @@ export interface ImportSource {
 
 export type SyncStart = "now" | "week" | "all";
 
+/** A folder whose new recordings and transcripts come in by themselves. */
+export interface WatchedFolder {
+  path: string;
+  imported: number;
+  skipped: number;
+  failed: number;
+  /** new files seen once, waiting to stop changing */
+  waiting: number;
+  last_scan: string | null;
+  last_count: number | null;
+  error: string | null;
+}
+
+export interface WatchedFolders {
+  folders: WatchedFolder[];
+  /** folders other meeting apps save into, found on this Mac and not watched yet */
+  suggestions: { label: string; path: string }[];
+}
+
 export interface ImportJob {
   active?: boolean;
   total?: number;
@@ -810,6 +831,9 @@ export const api = {
   importSources: () => request<{ sources: ImportSource[] }>("/import/sources"),
   setImportSource: (name: string, auto: boolean, start: SyncStart = "now") =>
     request<{ sources: ImportSource[] }>(`/import/sources/${name}`, json("PUT", { auto, start })),
+  watchedFolders: () => request<WatchedFolders>("/import/folders"),
+  watchFolder: (path: string, existing: boolean) => request<WatchedFolders>("/import/folders", json("POST", { path, existing })),
+  unwatchFolder: (path: string) => request<WatchedFolders>(`/import/folders?path=${encodeURIComponent(path)}`, json("DELETE")),
   syncImportSource: (name: string) => request<{ sources: ImportSource[] }>(`/import/sources/${name}/sync`, json("POST", {})),
   exportAll: (include_audio: boolean) => request<ExportJob>("/export/all", json("POST", { include_audio })),
   exportAllStatus: () => request<ExportJob>("/export/all"),

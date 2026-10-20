@@ -170,33 +170,38 @@ def import_recording(name: str, temp: Path, modified: datetime) -> int | None:
     """Turns an uploaded recording (a temporary copy, deleted afterwards) into a meeting that's queued for
     transcription. None if this file was imported before."""
     try:
-        size = temp.stat().st_size
-        external = f"{name}:{size}"
-        if external in db.imported_ids("file"):
-            return None
-        duration, recorded = _probe(temp)
-        if duration <= 0:
-            raise ValueError(f"{name}: no audio found in it")
-        when = recorded or modified
-        meeting_id = db.create_imported_meeting(title_from(name), importer._iso(when), "file", external)
-        folder = db.AUDIO_DIR / str(meeting_id)
-        folder.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(
-            ["ffmpeg", "-loglevel", "error", "-nostdin", "-y", "-i", str(temp), "-vn", "-ac", "1",
-             "-ar", str(store.SAMPLE_RATE), "-c:a", "libopus", "-b:a", store.OPUS_BITRATE,
-             str(store.ogg_path(folder, "mic"))], capture_output=True, text=True)
-        if result.returncode != 0:
-            db.delete_meeting(meeting_id)
-            raise ValueError(f"{name}: couldn't read its audio ({result.stderr.strip()[:160]})")
-        db.update_meeting(
-            meeting_id, audio_dir=str(folder), audio_deleted=0, duration_sec=duration, title_auto=1,
-            imported_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"), status="queued",
-            transcribed=0, ask_first=int(settings.get_all()["ask_before_ai"]),
-        )
-        pipeline.enqueue(meeting_id)
-        return meeting_id
+        return recording_from(name, temp, modified)
     finally:
         temp.unlink(missing_ok=True)
+
+
+def recording_from(name: str, path: Path, modified: datetime) -> int | None:
+    """The same from a file that stays where it is (in a watched folder, watched.py): only read, never changed."""
+    size = path.stat().st_size
+    external = f"{name}:{size}"
+    if external in db.imported_ids("file"):
+        return None
+    duration, recorded = _probe(path)
+    if duration <= 0:
+        raise ValueError(f"{name}: no audio found in it")
+    when = recorded or modified
+    meeting_id = db.create_imported_meeting(title_from(name), importer._iso(when), "file", external)
+    folder = db.AUDIO_DIR / str(meeting_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-nostdin", "-y", "-i", str(path), "-vn", "-ac", "1",
+         "-ar", str(store.SAMPLE_RATE), "-c:a", "libopus", "-b:a", store.OPUS_BITRATE,
+         str(store.ogg_path(folder, "mic"))], capture_output=True, text=True)
+    if result.returncode != 0:
+        db.delete_meeting(meeting_id)
+        raise ValueError(f"{name}: couldn't read its audio ({result.stderr.strip()[:160]})")
+    db.update_meeting(
+        meeting_id, audio_dir=str(folder), audio_deleted=0, duration_sec=duration, title_auto=1,
+        imported_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"), status="queued",
+        transcribed=0, ask_first=int(settings.get_all()["ask_before_ai"]),
+    )
+    pipeline.enqueue(meeting_id)
+    return meeting_id
 
 
 def temp_path(name: str) -> Path:

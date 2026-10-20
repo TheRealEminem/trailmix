@@ -57,6 +57,7 @@ import feedback
 import questions
 import gemini_batch
 import sources
+import watched
 import transcribe_gemini
 import transcribe_remote
 
@@ -162,6 +163,20 @@ async def _sources_loop():
         await asyncio.sleep(SYNC_EVERY_S)
 
 
+FOLDERS_EVERY_S = 60
+
+
+async def _folders_loop():
+    """Watched folders (watched.py): looks for new recordings and transcripts in them every minute. Off with
+    TRAILMIX_SYNC=0, like the sources loop."""
+    while True:
+        try:
+            await run_in_threadpool(watched.scan_all)
+        except Exception:
+            log.exception("Looking through watched folders failed")
+        await asyncio.sleep(FOLDERS_EVERY_S)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _exit_with_parent()
@@ -181,10 +196,14 @@ async def lifespan(_: FastAPI):
     note_taker = asyncio.create_task(_live_notes_loop())
     batches = asyncio.create_task(_batch_loop())
     stats = asyncio.create_task(_stats_loop())
-    syncer = asyncio.create_task(_sources_loop()) if os.getenv("TRAILMIX_SYNC") != "0" else None
+    syncing = os.getenv("TRAILMIX_SYNC") != "0"
+    syncer = asyncio.create_task(_sources_loop()) if syncing else None
+    watcher = asyncio.create_task(_folders_loop()) if syncing else None
     yield
     if syncer:
         syncer.cancel()
+    if watcher:
+        watcher.cancel()
     batches.cancel()
     stats.cancel()
     note_taker.cancel()
@@ -474,10 +493,29 @@ def set_import_source(name: str, body: SourceAuto):
             raise HTTPException(409, settings.LOCKDOWN)
         if body.start not in sources.STARTS:
             raise HTTPException(422, f"start must be one of {', '.join(sources.STARTS)}")
+        try:
+            sources.check(name, cfg[src.key_setting])
+        except importer.ImportError_ as e:
+            raise HTTPException(422, str(e))
     sources.set_auto(name, body.auto, body.start)
     if body.auto:
         sources.sync_soon(name)
     return {"sources": sources.status()}
+
+
+@app.delete("/api/import/sources/{name}")
+def disconnect_import_source(name: str):
+    """Turns it off and forgets its key. The meetings it brought in stay."""
+    _source(name)
+    sources.disconnect(name)
+    return sources.connections()
+
+
+@app.get("/api/import/connections")
+def import_connections():
+    """Everything that brings meetings in by itself (services and watched folders) as one list, and what could be
+    connected."""
+    return sources.connections()
 
 
 @app.post("/api/import/sources/{name}/sync", status_code=202)
@@ -491,6 +529,40 @@ def sync_import_source(name: str):
         raise HTTPException(409, settings.LOCKDOWN)
     sources.sync_soon(name)
     return {"sources": sources.status()}
+
+
+class WatchFolder(BaseModel):
+    path: str
+    existing: bool = False  # also bring in what's in it now
+
+
+@app.get("/api/import/folders")
+def watched_folders():
+    """Watched folders, how each is going, and folders other meeting apps save into that could be watched."""
+    return watched.status()
+
+
+@app.post("/api/import/folders")
+def watch_folder(body: WatchFolder):
+    try:
+        added = watched.add(body.path, body.existing)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    threading.Thread(target=watched.scan_all, daemon=True, name="watch-first-look").start()
+    return {**watched.status(), "added": added}
+
+
+@app.post("/api/import/folders/scan", status_code=202)
+def scan_folders():
+    """Look through the watched folders now instead of at the next minute."""
+    threading.Thread(target=watched.scan_all, daemon=True, name="watch-look-now").start()
+    return watched.status()
+
+
+@app.delete("/api/import/folders")
+def unwatch_folder(path: str):
+    watched.remove(path)
+    return watched.status()
 
 
 @app.post("/api/import/text", status_code=201)

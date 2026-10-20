@@ -135,6 +135,16 @@ CREATE TABLE IF NOT EXISTS source_sync (
     total         INTEGER NOT NULL DEFAULT 0,      -- meetings brought in automatically, all told
     error         TEXT
 );
+
+-- Files seen in watched folders (watched.py): each is looked at once, whatever became of it.
+CREATE TABLE IF NOT EXISTS watched_files (
+    path          TEXT PRIMARY KEY,
+    size          INTEGER NOT NULL,
+    state         TEXT NOT NULL,                   -- imported | before (there when the folder was added) | skipped | failed
+    meeting_id    INTEGER,
+    note          TEXT,                            -- why it was skipped, or what went wrong
+    seen_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
 """
 
 
@@ -535,6 +545,30 @@ def set_source_sync(source: str, **fields) -> None:
         if fields:
             conn.execute(f"UPDATE source_sync SET {', '.join(f'{k} = ?' for k in fields)} WHERE source = ?",
                          (*fields.values(), source))
+
+
+def watched_paths(under: str) -> set[str]:
+    """The files in this watched folder (and below) that have been looked at already."""
+    prefix = under.rstrip("/") + "/"
+    with connect() as conn:
+        rows = conn.execute("SELECT path FROM watched_files WHERE substr(path, 1, ?) = ?", (len(prefix), prefix))
+        return {r["path"] for r in rows}
+
+
+def watched_counts(under: str) -> dict[str, int]:
+    """state -> how many files, in this watched folder."""
+    prefix = under.rstrip("/") + "/"
+    with connect() as conn:
+        rows = conn.execute("SELECT state, count(*) AS n FROM watched_files WHERE substr(path, 1, ?) = ? GROUP BY state",
+                            (len(prefix), prefix))
+        return {r["state"]: r["n"] for r in rows}
+
+
+def add_watched_files(rows: list[tuple[str, int, str, int | None, str | None]]) -> None:
+    """(path, size, state, meeting_id, note) for each."""
+    with connect() as conn:
+        conn.executemany("INSERT OR REPLACE INTO watched_files (path, size, state, meeting_id, note) VALUES (?, ?, ?, ?, ?)",
+                         rows)
 
 
 def delete_meeting(meeting_id: int) -> None:
