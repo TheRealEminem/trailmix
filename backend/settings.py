@@ -74,6 +74,8 @@ DEFAULTS = {
     "stats_last_daily": "",             # the day the daily summary was last sent
     # Import
     "granola_api_key": "",              # grn_… from Granola → Settings → Connectors → API keys (Business plan)
+    "fathom_api_key": "",               # Fathom → Settings → API Access
+    "fireflies_api_key": "",            # Fireflies → Integrations → Fireflies API
     "auto_import": [],                  # sources whose new meetings come in by themselves (sources.py)
     "auto_import_keep_notes": True,     # with their notes as the summary (off: Trailmix writes new ones)
     "watch_folders": [],                # folders whose new recordings and transcripts come in by themselves (watched.py)

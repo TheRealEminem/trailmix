@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api, inApp, revealInFinder } from "../api";
-import type { Connection, Connections, GranolaNote, ImportJob, SyncStart } from "../api";
+import type { Connection, Connections, GranolaNote, ImportJob, ServiceInfo, SyncStart } from "../api";
 import { formatLongDate, formatTime, tildePath } from "../format";
 import {
   CheckIcon,
@@ -117,8 +117,8 @@ function Connected({ onImported, onError }: Pick<Props, "onImported" | "onError"
 
       {data && rows.length === 0 && !adding && (
         <div className="mt-4 rounded-lg border border-dashed border-line p-5 text-center text-label text-ink-soft">
-          Nothing connected yet. Connect Granola, or a folder where another
-          app saves its recordings or transcripts.
+          Nothing connected yet. Connect Granola, Fathom or Fireflies, or a
+          folder where another app saves its recordings or transcripts.
         </div>
       )}
       {rows.length > 0 && (
@@ -269,7 +269,7 @@ function ConnectionRow({
               <RefreshIcon size={14} />
               Check now
             </button>
-            {service && (
+            {c.id === "granola" && (
               <button
                 className="btn btn-sm btn-ghost"
                 onClick={() => setBrowsing((b) => !b)}
@@ -293,7 +293,7 @@ function ConnectionRow({
               {service ? "Disconnect" : "Stop watching"}
             </button>
           </div>
-          {service && browsing && (
+          {c.id === "granola" && browsing && (
             <GranolaBrowser onImported={onImported} onError={onError} />
           )}
         </div>
@@ -372,18 +372,33 @@ function ConnectPicker({
 
   return (
     <div className="mt-4 rounded-lg border border-line bg-surface-subtle/50 p-4">
-      <div className="flex flex-wrap items-center gap-2 text-hint text-ink-soft">
+      {/* Buttons that wrap rather than a segmented control: there are more choices than fit across a phone */}
+      <div
+        role="radiogroup"
+        aria-label="What to connect"
+        className="flex flex-wrap items-center gap-2 text-hint text-ink-soft"
+      >
         Connect
-        <Segmented
-          size="sm"
-          label="What to connect"
-          value={choice}
-          onChange={setChoice}
-          options={options}
-        />
+        {options.map((o) => (
+          <button
+            key={o.id}
+            role="radio"
+            aria-checked={o.id === choice}
+            className={`btn btn-sm ${o.id === choice ? "btn-primary" : "btn-ghost"}`}
+            onClick={() => setChoice(o.id)}
+          >
+            {o.icon}
+            {o.label}
+          </button>
+        ))}
       </div>
       {service ? (
-        <ConnectGranola onDone={onDone} onError={onError} />
+        <ConnectService
+          key={service.name}
+          service={service}
+          onDone={onDone}
+          onError={onError}
+        />
       ) : (
         <ConnectFolder
           suggestions={available.folders}
@@ -422,22 +437,28 @@ function StartChoice({
   );
 }
 
-function ConnectGranola({
+/** Any service with an API key: its own steps for finding the key, then where to start. */
+function ConnectService({
+  service,
   onDone,
   onError,
-}: { onDone: (d: Connections) => void } & Pick<Props, "onError">) {
+}: {
+  service: ServiceInfo;
+  onDone: (d: Connections) => void;
+} & Pick<Props, "onError">) {
   const [key, setKey] = useState("");
   const [start, setStart] = useState<SyncStart>("now");
   const [busy, setBusy] = useState(false);
+  const setting = `${service.name}_api_key`;
 
   const connect = async () => {
     setBusy(true);
     try {
-      await api.putSettings({ granola_api_key: key.trim() });
+      await api.putSettings({ [setting]: key.trim() });
       try {
-        await api.setImportSource("granola", true, start);
+        await api.setImportSource(service.name, true, start);
       } catch (e) {
-        await api.putSettings({ granola_api_key: "" }); // a key that doesn't work isn't kept
+        await api.putSettings({ [setting]: "" }); // a key that doesn't work isn't kept
         throw e;
       }
       setKey("");
@@ -452,27 +473,20 @@ function ConnectGranola({
   return (
     <div className="mt-4 space-y-3 text-label">
       <ol className="list-decimal space-y-1 pl-5 text-ink-soft">
-        <li>
-          In Granola, open{" "}
-          <b className="text-ink">Settings → Connectors → API keys</b>.
-        </li>
-        <li>
-          Click <b className="text-ink">Create new key</b>, give it access to
-          your notes, and click <b className="text-ink">Generate API Key</b>.
-        </li>
-        <li>Copy the key (it starts with grn_) and paste it here.</li>
+        {service.steps.map((step) => (
+          <li key={step}>{step}</li>
+        ))}
       </ol>
-      <p className="text-hint text-ink-soft">
-        Granola's API needs a Business or Enterprise plan. On other plans, copy
-        a meeting's transcript in Granola and paste it under Import once.
-      </p>
+      {service.note && (
+        <p className="text-hint text-ink-soft">{service.note}</p>
+      )}
       <input
         type="password"
         value={key}
         onChange={(e) => setKey(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && key.trim() && void connect()}
-        placeholder="grn_…"
-        aria-label="Granola API key"
+        placeholder={service.placeholder}
+        aria-label={`${service.label} API key`}
         autoComplete="off"
         spellCheck={false}
         className="field w-full font-mono text-hint sm:w-80"
@@ -484,7 +498,7 @@ function ConnectGranola({
         onClick={() => void connect()}
       >
         {busy ? <Spinner /> : <KeyIcon size={14} />}
-        Connect Granola
+        Connect {service.label}
       </button>
     </div>
   );

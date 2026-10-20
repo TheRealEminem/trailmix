@@ -2269,6 +2269,20 @@ export default function Settings({
             onSave={(v) => save({ granola_api_key: v } as Partial<SettingsT>)}
           />
         </Row>
+        <Row label="Fathom API key" hint="From Fathom → User Settings → API Access.">
+          <SecretField
+            label="Fathom API key"
+            hint={s.secret_hints?.fathom_api_key}
+            onSave={(v) => save({ fathom_api_key: v } as Partial<SettingsT>)}
+          />
+        </Row>
+        <Row label="Fireflies API key" hint="From Fireflies → Integrations → Fireflies API.">
+          <SecretField
+            label="Fireflies API key"
+            hint={s.secret_hints?.fireflies_api_key}
+            onSave={(v) => save({ fireflies_api_key: v } as Partial<SettingsT>)}
+          />
+        </Row>
       </Section>
 
       <UpdatesSection native={native} />

@@ -34,7 +34,8 @@ class FakeGranola:
         return [{"id": i, "created_at": importer._iso(t), "imported": i in have}
                 for i, t in self.made.items() if not after or t >= after]
 
-    def import_note(self, key, note_id, keep):
+    def import_note(self, key, note, keep):
+        note_id = note["id"]
         if note_id in self.fail:
             raise importer.ImportError_("Granola answered 500")
         self.imported.append(note_id)
@@ -166,7 +167,8 @@ def test_connections_list_services_and_folders_alike(fresh_db, monkeypatch, tmp_
     sources.disconnect("granola")
     out = sources.connections()
     assert [r["kind"] for r in out["connections"]] == ["folder"]
-    assert out["available"]["services"] == [{"name": "granola", "label": "Granola"}]
+    assert [s["name"] for s in out["available"]["services"]] == ["granola", "fathom", "fireflies"]
+    assert "API Access" in out["available"]["services"][1]["steps"][0]  # how to connect each one
 
 
 def test_a_key_that_doesnt_work_is_refused_when_connecting(fresh_db, monkeypatch):
