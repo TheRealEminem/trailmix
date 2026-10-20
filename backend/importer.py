@@ -18,7 +18,8 @@ import settings
 
 
 # Where an imported transcript (and notes) came from, as shown in "Transcribed with" and "Notes by".
-SOURCE_NAMES = {"granola": "Granola", "paste": "a pasted transcript", "file": "a transcript file"}
+SOURCE_NAMES = {"granola": "Granola", "fathom": "Fathom", "fireflies": "Fireflies", "paste": "a pasted transcript",
+                "file": "a transcript file"}
 
 log = logging.getLogger("trailmix")
 
@@ -247,13 +248,14 @@ def granola_segments(items: list[dict]) -> list[dict]:
     return segments
 
 
-# One import at a time: the Import panel, the sync loop and the look after a recording may reach for the same note.
-_import_lock = threading.Lock()
+# One import at a time: the Import panel, the sync loop and the look after a recording may reach for the same note
+# (Fathom and Fireflies use it too).
+import_lock = threading.Lock()
 
 
 def import_granola_note(key: str, note_id: str, keep_summary: bool) -> int | None:
     """Imports one note; returns the new meeting id (None if it was already imported or has no transcript)."""
-    with _import_lock:
+    with import_lock:
         return _import_granola_note(key, note_id, keep_summary)
 
 
