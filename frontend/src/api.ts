@@ -326,6 +326,8 @@ export interface Settings {
   /** Only in responses: "…1234" for a stored key, null for none. */
   secret_hints?: Record<string, string | null>;
   granola_api_key?: string;
+  fathom_api_key?: string;
+  fireflies_api_key?: string;
   /** sources whose new meetings come in by themselves */
   auto_import: string[];
   /** with their notes as the summary (off: Trailmix writes new ones) */
@@ -687,7 +689,16 @@ export interface Connection {
 
 export interface Connections {
   connections: Connection[];
-  available: { services: { name: string; label: string }[]; folders: { label: string; path: string }[] };
+  available: { services: ServiceInfo[]; folders: { label: string; path: string }[] };
+}
+
+/** A service that can be connected: how to get its API key, and what plan it needs. */
+export interface ServiceInfo {
+  name: string;
+  label: string;
+  steps: string[];
+  placeholder: string;
+  note: string;
 }
 
 export interface WatchedFolders {

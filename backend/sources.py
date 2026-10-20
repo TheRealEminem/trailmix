@@ -33,15 +33,46 @@ class Source:
     name: str
     label: str
     key_setting: str
-    notes: Callable[[str, datetime | None], list[dict]]   # (key, made after) -> [{id, created_at, imported}]
-    import_note: Callable[[str, str, bool], int | None]   # (key, note id, keep their notes) -> new meeting id
+    notes: Callable[[str, datetime | None], list[dict]]   # (key, made after) -> [{id, created_at, imported, …}]
+    import_note: Callable[[str, dict, bool], int | None]  # (key, a note from notes(), keep their notes) -> meeting id
+    # For connecting it in the Import page: where to find a key, what it looks like, and what plan it needs
+    steps: tuple[str, ...] = ()
+    placeholder: str = ""
+    note: str = ""
 
 
-SOURCES = {
-    "granola": Source("granola", "Granola", "granola_api_key",
-                      lambda key, after: importer.granola_notes(key, after),
-                      lambda key, note_id, keep: importer.import_granola_note(key, note_id, keep)),
-}
+def _sources() -> dict[str, Source]:
+    import fathom
+    import fireflies
+
+    return {
+        "granola": Source(
+            "granola", "Granola", "granola_api_key",
+            lambda key, after: importer.granola_notes(key, after),
+            lambda key, note, keep: importer.import_granola_note(key, note["id"], keep),
+            steps=("In Granola, open Settings → Connectors → API keys.",
+                   "Click Create new key, give it access to your notes, and click Generate API Key.",
+                   "Copy the key (it starts with grn_) and paste it here."),
+            placeholder="grn_…",
+            note="Granola's API needs a Business or Enterprise plan. On other plans, copy a meeting's transcript in "
+                 "Granola and paste it under Import once."),
+        "fathom": Source(
+            "fathom", "Fathom", "fathom_api_key", fathom.notes, fathom.import_note,
+            steps=("In Fathom, open User Settings → API Access.",
+                   "Click Generate API Key, then copy it and paste it here."),
+            placeholder="Fathom API key",
+            note="Brings in the meetings you recorded, with Fathom's notes and next steps."),
+        "fireflies": Source(
+            "fireflies", "Fireflies", "fireflies_api_key", fireflies.notes, fireflies.import_note,
+            steps=("Sign in at app.fireflies.ai and open Integrations.",
+                   "Choose Fireflies API, then copy your API key and paste it here."),
+            placeholder="Fireflies API key",
+            note="Fireflies' free plan allows 500 API requests a day: enough for checking every 15 minutes and "
+                 "bringing in a few meetings a day."),
+    }
+
+
+SOURCES = _sources()
 
 STARTS = {"now": timedelta(0), "week": timedelta(days=7), "all": None}
 
@@ -96,7 +127,7 @@ def _sync(src: Source, key: str, cfg: dict) -> int:
         if note["imported"] or (since and when and when < since):
             continue
         try:
-            if src.import_note(key, note["id"], cfg["auto_import_keep_notes"]):
+            if src.import_note(key, note, cfg["auto_import_keep_notes"]):
                 made += 1
         except Exception as e:  # this one again next time; the rest carry on
             log.warning("Importing %s note %s: %s", src.label, note["id"], e)
@@ -172,7 +203,7 @@ def pull_for(name: str, meeting_id: int, key: str) -> int:
         when = importer._parse_time(note["created_at"])
         if note["imported"] or not when or not (start.timestamp() - NEARBY_S <= when.timestamp() <= end + NEARBY_S):
             continue
-        if src.import_note(key, note["id"], True):
+        if src.import_note(key, note, True):
             made += 1
         time.sleep(importer._REQUEST_GAP_S)
     return made
@@ -223,5 +254,7 @@ def connections() -> dict:
                      "path": f["path"], "auto": True, "running": False, "last": f["last_scan"],
                      "last_count": f["last_count"], "total": f["imported"], "waiting": f["waiting"],
                      "failed": f["failed"], "error": f["error"], "since": None})
-    services = [{"name": s["name"], "label": s["label"]} for s in status() if not s["has_key"]]
+    services = [{"name": s["name"], "label": s["label"], "steps": list(SOURCES[s["name"]].steps),
+                 "placeholder": SOURCES[s["name"]].placeholder, "note": SOURCES[s["name"]].note}
+                for s in status() if not s["has_key"]]
     return {"connections": rows, "available": {"services": services, "folders": folders["suggestions"]}}
