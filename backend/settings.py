@@ -74,6 +74,8 @@ DEFAULTS = {
     "stats_last_daily": "",             # the day the daily summary was last sent
     # Import
     "granola_api_key": "",              # grn_… from Granola → Settings → Connectors → API keys (Business plan)
+    "auto_import": [],                  # sources whose new meetings come in by themselves (sources.py)
+    "auto_import_keep_notes": True,     # with their notes as the summary (off: Trailmix writes new ones)
     # Export
     "auto_export": False,
     "export_dir": str(Path.home() / "Documents" / "Trailmix"),
@@ -145,6 +147,10 @@ def update(changes: dict) -> dict:
             raise ValueError("gemini_transcribe_model can't be empty")
         if key in CHOICES and value not in CHOICES[key]:
             raise ValueError(f"{key} must be one of {', '.join(CHOICES[key])}")
+        if key == "auto_import":
+            import sources
+            if any(n not in sources.SOURCES for n in value):
+                raise ValueError(f"auto_import can include {', '.join(sources.SOURCES)}")
         if key == "export_formats" and any(f not in ("pdf", "docx", "odt", "md", "txt") for f in value):
             raise ValueError("export_formats can include pdf, docx, odt, md and txt")
     if changes.get("share_stats") is False:

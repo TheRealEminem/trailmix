@@ -232,9 +232,10 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
         if duplicates.check(meeting_id, cfg) != meeting_id:
             return  # folded into the copy that was already here
         m = db.get_meeting(meeting_id)
-        if not m.get("source") and cfg["granola_api_key"] and not settings.locked(cfg) and cfg["duplicates"] != "keep":
-            import importer
-            importer.pull_granola_soon(meeting_id)
+        if not m.get("source") and not settings.locked(cfg) and cfg["duplicates"] != "keep":
+            import sources
+            if sources.any_key(cfg):
+                sources.pull_soon(meeting_id)
 
     # summarize (also the entry point for "Regenerate")
     if m["transcript"] and not m["summary"]:
