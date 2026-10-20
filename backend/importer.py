@@ -186,12 +186,14 @@ def _granola(key: str, path: str, params: dict | None = None) -> httpx.Response:
     return r
 
 
-def granola_notes(key: str) -> list[dict]:
-    """Every note the key can see, newest first: [{id, title, created_at, imported}]."""
+def granola_notes(key: str, created_after: datetime | None = None) -> list[dict]:
+    """Every note the key can see (made after `created_after`, if given), newest first:
+    [{id, title, created_at, imported}]."""
     have = db.imported_ids("granola")
     notes, cursor = [], None
+    after = {"created_after": _iso(created_after)} if created_after else {}
     while True:
-        params = {"page_size": 30, **({"cursor": cursor} if cursor else {})}
+        params = {"page_size": 30, **after, **({"cursor": cursor} if cursor else {})}
         r = _granola(key, "/notes", params)
         if r.status_code >= 400:
             raise ImportError_(f"Granola answered {r.status_code}: {r.text[:200]}")
@@ -245,8 +247,17 @@ def granola_segments(items: list[dict]) -> list[dict]:
     return segments
 
 
+# One import at a time: the Import panel, the sync loop and the look after a recording may reach for the same note.
+_import_lock = threading.Lock()
+
+
 def import_granola_note(key: str, note_id: str, keep_summary: bool) -> int | None:
     """Imports one note; returns the new meeting id (None if it was already imported or has no transcript)."""
+    with _import_lock:
+        return _import_granola_note(key, note_id, keep_summary)
+
+
+def _import_granola_note(key: str, note_id: str, keep_summary: bool) -> int | None:
     if note_id in db.imported_ids("granola"):
         return None
     r = _granola(key, f"/notes/{note_id}", {"include": "transcript"})
@@ -276,42 +287,6 @@ _job: dict = {}
 def job_status() -> dict:
     with _lock:
         return dict(_job)
-
-
-def pull_granola_for(meeting_id: int, key: str) -> int:
-    """Brings in the Granola notes made at the same time as this recording (Granola was taking notes too), which then
-    merge into it if they're the same meeting. Returns how many came in."""
-    m = db.get_meeting(meeting_id)
-    start = _parse_time(m["created_at"]) if m else None
-    if not start:
-        return 0
-    end = start.timestamp() + (m["duration_sec"] or 0)
-    made = 0
-    for note in granola_notes(key):
-        when = _parse_time(note["created_at"])
-        if note["imported"] or not when or not (start.timestamp() - 1800 <= when.timestamp() <= end + 1800):
-            continue
-        if import_granola_note(key, note["id"], keep_summary=True):
-            made += 1
-        time.sleep(_REQUEST_GAP_S)
-    return made
-
-
-def pull_granola_soon(meeting_id: int, waits: tuple[int, ...] = (180, 900, 2700)) -> None:
-    """After a recording: looks for Granola's notes on it a few times (Granola finishes its notes a little after the
-    meeting does), until they've come in."""
-    def run():
-        for wait in waits:
-            time.sleep(wait)
-            cfg = settings.get_all()
-            if not cfg["granola_api_key"] or settings.locked(cfg) or cfg.get("duplicates") == "keep":
-                return
-            try:
-                if pull_granola_for(meeting_id, cfg["granola_api_key"]):
-                    return
-            except Exception as e:  # offline, Granola down: try again later
-                log.info("Looking for Granola's notes on meeting %s: %s", meeting_id, e)
-    threading.Thread(target=run, daemon=True, name=f"granola-pull-{meeting_id}").start()
 
 
 def start_granola_import(key: str, note_ids: list[str], keep_summary: bool) -> bool:

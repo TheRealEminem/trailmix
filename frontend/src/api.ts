@@ -326,6 +326,10 @@ export interface Settings {
   /** Only in responses: "…1234" for a stored key, null for none. */
   secret_hints?: Record<string, string | null>;
   granola_api_key?: string;
+  /** sources whose new meetings come in by themselves */
+  auto_import: string[];
+  /** with their notes as the summary (off: Trailmix writes new ones) */
+  auto_import_keep_notes: boolean;
 }
 
 export interface Meeting extends MeetingListItem {
@@ -629,6 +633,23 @@ export interface GranolaNote {
   meeting_id: number | null;
 }
 
+/** Another note taker whose new meetings can come in by themselves, and how its sync is going. */
+export interface ImportSource {
+  name: string;
+  label: string;
+  has_key: boolean;
+  auto: boolean;
+  running: boolean;
+  since: string | null;
+  last_ok: string | null;
+  last_try: string | null;
+  last_count: number | null;
+  total: number | null;
+  error: string | null;
+}
+
+export type SyncStart = "now" | "week" | "all";
+
 export interface ImportJob {
   active?: boolean;
   total?: number;
@@ -786,6 +807,10 @@ export const api = {
   granolaNotes: () => request<{ notes: GranolaNote[] }>("/import/granola/notes"),
   importGranola: (note_ids: string[], keep_summary: boolean) => request<ImportJob>("/import/granola", json("POST", { note_ids, keep_summary })),
   granolaImportStatus: () => request<ImportJob>("/import/granola"),
+  importSources: () => request<{ sources: ImportSource[] }>("/import/sources"),
+  setImportSource: (name: string, auto: boolean, start: SyncStart = "now") =>
+    request<{ sources: ImportSource[] }>(`/import/sources/${name}`, json("PUT", { auto, start })),
+  syncImportSource: (name: string) => request<{ sources: ImportSource[] }>(`/import/sources/${name}/sync`, json("POST", {})),
   exportAll: (include_audio: boolean) => request<ExportJob>("/export/all", json("POST", { include_audio })),
   exportAllStatus: () => request<ExportJob>("/export/all"),
   keepForever: (id: number, keep: boolean) => request<Meeting>(`/meetings/${id}/keep`, json("POST", { keep })),

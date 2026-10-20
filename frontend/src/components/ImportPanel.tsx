@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import type { GranolaNote, ImportJob } from "../api";
-import { formatLongDate } from "../format";
+import type { GranolaNote, ImportJob, ImportSource, SyncStart } from "../api";
+import { formatLongDate, formatTime } from "../format";
 import { CheckIcon, DownloadIcon } from "./icons";
-import { PageHeader, Spinner } from "./ui";
+import { Collapse, PageHeader, Segmented, Spinner, Switch } from "./ui";
 
 interface Props {
   onImported: () => void;
@@ -178,6 +178,11 @@ function GranolaSection({
         </div>
       ) : (
         <div className="mt-4">
+          <AutoImport
+            name="granola"
+            onImported={onImported}
+            onError={onError}
+          />
           {!notes && (
             <div className="flex flex-wrap items-center gap-3">
               <button
@@ -308,6 +313,170 @@ function GranolaSection({
         </div>
       )}
     </section>
+  );
+}
+
+/** A source's new meetings coming in by themselves: the switch, where to start, and how the last check went. */
+function AutoImport({
+  name,
+  onImported,
+  onError,
+}: { name: string } & Pick<Props, "onImported" | "onError">) {
+  const [src, setSrc] = useState<ImportSource | null>(null);
+  const [start, setStart] = useState<SyncStart>("now");
+  const [keepNotes, setKeepNotes] = useState(true);
+  const seen = useRef<number | null>(null);
+
+  const take = (all: ImportSource[]) => {
+    const s = all.find((x) => x.name === name) ?? null;
+    setSrc(s);
+    const total = s?.total ?? 0;
+    if (seen.current !== null && total > seen.current) onImported();
+    seen.current = total;
+  };
+
+  useEffect(() => {
+    api
+      .importSources()
+      .then(({ sources }) => take(sources))
+      .catch(() => undefined);
+    api
+      .getSettings()
+      .then((s) => setKeepNotes(s.auto_import_keep_notes))
+      .catch(() => undefined);
+  }, [name]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // While a sync runs, and a moment after one is asked for (it starts in the background)
+  const [watching, setWatching] = useState(false);
+  useEffect(() => {
+    if (!src?.running && !watching) return;
+    const t = setInterval(() => {
+      api
+        .importSources()
+        .then(({ sources }) => {
+          take(sources);
+          if (!sources.find((x) => x.name === name)?.running) setWatching(false);
+        })
+        .catch(() => setWatching(false));
+    }, 1500);
+    return () => clearInterval(t);
+  }, [src?.running, watching]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!src) return null;
+
+  const turn = async (on: boolean) => {
+    try {
+      take((await api.setImportSource(name, on, start)).sources);
+      if (on) setWatching(true);
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  };
+
+  const checkNow = async () => {
+    try {
+      take((await api.syncImportSource(name)).sources);
+      setWatching(true);
+    } catch (e) {
+      onError((e as Error).message);
+    }
+  };
+
+  const saveKeepNotes = async (v: boolean) => {
+    setKeepNotes(v);
+    try {
+      await api.putSettings({ auto_import_keep_notes: v });
+    } catch (e) {
+      setKeepNotes(!v);
+      onError((e as Error).message);
+    }
+  };
+
+  const checked = src.last_try ?? src.last_ok;
+  return (
+    <div className="mb-4 rounded-lg border border-line bg-surface-subtle/50 p-4">
+      <label className="flex cursor-pointer items-center justify-between gap-4">
+        <span>
+          <span className="block text-label font-medium text-ink">
+            Bring in new {src.label} meetings automatically
+          </span>
+          <span className="mt-0.5 block text-hint text-ink-soft">
+            Trailmix checks every 15 minutes while it's open.
+          </span>
+        </span>
+        <Switch
+          checked={src.auto}
+          onChange={(v) => void turn(v)}
+          label={`Bring in new ${src.label} meetings automatically`}
+        />
+      </label>
+
+      <Collapse open={!src.auto}>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-hint text-ink-soft">
+          Start with
+          <Segmented
+            size="sm"
+            label="Which meetings to bring in"
+            value={start}
+            onChange={setStart}
+            options={[
+              { id: "now", label: "New ones" },
+              { id: "week", label: "The last 7 days" },
+              { id: "all", label: "Everything" },
+            ]}
+          />
+        </div>
+        {start === "all" && !keepNotes && (
+          <p className="mt-2 text-hint text-ink-soft">
+            Trailmix writes notes for each one, which can take a while (and
+            cost, with a cloud AI).
+          </p>
+        )}
+      </Collapse>
+
+      <Collapse open={src.auto}>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
+          <span className="text-hint text-ink-soft" role="status">
+            {src.running ? (
+              <span className="inline-flex items-center gap-2">
+                <Spinner /> Checking {src.label}…
+              </span>
+            ) : src.error ? (
+              <span className="text-trail-deep">{src.error}</span>
+            ) : checked ? (
+              <>
+                Last checked {formatTime(checked)}
+                {(src.last_count ?? 0) > 0 &&
+                  ` · ${src.last_count} new meeting${src.last_count === 1 ? "" : "s"}`}
+                {(src.total ?? 0) > 0 && ` · ${src.total} so far`}
+              </>
+            ) : (
+              "Not checked yet."
+            )}
+          </span>
+          <button
+            className="btn btn-sm btn-ghost"
+            disabled={src.running}
+            onClick={() => void checkNow()}
+          >
+            Check now
+          </button>
+        </div>
+      </Collapse>
+
+      <label className="mt-3 flex cursor-pointer items-center gap-2 text-label">
+        <input
+          type="checkbox"
+          checked={keepNotes}
+          onChange={(e) => void saveKeepNotes(e.target.checked)}
+          className="h-4 w-4 accent-[var(--forest)]"
+        />
+        Keep {src.label}'s notes as the summary
+        <span className="text-hint text-ink-soft">
+          (off: Trailmix writes new ones)
+        </span>
+      </label>
+    </div>
   );
 }
 
