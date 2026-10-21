@@ -17,6 +17,7 @@ import type {
   Usage,
   Workspace,
   ProviderId,
+  RecordingLaws as RecordingLawsT,
   Settings as SettingsT,
 } from "../api";
 import { tildePath } from "../format";
@@ -56,6 +57,7 @@ import {
   useOrganize,
 } from "./Workspaces";
 import { FindDuplicates } from "./Duplicates";
+import RecordingLaws, { lawChanged, regionName } from "./RecordingLaws";
 import {
   Collapse,
   ControlRow,
@@ -942,12 +944,35 @@ const LOCKDOWN_COSTS = [
   "Problem reports can be copied, but not posted from Trailmix.",
 ];
 
-function PrivacySection({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT>) => Promise<void> }) {
+const RETENTION = [
+  { value: "30", label: "30 days" },
+  { value: "7", label: "7 days" },
+  { value: "0", label: "Until it's transcribed" },
+  { value: "-1", label: "Forever" },
+];
+
+function PrivacySection({
+  s,
+  save,
+  onChanged,
+}: {
+  s: SettingsT;
+  save: (c: Partial<SettingsT>) => Promise<void>;
+  onChanged: () => void;
+}) {
   const [confirm, confirmDialog] = useConfirm();
   const [info, setInfo] = useState<StatsInfo | null>(null);
   const [show, setShow] = useState(false);
+  const [laws, setLaws] = useState<RecordingLawsT | null>(null);
+  const [showLaws, setShowLaws] = useState(false);
   const load = () => api.stats().then(setInfo).catch(() => setInfo(null));
   useEffect(() => void load(), [s.share_stats]);
+  useEffect(() => void api.recordingLaws().then(setLaws).catch(() => undefined), []);
+  const days = String(s.audio_retention_days);
+  const retention = RETENTION.some((o) => o.value === days)
+    ? RETENTION
+    : [...RETENTION, { value: days, label: `${days} days` }];
+  const changed = lawChanged(laws, s.legal_region, s.legal_seen);
   return (
     <Section
       id="privacy"
@@ -956,6 +981,51 @@ function PrivacySection({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT
       blurb="Your meetings, notes and recordings stay on this Mac unless you send them somewhere yourself (a cloud AI you add, an export, a problem report)."
       delay={280}
     >
+      <Row
+        label="Keep recordings"
+        hint={
+          s.audio_retention_days === 0
+            ? "Each recording is deleted once it's transcribed; the transcript and notes stay."
+            : s.audio_retention_days < 0
+              ? "Recordings are kept until you delete them."
+              : `Recordings are deleted ${s.audio_retention_days} days after the meeting, unless you keep one. The transcript and notes stay.`
+        }
+      >
+        <Select
+          label="Keep recordings"
+          size="sm"
+          className="w-48"
+          value={days}
+          options={retention}
+          onChange={(v) => void save({ audio_retention_days: Number(v) })}
+        />
+      </Row>
+      <ControlRow
+        label={
+          <span className="flex items-center gap-2">
+            Recording laws
+            {changed && <span className="chip bg-sun-soft text-sun-deep">Updated</span>}
+          </span>
+        }
+        hint={
+          s.legal_region
+            ? `What the law says about recording calls in ${regionName(laws, s.legal_region)}. General information, not legal advice.`
+            : "What the law says about recording calls where you are. General information, not legal advice."
+        }
+        wrap
+      >
+        <button className="btn btn-sm btn-ghost" onClick={() => setShowLaws(!showLaws)} aria-expanded={showLaws}>
+          <ChevronDownIcon size={16} className={`transition-transform ${showLaws ? "rotate-180" : ""}`} />
+          {s.legal_region ? "Read or change" : "Pick where you are"}
+        </button>
+      </ControlRow>
+      <Collapse open={showLaws}>
+        <div className="pb-4">
+          {showLaws && (
+            <RecordingLaws region={s.legal_region} retention={s.audio_retention_days} onSaved={onChanged} />
+          )}
+        </div>
+      </Collapse>
       <SwitchRow
         icon={<ShieldIcon size={16} />}
         label="Lockdown mode"
@@ -2286,7 +2356,14 @@ export default function Settings({
       </Section>
 
       <UpdatesSection native={native} />
-      <PrivacySection s={s} save={save} />
+      <PrivacySection
+        s={s}
+        save={save}
+        onChanged={() => {
+          void api.getSettings().then(setS);
+          onChanged();
+        }}
+      />
 
       <Section
         icon={<PowerIcon size={16} />}

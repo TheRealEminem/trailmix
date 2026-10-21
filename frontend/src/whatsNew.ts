@@ -9,6 +9,21 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.16.0",
+    items: [
+      {
+        title: "Recording laws where you are",
+        body: "Some places require everyone on a call to agree before it's recorded or transcribed. Pick your country or US state for a short summary of the rules there, with its sources. It's general information, and nothing changes unless you choose to apply a suggestion.",
+        where: "Settings → Privacy → Recording laws",
+      },
+      {
+        title: "Choose how long recordings are kept",
+        body: "Keep each recording for 30 days (as before), 7 days, until it's transcribed, or forever. The transcript and notes always stay.",
+        where: "Settings → Privacy → Keep recordings",
+      },
+    ],
+  },
+  {
     version: "0.15.1",
     items: [
       {

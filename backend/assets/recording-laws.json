@@ -1,0 +1,970 @@
+{
+ "version": 1,
+ "updated": "2026-10-20",
+ "disclaimer": "General information, not legal advice. Laws change and depend on where everyone on the call is. Following them is up to you.",
+ "regions": [
+  {
+   "id": "US-AL",
+   "country": "US",
+   "name": "Alabama",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Ala. Code § 13A-11-30",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-AK",
+   "country": "US",
+   "name": "Alaska",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Alaska Stat. § 42.20.310",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-AZ",
+   "country": "US",
+   "name": "Arizona",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Ariz. Rev. Stat. § 13-3005",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-AR",
+   "country": "US",
+   "name": "Arkansas",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Ark. Code § 5-60-120",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-CA",
+   "country": "US",
+   "name": "California",
+   "consent": "all",
+   "summary": "Everyone on the call must agree before you record it. Live transcription counts too: it captures the conversation the same way.",
+   "notes": "Applies to confidential conversations, which includes most calls and video meetings. Saying \"this call is recorded\" at the start, with people staying on, is commonly treated as consent.",
+   "retention": null,
+   "sources": [
+    "Cal. Penal Code §§ 632, 632.7",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-CO",
+   "country": "US",
+   "name": "Colorado",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Colo. Rev. Stat. § 18-9-303",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-CT",
+   "country": "US",
+   "name": "Connecticut",
+   "consent": "mixed",
+   "summary": "It depends on the kind of conversation; see below. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "Phone calls need everyone's consent (or a verbal notice at the start, or a beep); other conversations need one person's.",
+   "retention": null,
+   "sources": [
+    "Conn. Gen. Stat. §§ 53a-187, 52-570d",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-DE",
+   "country": "US",
+   "name": "Delaware",
+   "consent": "mixed",
+   "summary": "It depends on the kind of conversation; see below. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "Two Delaware laws conflict: the wiretap law allows one-person consent, while the privacy law has been read to need everyone's. Treat it as everyone.",
+   "retention": null,
+   "sources": [
+    "Del. Code tit. 11, §§ 1335, 2402",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-DC",
+   "country": "US",
+   "name": "District of Columbia",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "D.C. Code § 23-542",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-FL",
+   "country": "US",
+   "name": "Florida",
+   "consent": "all",
+   "summary": "Everyone on the call must agree before you record it. Live transcription counts too: it captures the conversation the same way.",
+   "notes": "Applies where people reasonably expect the conversation to be private.",
+   "retention": null,
+   "sources": [
+    "Fla. Stat. § 934.03",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-GA",
+   "country": "US",
+   "name": "Georgia",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Ga. Code § 16-11-66",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-HI",
+   "country": "US",
+   "name": "Hawaii",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "Recording inside a private place (like someone's home) has stricter rules.",
+   "retention": null,
+   "sources": [
+    "Haw. Rev. Stat. § 803-42",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-ID",
+   "country": "US",
+   "name": "Idaho",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Idaho Code § 18-6702",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-IL",
+   "country": "US",
+   "name": "Illinois",
+   "consent": "all",
+   "summary": "Everyone on the call must agree before you record it. Live transcription counts too: it captures the conversation the same way.",
+   "notes": "Applies to private conversations: ones where people reasonably expect not to be recorded.",
+   "retention": null,
+   "sources": [
+    "720 ILCS 5/14-2",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-IN",
+   "country": "US",
+   "name": "Indiana",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Ind. Code § 35-31.5-2-176",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-IA",
+   "country": "US",
+   "name": "Iowa",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Iowa Code § 727.8",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-KS",
+   "country": "US",
+   "name": "Kansas",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Kan. Stat. § 21-6101",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-KY",
+   "country": "US",
+   "name": "Kentucky",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Ky. Rev. Stat. § 526.010",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-LA",
+   "country": "US",
+   "name": "Louisiana",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "La. Rev. Stat. § 15:1303",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-ME",
+   "country": "US",
+   "name": "Maine",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Me. Rev. Stat. tit. 15, § 709",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-MD",
+   "country": "US",
+   "name": "Maryland",
+   "consent": "all",
+   "summary": "Everyone on the call must agree before you record it. Live transcription counts too: it captures the conversation the same way.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Md. Code, Cts. & Jud. Proc. § 10-402",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-MA",
+   "country": "US",
+   "name": "Massachusetts",
+   "consent": "all",
+   "summary": "Everyone on the call must agree before you record it. Live transcription counts too: it captures the conversation the same way.",
+   "notes": "Recording secretly is the offence: an open recording that everyone knows about is generally allowed.",
+   "retention": null,
+   "sources": [
+    "Mass. Gen. Laws ch. 272, § 99",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-MI",
+   "country": "US",
+   "name": "Michigan",
+   "consent": "mixed",
+   "summary": "It depends on the kind of conversation; see below. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "The law reads as everyone must agree, but courts have allowed a participant to record their own conversation. Telling everyone is the safe choice.",
+   "retention": null,
+   "sources": [
+    "Mich. Comp. Laws § 750.539c",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-MN",
+   "country": "US",
+   "name": "Minnesota",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Minn. Stat. § 626A.02",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-MS",
+   "country": "US",
+   "name": "Mississippi",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Miss. Code § 41-29-531",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-MO",
+   "country": "US",
+   "name": "Missouri",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Mo. Rev. Stat. § 542.402",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-MT",
+   "country": "US",
+   "name": "Montana",
+   "consent": "all",
+   "summary": "Everyone on the call must agree before you record it. Live transcription counts too: it captures the conversation the same way.",
+   "notes": "Exceptions include public officials doing their jobs and recordings with a warning that the conversation is recorded.",
+   "retention": null,
+   "sources": [
+    "Mont. Code § 45-8-213",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-NE",
+   "country": "US",
+   "name": "Nebraska",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Neb. Rev. Stat. § 86-290",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-NV",
+   "country": "US",
+   "name": "Nevada",
+   "consent": "mixed",
+   "summary": "It depends on the kind of conversation; see below. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "Phone and internet calls need everyone's consent (the Nevada Supreme Court said so); in-person conversations need one person's.",
+   "retention": null,
+   "sources": [
+    "Nev. Rev. Stat. §§ 200.620, 200.650",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-NH",
+   "country": "US",
+   "name": "New Hampshire",
+   "consent": "all",
+   "summary": "Everyone on the call must agree before you record it. Live transcription counts too: it captures the conversation the same way.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "N.H. Rev. Stat. § 570-A:2",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-NJ",
+   "country": "US",
+   "name": "New Jersey",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "N.J. Stat. § 2A:156A-4",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-NM",
+   "country": "US",
+   "name": "New Mexico",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "N.M. Stat. § 30-12-1",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-NY",
+   "country": "US",
+   "name": "New York",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "N.Y. Penal Law §§ 250.00, 250.05",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-NC",
+   "country": "US",
+   "name": "North Carolina",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "N.C. Gen. Stat. § 15A-287",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-ND",
+   "country": "US",
+   "name": "North Dakota",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "N.D. Cent. Code § 12.1-15-02",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-OH",
+   "country": "US",
+   "name": "Ohio",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Ohio Rev. Code § 2933.52",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-OK",
+   "country": "US",
+   "name": "Oklahoma",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Okla. Stat. tit. 13, § 176.4",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-OR",
+   "country": "US",
+   "name": "Oregon",
+   "consent": "mixed",
+   "summary": "It depends on the kind of conversation; see below. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "Phone and video calls need one person's consent; in-person conversations need everyone to be told they're being recorded.",
+   "retention": null,
+   "sources": [
+    "Or. Rev. Stat. § 165.540",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-PA",
+   "country": "US",
+   "name": "Pennsylvania",
+   "consent": "all",
+   "summary": "Everyone on the call must agree before you record it. Live transcription counts too: it captures the conversation the same way.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "18 Pa. Cons. Stat. § 5704",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-RI",
+   "country": "US",
+   "name": "Rhode Island",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "R.I. Gen. Laws § 11-35-21",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-SC",
+   "country": "US",
+   "name": "South Carolina",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "S.C. Code § 17-30-30",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-SD",
+   "country": "US",
+   "name": "South Dakota",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "S.D. Codified Laws § 23A-35A-20",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-TN",
+   "country": "US",
+   "name": "Tennessee",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Tenn. Code § 39-13-601",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-TX",
+   "country": "US",
+   "name": "Texas",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Tex. Penal Code § 16.02",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-UT",
+   "country": "US",
+   "name": "Utah",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Utah Code § 77-23a-4",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-VT",
+   "country": "US",
+   "name": "Vermont",
+   "consent": "unknown",
+   "summary": "There's no clear rule. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "Vermont has no law on recording conversations; courts have treated one-person consent as enough. Telling everyone is the safe choice.",
+   "retention": null,
+   "sources": [
+    "No recording statute",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-VA",
+   "country": "US",
+   "name": "Virginia",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Va. Code § 19.2-62",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-WA",
+   "country": "US",
+   "name": "Washington",
+   "consent": "all",
+   "summary": "Everyone on the call must agree before you record it. Live transcription counts too: it captures the conversation the same way.",
+   "notes": "Announcing the recording at the start, so that it's itself recorded, counts as consent.",
+   "retention": null,
+   "sources": [
+    "Rev. Code Wash. § 9.73.030",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-WV",
+   "country": "US",
+   "name": "West Virginia",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "W. Va. Code § 62-1D-3",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-WI",
+   "country": "US",
+   "name": "Wisconsin",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Wis. Stat. § 968.31",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "US-WY",
+   "country": "US",
+   "name": "Wyoming",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice. On a call with someone in a state where everyone must agree, follow that stricter rule.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Wyo. Stat. § 7-3-702",
+    "https://www.rcfp.org/reporters-recording-guide/"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "CA",
+   "country": "CA",
+   "name": "Canada",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice.",
+   "notes": "Businesses must also follow privacy law (PIPEDA, or the provincial law in Quebec, Alberta and BC): tell people why you're recording and keep it only as long as needed.",
+   "retention": null,
+   "sources": [
+    "Criminal Code, R.S.C. 1985, c. C-46, s. 184",
+    "PIPEDA"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "GB",
+   "country": "GB",
+   "name": "United Kingdom",
+   "consent": "one",
+   "summary": "You can record a call you're in for your own use without telling the others. Sharing it, or recording for work, brings in data-protection law.",
+   "notes": "For work, UK GDPR applies: tell people you're recording, have a lawful reason, and keep the recording only as long as you need it.",
+   "retention": {
+    "suggest": 0,
+    "why": "Keeping only the transcript and notes, not the audio, keeps less personal data, which UK GDPR asks for."
+   },
+   "sources": [
+    "Investigatory Powers Act 2016",
+    "UK GDPR / Data Protection Act 2018"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "EU",
+   "country": "EU",
+   "name": "European Union (other countries)",
+   "consent": "mixed",
+   "summary": "Rules on recording a call you're in differ by country; the GDPR applies on top whenever recordings are used for work.",
+   "notes": "Using recordings for work counts as processing personal data under the GDPR: you need a lawful reason, must tell people, and should keep recordings no longer than you need them. Recording purely for yourself (household use) is outside the GDPR. Italy, Spain, the Netherlands and Ireland generally let a participant record; Belgium, Portugal, Greece and Austria are stricter. Germany and France have their own entries.",
+   "retention": {
+    "suggest": 0,
+    "why": "Keeping only the transcript and notes, not the audio, keeps less personal data, which the GDPR asks for."
+   },
+   "sources": [
+    "GDPR (Regulation (EU) 2016/679), Art. 5, 6, 13"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "DE",
+   "country": "DE",
+   "name": "Germany",
+   "consent": "all",
+   "summary": "Everyone on the call must agree before you record it. Live transcription counts too: it captures the conversation the same way.",
+   "notes": "Recording the private spoken word without consent is a crime in Germany, even for a participant. Using recordings for work counts as processing personal data under the GDPR: you need a lawful reason, must tell people, and should keep recordings no longer than you need them. Recording purely for yourself (household use) is outside the GDPR.",
+   "retention": {
+    "suggest": 0,
+    "why": "Keeping only the transcript and notes, not the audio, keeps less personal data, which the GDPR asks for."
+   },
+   "sources": [
+    "StGB § 201 (Verletzung der Vertraulichkeit des Wortes)",
+    "GDPR"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "FR",
+   "country": "FR",
+   "name": "France",
+   "consent": "all",
+   "summary": "Everyone on the call must agree before you record it. Live transcription counts too: it captures the conversation the same way.",
+   "notes": "Recording private words without the speaker's consent is a crime. Employers must also tell staff and the works council before recording calls. Using recordings for work counts as processing personal data under the GDPR: you need a lawful reason, must tell people, and should keep recordings no longer than you need them. Recording purely for yourself (household use) is outside the GDPR.",
+   "retention": {
+    "suggest": 0,
+    "why": "Keeping only the transcript and notes, not the audio, keeps less personal data, which the GDPR asks for."
+   },
+   "sources": [
+    "Code pénal art. 226-1",
+    "GDPR"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "CH",
+   "country": "CH",
+   "name": "Switzerland",
+   "consent": "all",
+   "summary": "Everyone on the call must agree before you record it. Live transcription counts too: it captures the conversation the same way.",
+   "notes": "Recording a non-public conversation you're in without the others' consent is a crime.",
+   "retention": {
+    "suggest": 0,
+    "why": "Swiss data-protection law asks you to keep personal data no longer than needed."
+   },
+   "sources": [
+    "Swiss Criminal Code art. 179ter",
+    "Federal Act on Data Protection (FADP)"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "AU",
+   "country": "AU",
+   "name": "Australia",
+   "consent": "mixed",
+   "summary": "It depends on the state. In New South Wales, South Australia, Western Australia and Tasmania everyone generally needs to agree; Victoria, Queensland and the Northern Territory let a participant record.",
+   "notes": "The federal law on intercepting calls can also apply to phone calls. When people are in different states, follow the stricter rule.",
+   "retention": null,
+   "sources": [
+    "Telecommunications (Interception and Access) Act 1979 (Cth)",
+    "Surveillance Devices Act 2007 (NSW)",
+    "Surveillance Devices Act 1999 (Vic)"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "NZ",
+   "country": "NZ",
+   "name": "New Zealand",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice.",
+   "notes": "Businesses must also follow the Privacy Act: tell people why you're recording and keep it only as long as needed.",
+   "retention": null,
+   "sources": [
+    "Crimes Act 1961, s. 216B",
+    "Privacy Act 2020"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "IE",
+   "country": "IE",
+   "name": "Ireland",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice.",
+   "notes": "Using recordings for work counts as processing personal data under the GDPR: you need a lawful reason, must tell people, and should keep recordings no longer than you need them. Recording purely for yourself (household use) is outside the GDPR.",
+   "retention": {
+    "suggest": 0,
+    "why": "Keeping only the transcript and notes, not the audio, keeps less personal data, which the GDPR asks for."
+   },
+   "sources": [
+    "Interception of Postal Packets and Telecommunications Messages (Regulation) Act 1993",
+    "GDPR"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "IN",
+   "country": "IN",
+   "name": "India",
+   "consent": "unknown",
+   "summary": "There's no law that clearly allows or forbids a participant recording a call. Courts have sometimes refused secret recordings as evidence on privacy grounds.",
+   "notes": "For work, the Digital Personal Data Protection Act requires notice and consent for collecting personal data.",
+   "retention": null,
+   "sources": [
+    "Constitution of India, Art. 21 (K.S. Puttaswamy v. Union of India, 2017)",
+    "Digital Personal Data Protection Act 2023"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "JP",
+   "country": "JP",
+   "name": "Japan",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice.",
+   "notes": "Businesses must state why they collect personal information, including recordings.",
+   "retention": null,
+   "sources": [
+    "Act on the Protection of Personal Information (APPI)"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "SG",
+   "country": "SG",
+   "name": "Singapore",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice.",
+   "notes": "Organisations must tell people and get consent before recording them under the PDPA.",
+   "retention": null,
+   "sources": [
+    "Personal Data Protection Act 2012"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "BR",
+   "country": "BR",
+   "name": "Brazil",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice.",
+   "notes": "Courts accept a participant's recording. For work, the LGPD requires a lawful reason and notice.",
+   "retention": null,
+   "sources": [
+    "Lei 9.296/1996",
+    "LGPD (Lei 13.709/2018)"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "ZA",
+   "country": "ZA",
+   "name": "South Africa",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice.",
+   "notes": "For work, POPIA requires telling people and keeping recordings only as long as needed.",
+   "retention": null,
+   "sources": [
+    "RICA (Act 70 of 2002), s. 4",
+    "POPIA (Act 4 of 2013)"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "IL",
+   "country": "IL",
+   "name": "Israel",
+   "consent": "one",
+   "summary": "One person on the call (you) can agree to recording it. You don't need the others' permission, though telling them is good practice.",
+   "notes": "",
+   "retention": null,
+   "sources": [
+    "Wiretap Law 5739-1979"
+   ],
+   "reviewed": "2026-10"
+  },
+  {
+   "id": "AE",
+   "country": "AE",
+   "name": "United Arab Emirates",
+   "consent": "all",
+   "summary": "Everyone on the call must agree before you record it. Live transcription counts too: it captures the conversation the same way.",
+   "notes": "Recording or sharing someone's conversation without consent can be a crime, with heavy penalties.",
+   "retention": null,
+   "sources": [
+    "Federal Decree-Law No. 34 of 2021, art. 44",
+    "Federal Decree-Law No. 31 of 2021 (Penal Code)"
+   ],
+   "reviewed": "2026-10"
+  }
+ ],
+ "fallback": {
+  "id": "OTHER",
+  "name": "Somewhere else",
+  "consent": "unknown",
+  "summary": "We don't have an entry for where you are yet. Check the law where you and the people you record are; asking everyone first is always the safe choice.",
+  "notes": "",
+  "retention": null,
+  "sources": [],
+  "reviewed": "2026-10"
+ }
+}
