@@ -2,7 +2,7 @@
 
 While recording:  data/audio/<id>/mic.pcm and system.pcm  (raw 16 kHz mono int16, append-only)
 After stopping:   each track is compressed to Opus (mic.ogg / system.ogg) and the .pcm deleted
-After retention:  the whole folder is deleted (TRAILMIX_AUDIO_RETENTION_DAYS; -1 = keep forever)
+After retention:  the whole folder is deleted (the audio_retention_days setting; 0 = once transcribed, -1 = never)
 """
 import os
 import shutil
@@ -16,10 +16,16 @@ import database as db
 
 SAMPLE_RATE = 16000
 BYTES_PER_SEC = SAMPLE_RATE * 2
-RETENTION_DAYS = int(os.getenv("TRAILMIX_AUDIO_RETENTION_DAYS", "30"))
 OPUS_BITRATE = os.getenv("TRAILMIX_OPUS_BITRATE", "48k")
 
 TRACKS = {0: "mic", 1: "system"}  # channel id used on the wire -> track name
+
+
+def retention_days() -> int:
+    """Days a meeting's audio is kept: 0 = deleted once it's transcribed, -1 = kept forever."""
+    import settings
+
+    return settings.get_all()["audio_retention_days"]
 
 
 def track_dir(meeting: dict) -> Path | None:
@@ -94,19 +100,21 @@ def delete_audio(meeting: dict) -> None:
 
 
 def expires_at(meeting: dict) -> str | None:
-    if RETENTION_DAYS <= 0 or meeting.get("audio_deleted") or meeting.get("keep_audio"):
+    days = retention_days()
+    if days < 0 or meeting.get("audio_deleted") or meeting.get("keep_audio"):
         return None
     # An imported recording's 30 days start when it was imported, not when it was recorded.
     since = meeting.get("imported_at") or meeting["created_at"]
     created = datetime.fromisoformat(since.replace("Z", "+00:00"))
-    return (created + timedelta(days=RETENTION_DAYS)).isoformat()
+    return (created + timedelta(days=days)).isoformat()
 
 
 def sweep_expired() -> int:
     """Deletes audio older than the retention window. Returns how many meetings were cleaned."""
-    if RETENTION_DAYS < 0:
+    days = retention_days()
+    if days < 0:
         return 0
-    cutoff = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     cleaned = 0
     for m in db.meetings_with_audio():
         if m["status"] not in ("done", "error"):

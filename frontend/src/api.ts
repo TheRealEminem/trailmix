@@ -265,6 +265,29 @@ export interface QA {
   at: string;
 }
 
+/** What the law says about recording calls in one place (backend/recording_laws.py). Information only. */
+export interface RecordingLaw {
+  id: string;
+  country?: string;
+  name: string;
+  /** Who must agree: everyone | one person | it depends | no clear rule */
+  consent: "all" | "one" | "mixed" | "unknown";
+  summary: string;
+  notes: string;
+  /** Keeping audio for less time that the entry suggests (days, as audio_retention_days), and why */
+  retention: { suggest: number; why: string } | null;
+  sources: string[];
+  reviewed: string;
+}
+
+export interface RecordingLaws {
+  version: number;
+  updated: string;
+  disclaimer: string;
+  regions: RecordingLaw[];
+  fallback: RecordingLaw;
+}
+
 export type ProviderId = "ollama" | "anthropic" | "openai" | "gemini" | "deepseek" | "custom";
 
 export interface Settings {
@@ -316,6 +339,11 @@ export interface Settings {
   lockdown: boolean;
   /** the version whose "What's new" was last closed ("" = never) */
   whats_new_seen: string;
+  /** Days a meeting's audio is kept: 0 = deleted once transcribed, -1 = forever */
+  audio_retention_days: number;
+  /** The recording-laws region you read ("" = not yet), and the table's date when you read it */
+  legal_region: string;
+  legal_seen: string;
   auto_export: boolean;
   export_dir: string;
   export_formats: ExportFormat[];
@@ -763,6 +791,7 @@ export const api = {
   downloadSpeechModels: () => request<SpeechModels>("/models/download", json("POST")),
   getSettings: () => request<Settings>("/settings"),
   putSettings: (changes: Partial<Settings>) => request<Settings>("/settings", json("PUT", changes)),
+  recordingLaws: () => request<RecordingLaws>("/recording-laws"),
   providerModels: (id: ProviderId) => request<{ models: string[] }>(`/providers/${id}/models`),
   providerTest: (id: ProviderId) => request<{ message: string }>(`/providers/${id}/test`, json("POST")),
   transcriptionTest: () => request<{ message: string }>("/transcription/test", json("POST")),
