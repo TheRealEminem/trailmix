@@ -65,6 +65,13 @@ DEFAULTS = {
     "live_final": _ROOMY,               # transcribe with the accurate model while recording (see live.py)
     "live_notes": "auto",               # notes written during the meeting: auto | on | off (live_notes.py)
     "whats_new_seen": "",               # the version whose "What's new" you last closed
+    # Recordings: days to keep the audio after a meeting (0: delete once it's transcribed; -1: keep forever).
+    # "Keep forever" on a meeting overrides it. (audio_store.py)
+    "audio_retention_days": 30,
+    # Recording laws (recording_laws.py): the region whose entry you read, and the table's date when you read it,
+    # so a later change to that entry can be pointed out. Information only; nothing is changed unless you apply it.
+    "legal_region": "",
+    "legal_seen": "",
     # Lockdown mode: nothing leaves this computer (see locked() and the places that check it)
     "lockdown": False,
     # Anonymous usage stats (telemetry.py): on by default, sent only once you've seen the choice
@@ -111,6 +118,11 @@ def _env_default(key: str, default):
         return default
     if isinstance(default, bool):
         return raw.lower() in ("1", "true", "yes", "on")
+    if isinstance(default, int):
+        try:
+            return int(raw)
+        except ValueError:
+            return default
     return raw
 
 
@@ -146,6 +158,10 @@ def update(changes: dict) -> dict:
             raise ValueError(f"Unknown setting: {key}")
         if not isinstance(value, type(DEFAULTS[key])):
             raise ValueError(f"Setting {key} must be a {type(DEFAULTS[key]).__name__}")
+        if isinstance(value, bool) and not isinstance(DEFAULTS[key], bool):
+            raise ValueError(f"Setting {key} must be a {type(DEFAULTS[key]).__name__}")
+        if key == "audio_retention_days" and value < -1:
+            raise ValueError("audio_retention_days must be -1 (forever), 0 (after transcription) or a number of days")
         if key == "gemini_transcribe_model" and not value.strip():
             raise ValueError("gemini_transcribe_model can't be empty")
         if key in CHOICES and value not in CHOICES[key]:

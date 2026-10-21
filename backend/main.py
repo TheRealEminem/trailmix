@@ -50,6 +50,7 @@ import settings
 import telemetry
 import templates
 import model_ranks
+import recording_laws
 import pricing
 import workspaces
 import file_import
@@ -70,6 +71,7 @@ async def _sweep_loop():
     while True:
         await run_in_threadpool(store.sweep_expired)
         await run_in_threadpool(model_ranks.refresh)  # newer model rankings from the Trailmix site, once a day
+        await run_in_threadpool(recording_laws.refresh)  # and corrections to the recording-laws table
         await asyncio.sleep(SWEEP_INTERVAL_S)
 
 
@@ -840,7 +842,7 @@ def health():
         "templates": templates.listing(),
         "providers": [{**provider_info(p), "kind": v["kind"]} for p, v in llm_engine.PROVIDERS.items()],
         "ask_before_ai": cfg["ask_before_ai"],
-        "audio_retention_days": store.RETENTION_DAYS,
+        "audio_retention_days": store.retention_days(),
         "auth": auth.required(),
         "recording": live.active_count() > 0,
     }
@@ -864,6 +866,11 @@ def put_settings(body: SettingsPatch):
         return settings.update(body.model_dump())
     except ValueError as e:
         raise HTTPException(422, str(e))
+
+
+@app.get("/api/recording-laws")
+def recording_laws_table():
+    return recording_laws.table()
 
 
 @app.get("/api/providers/{pid}/models")

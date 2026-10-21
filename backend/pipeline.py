@@ -223,7 +223,7 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
         stats.update(transcribed="after the meeting", transcribe_seconds=round(time.monotonic() - began))
         m = db.get_meeting(meeting_id)
         fresh = True
-        if store.RETENTION_DAYS == 0:
+        if store.retention_days() == 0 and not m.get("keep_audio"):
             store.delete_audio(m)
 
     # Granola (or a pasted transcript) may have this meeting too: merged now, its notes save writing them here.

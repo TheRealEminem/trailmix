@@ -9,6 +9,7 @@ import type {
   Workspace,
 } from "../api";
 import { CheckIcon, CloseIcon } from "./icons";
+import RecordingLaws from "./RecordingLaws";
 import SoundCheck, { soundCheckPassed } from "./SoundCheck";
 import { OrganizeProgress, WorkspaceSuggestions, useOrganize } from "./Workspaces";
 
@@ -114,6 +115,7 @@ export default function SetupCard({
   const [engine, setEngine] = useState<"local" | "remote" | "gemini">("local");
   const [googleKeySaved, setGoogleKeySaved] = useState(false);
   const [locked, setLocked] = useState(false);
+  const [legal, setLegal] = useState({ region: "", retention: 30 });
   const [engineChosen, setEngineChosen] = useState(() => remembered(TRANSCRIPTION_CHOSEN_KEY));
   const [pickingGoogle, setPickingGoogle] = useState(false);
   const [googleKey, setGoogleKey] = useState("");
@@ -153,6 +155,7 @@ export default function SetupCard({
           setEngine(s.transcribe_engine);
           setGoogleKeySaved(!!s.secret_hints?.gemini_api_key);
           setLocked(!!s.lockdown);
+          setLegal({ region: s.legal_region, retention: s.audio_retention_days });
         })
         .catch(() => undefined);
       api
@@ -180,6 +183,7 @@ export default function SetupCard({
   if (dismissed || name === null || !health) return null;
 
   const nameDone = name.trim() !== "";
+  const legalDone = legal.region !== "";
   const micDone = !native || soundCheckPassed(native);
   const speechDone =
     !speech || !speech.local || speech.models.every((m) => m.installed);
@@ -197,7 +201,7 @@ export default function SetupCard({
     (idea) => !workspaces.some((w) => w.name.toLowerCase() === idea.name.toLowerCase()),
   ).length;
   const spacesDone = skippedSpaces || (workspaces.length > 0 && !ideasLeft && !organize.job?.active);
-  if (nameDone && micDone && speechDone && summaryDone && hasMeetings && deviceDone && spacesDone && engineDone)
+  if (nameDone && legalDone && micDone && speechDone && summaryDone && hasMeetings && deviceDone && spacesDone && engineDone)
     return null;
 
   const dismiss = () => {
@@ -342,6 +346,23 @@ export default function SetupCard({
             >
               Save
             </button>
+          </div>
+        </Step>
+        <Step
+          done={legalDone}
+          title={legalDone ? "Recording laws where you are: read" : "Recording laws where you are"}
+        >
+          Some places require everyone on a call to agree before it's recorded or transcribed. Here's a short
+          summary for where you are. Following it is up to you.
+          <div className="mt-2">
+            <RecordingLaws
+              region={legal.region}
+              retention={legal.retention}
+              onSaved={() => {
+                api.getSettings().then((s) => setLegal({ region: s.legal_region, retention: s.audio_retention_days }));
+                onChanged();
+              }}
+            />
           </div>
         </Step>
         {native && (
