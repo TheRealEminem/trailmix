@@ -108,19 +108,24 @@ def model_for(pid: str, cfg: dict) -> str:
 _PREFERRED_FAMILIES = ("qwen3", "qwen2.5", "gemma3", "llama3.1", "llama3.2", "mistral", "phi4", "llama3")
 
 
+def ollama_params(m: dict) -> float:
+    """An installed Ollama model's size in billions of parameters, from its tag details (0 if not given)."""
+    text = (m.get("details") or {}).get("parameter_size", "")
+    found = re.match(r"([\d.]+)\s*([BM])", text, re.I)
+    return float(found.group(1)) / (1000 if found.group(2).upper() == "M" else 1) if found else 0.0
+
+
+def _family_rank(name: str) -> int:
+    name = name.lower()
+    return next((i for i, f in enumerate(_PREFERRED_FAMILIES) if name.startswith(f)), len(_PREFERRED_FAMILIES))
+
+
 def preferred_ollama_model(tags: list[dict]) -> str:
     """The installed model most likely to write good notes: a known instruction-following family, and within
     it the biggest size up to ~14B (bigger rarely fits next to everything else in RAM)."""
-    def params(m: dict) -> float:
-        text = (m.get("details") or {}).get("parameter_size", "")
-        found = re.match(r"([\d.]+)\s*([BM])", text, re.I)
-        return float(found.group(1)) / (1000 if found.group(2).upper() == "M" else 1) if found else 0.0
-
     def rank(m: dict) -> tuple:
-        name = m["name"].lower()
-        family = next((i for i, f in enumerate(_PREFERRED_FAMILIES) if name.startswith(f)), len(_PREFERRED_FAMILIES))
-        size = params(m)
-        return (family, size > 15, -size)
+        size = ollama_params(m)
+        return (_family_rank(m["name"]), size > 15, -size)
 
     usable = [m for m in tags if "embed" not in m["name"].lower()]
     return min(usable, key=rank)["name"] if usable else ""
@@ -163,6 +168,15 @@ def ollama_model_size_gb(cfg: dict) -> float | None:
     name = model_for("ollama", cfg)
     chosen = next((m for m in tags if m["name"] == name), None)
     return chosen["size"] / 1024**3 if chosen else None
+
+
+def small_ollama_model(cfg: dict, most_b: float = 4.5) -> dict | None:
+    """The best installed model of at most `most_b` billion parameters (a known instruction-following family,
+    then the biggest that small), for a quick answer that fits next to everything else; None if there's none."""
+    small = [m for m in _ollama_tags(cfg)
+             if "embed" not in m["name"].lower() and 1 <= ollama_params(m) <= most_b
+             and _family_rank(m["name"]) < len(_PREFERRED_FAMILIES)]
+    return min(small, key=lambda m: (_family_rank(m["name"]), -ollama_params(m))) if small else None
 
 
 def ollama_ram_needed_gb(cfg: dict) -> float:
@@ -317,22 +331,31 @@ def _openai_compatible(base: str, key: str, model: str, prompt: str, system: str
         raise LLMError(f"Unexpected response from {base}") from e
 
 
-def _gemini(cfg: dict, prompt: str, system: str | None, on_text: OnText = None) -> str:
+def _count(usage: dict | None, meta: dict | None) -> None:
+    """Adds the tokens Gemini reports (thinking counts as output, as it's billed) to `usage`: {"in", "out"}."""
+    if usage is not None and meta:
+        usage["in"] = usage.get("in", 0) + meta.get("promptTokenCount", 0)
+        usage["out"] = usage.get("out", 0) + meta.get("candidatesTokenCount", 0) + meta.get("thoughtsTokenCount", 0)
+
+
+def _gemini(cfg: dict, prompt: str, system: str | None, on_text: OnText = None, usage: dict | None = None) -> str:
     body: dict = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
     if system:
         body["systemInstruction"] = {"parts": [{"text": system}]}
     headers = {"x-goog-api-key": cfg["gemini_api_key"]}
     if on_text:
-        text = ""
+        text, meta = "", None
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{cfg['gemini_model']}:streamGenerateContent?alt=sse"
         for event in _sse(url, json=body, headers=headers):
             if event.get("error"):
                 raise LLMError(f"Gemini: {_error_text_of(event)}")
+            meta = event.get("usageMetadata") or meta  # each event carries the totals so far; the last one counts
             for cand in event.get("candidates") or []:
                 for part in (cand.get("content") or {}).get("parts") or []:
                     if part.get("text") and not part.get("thought"):
                         text += part["text"]
                         on_text(text)
+        _count(usage, meta)
         return text
     r = _post(
         f"https://generativelanguage.googleapis.com/v1beta/models/{cfg['gemini_model']}:generateContent",
@@ -340,16 +363,19 @@ def _gemini(cfg: dict, prompt: str, system: str | None, on_text: OnText = None) 
         headers=headers,
     )
     try:
-        parts = r.json()["candidates"][0]["content"]["parts"]
+        reply = r.json()
+        _count(usage, reply.get("usageMetadata"))
+        parts = reply["candidates"][0]["content"]["parts"]
     except (KeyError, IndexError, ValueError) as e:
         raise LLMError("Gemini returned no text (it may have blocked the request)") from e
     return "".join(p.get("text", "") for p in parts)
 
 
 def generate(pid: str, cfg: dict, prompt: str, system: str | None = None, keep_alive: str | None = None,
-             exact: bool = False, on_text: OnText = None) -> str:
+             exact: bool = False, on_text: OnText = None, usage: dict | None = None) -> str:
     """`exact`: the same answer every time (no sampling) where the provider allows it, for picking from a list.
-    `on_text`: stream the reply, calling it with the text so far as it's written."""
+    `on_text`: stream the reply, calling it with the text so far as it's written.
+    `usage`: filled with the tokens the provider reported, {"in", "out"}, where it reports them (Gemini)."""
     ok, why = configured(pid, cfg)
     if not ok:
         raise LLMError(why)
@@ -358,7 +384,7 @@ def generate(pid: str, cfg: dict, prompt: str, system: str | None = None, keep_a
     elif pid == "anthropic":
         text = _anthropic(cfg, prompt, system, on_text)
     elif pid == "gemini":
-        text = _gemini(cfg, prompt, system, on_text)
+        text = _gemini(cfg, prompt, system, on_text, usage)
     elif pid == "custom":
         text = _openai_compatible(cfg["custom_base_url"], cfg["custom_api_key"], cfg["custom_model"], prompt, system, pid,
                                   on_text)
