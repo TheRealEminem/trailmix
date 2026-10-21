@@ -288,6 +288,47 @@ export interface RecordingLaws {
   fallback: RecordingLaw;
 }
 
+/** A question asked while the meeting was still recording (backend/catch_up.py). */
+export interface CatchUpEntry extends QA {
+  /** who answered, e.g. "Google Gemini" */
+  label: string;
+  live: true;
+  kind: CatchUpKind;
+  /** seconds into the recording when it was asked */
+  t: number;
+}
+
+export type CatchUpKind = "missed" | "explain" | "decided" | "question";
+
+/** Who would answer a catch-up question right now, and about what it costs. */
+export interface CatchUpPlan {
+  ready: boolean;
+  /** why it can't be asked (no live transcript, no AI allowed to answer) */
+  reason: string | null;
+  provider: string | null;
+  label: string | null;
+  model: string | null;
+  /** answered on this computer */
+  local: boolean;
+  /** about what one question costs in dollars: 0 on this computer, null where the price isn't known */
+  cost: number | null;
+  /** the same for each quick question, and for one you type */
+  costs: Partial<Record<CatchUpKind, number | null>>;
+  /** the token estimate behind it */
+  tokens: { in: number; out: number } | null;
+  /** the estimate follows the tokens Google counted for earlier answers (else a cautious guess) */
+  measured: boolean;
+  /** e.g. "Answered by qwen2.5:3b, a small model that fits next to your call" */
+  note: string | null;
+  /** a model on this Mac that may slow the call down */
+  warning: string | null;
+  kinds: Record<Exclude<CatchUpKind, "question">, string>;
+  /** quick questions this AI isn't good enough for, with why (a small model on this Mac does the basic ones) */
+  off: Partial<Record<CatchUpKind, string>>;
+  history: CatchUpEntry[];
+  as_of: string;
+}
+
 export type ProviderId = "ollama" | "anthropic" | "openai" | "gemini" | "deepseek" | "custom";
 
 export interface Settings {
@@ -969,6 +1010,9 @@ export const api = {
     request<{ ok: true }>(`/meetings/${id}/summarize`, json("POST", { provider, template })),
   askMeeting: (id: number, question: string) => request<QA>(`/meetings/${id}/ask`, json("POST", { question })),
   clearQuestions: (id: number) => request<void>(`/meetings/${id}/ask`, { method: "DELETE" }),
+  catchUpPlan: (id: number) => request<CatchUpPlan>(`/meetings/${id}/catch-up`),
+  catchUp: (id: number, kind: CatchUpKind, question = "") =>
+    request<CatchUpEntry>(`/meetings/${id}/catch-up`, json("POST", { kind, question })),
   askAll: (question: string, workspace_id: number | null = null) =>
     request<{ answer: string; provider: string; sources: { id: number; title: string; created_at: string }[] }>(
       "/ask",

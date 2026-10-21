@@ -12,6 +12,21 @@ export const RELEASES: Release[] = [
     version: "0.16.0",
     items: [
       {
+        title: "Your meetings come in by themselves",
+        body: "Connect Granola, Fathom or Fireflies once and new meetings arrive with their transcripts, notes and tasks, checked every 15 minutes. A meeting Trailmix recorded too is merged into one.",
+        where: "Import → Connected",
+      },
+      {
+        title: "Watched folders",
+        body: "Point Trailmix at a folder, like where Zoom, Meet or Teams recordings land through Drive or OneDrive, and new recordings and transcripts saved there come in by themselves.",
+        where: "Import → Connected → Connect",
+      },
+      {
+        title: "One Import page",
+        body: "Everything that brings meetings in is in one place: what's connected, as one list, and a single spot for importing files, Trailmix exports and pasted transcripts once.",
+        where: "Import",
+      },
+      {
         title: "Recording laws where you are",
         body: "Some places require everyone on a call to agree before it's recorded or transcribed. Pick your country or US state for a short summary of the rules there, with its sources. It's general information, and nothing changes unless you choose to apply a suggestion.",
         where: "Settings → Privacy → Recording laws",
@@ -20,6 +35,16 @@ export const RELEASES: Release[] = [
         title: "Choose how long recordings are kept",
         body: "Keep each recording for 30 days (as before), 7 days, until it's transcribed, or forever. The transcript and notes always stay.",
         where: "Settings → Privacy → Keep recordings",
+      },
+    ],
+  },
+  {
+    version: "0.15.2",
+    items: [
+      {
+        title: "Catch me up, while the meeting is still going",
+        body: "Zoned out or got pulled away? While you're recording, ask \"What did I miss?\" for the last five minutes, \"Explain that\" for the last thing said in plainer words, \"What's been decided?\", or a question of your own. Answers come from the meeting so far, with times you can click to find that moment in the live transcript. Each one shows about what it costs before you ask. On a small AI on this Mac it stays basic and private.",
+        where: "Home, while recording",
       },
     ],
   },
