@@ -77,7 +77,8 @@ def test_process_uses_the_picked_ai_and_can_remember_it(fresh_db):
     assert (cfg["summary_provider"], cfg["gemini_model"]) == ("gemini", "gemini-3.6-flash")
 
 
-def test_process_refuses_an_ai_that_cant_be_used(fresh_db):
+def test_process_refuses_an_ai_that_cant_be_used(fresh_db, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)  # (a key in the environment counts as one in Settings)
     mid = pasted(5)
     r = TestClient(main.app).post("/api/process", json={"meeting_ids": [mid], "provider": "anthropic"})
     assert r.status_code == 409 and "API key" in r.json()["detail"]
