@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 /// A three-second check that both sides of a call will be recorded: listens to the mic, then plays a short
-/// chime and listens for it through other apps' audio. Run from the setup checklist in the Trailmix window,
+/// chime and listens for it through other apps' audio. Run from setup in the Trailmix window,
 /// so the macOS permission prompts appear at a calm moment rather than at the start of a real meeting.
 enum SoundCheck {
     /// {"mic": ok|quiet|denied|error, "system": ok|silent|error, "detail": text, "at": unix time}

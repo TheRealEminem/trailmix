@@ -16,7 +16,8 @@ unless you send them somewhere. The full specs are under [Features](#features).
    (Terminal alternative: `xattr -dr com.apple.quarantine /Applications/Trailmix.app`.)
 4. Allow **Microphone** when asked, and **System Audio Recording** the first time you record a call.
 
-Trailmix lives in your menu bar and opens its window on launch. Everything it needs is inside the app: its own
+Trailmix lives in your menu bar and opens its window on launch; the first time, a short guided setup asks a few
+questions, one per screen (all skippable, and all in Settings later). Everything it needs is inside the app: its own
 Python, the server, and ffmpeg. On first run it downloads the speech models (about 1.7 GB, once) and shows the
 progress; you can already record meanwhile. For summaries, install [Ollama](https://ollama.com) and pull a
 model, or add an API key (Claude, OpenAI, Gemini, DeepSeek…) in Settings.

@@ -9,6 +9,16 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.16.1",
+    items: [
+      {
+        title: "Setup, one step at a time",
+        body: "The first-run checklist is now a short guided setup, one question per screen: your name, where you are, how recordings become text, who writes your notes, a sound check. Every step can be skipped, and you can go through it again whenever you like.",
+        where: "Settings → App → Run setup again",
+      },
+    ],
+  },
+  {
     version: "0.16.0",
     items: [
       {

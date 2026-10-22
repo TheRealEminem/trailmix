@@ -65,6 +65,7 @@ DEFAULTS = {
     "live_final": _ROOMY,               # transcribe with the accurate model while recording (see live.py)
     "live_notes": "auto",               # notes written during the meeting: auto | on | off (live_notes.py)
     "whats_new_seen": "",               # the version whose "What's new" you last closed
+    "setup_done": False,                # the first-run setup was finished or skipped (Welcome.tsx)
     # Recordings: days to keep the audio after a meeting (0: delete once it's transcribed; -1: keep forever).
     # "Keep forever" on a meeting overrides it. (audio_store.py)
     "audio_retention_days": 30,
