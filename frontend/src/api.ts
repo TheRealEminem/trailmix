@@ -378,6 +378,8 @@ export interface Settings {
   stats_notice_seen: boolean;
   /** Lockdown mode: nothing leaves this computer */
   lockdown: boolean;
+  /** First-run setup was finished or skipped (Welcome.tsx) */
+  setup_done: boolean;
   /** the version whose "What's new" was last closed ("" = never) */
   whats_new_seen: string;
   /** Days a meeting's audio is kept: 0 = deleted once transcribed, -1 = forever */
