@@ -17,7 +17,7 @@ const US_ZONES: Record<string, string> = {
   "America/Nome": "AK",
   "Pacific/Honolulu": "HI",
 };
-const OTHER = "OTHER";
+export const OTHER = "OTHER";
 
 export const CONSENT: Record<RecordingLaw["consent"], { label: string; tone: string }> = {
   all: { label: "Everyone must agree", tone: "bg-sun-soft text-sun-deep" },
@@ -27,7 +27,7 @@ export const CONSENT: Record<RecordingLaw["consent"], { label: string; tone: str
 };
 
 /** The region this computer seems to be in, from its language and time zone: a starting point you confirm. */
-function guess(table: Table): string {
+export function guess(table: Table): string {
   let zone = "";
   let country = "";
   try {
@@ -45,8 +45,29 @@ function guess(table: Table): string {
   return table.regions.some((r) => r.id === country) ? country : "";
 }
 
-function stamp(table: Table) {
+export function stamp(table: Table) {
   return `${table.version}/${table.updated}`;
+}
+
+/** The entry for a region: null until one is picked (or only "United States", which needs a state). */
+export function entryFor(table: Table, region: string): RecordingLaw | null {
+  return region === "US" || !region ? null : (table.regions.find((r) => r.id === region) ?? table.fallback);
+}
+
+/** The country list (the US first, then A to Z, then "somewhere else") and the US states. */
+export function regionOptions(table: Table) {
+  const countries = [
+    { value: "US", label: "United States" },
+    ...table.regions
+      .filter((r) => r.country !== "US")
+      .map((r) => ({ value: r.id, label: r.name }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+    { value: OTHER, label: table.fallback.name },
+  ];
+  const states = table.regions
+    .filter((r) => r.country === "US")
+    .map((r) => ({ value: r.id, label: r.name }));
+  return { countries, states };
 }
 
 /** Has your region's entry changed since you read it? (The table is corrected now and then.) */
@@ -63,7 +84,7 @@ export function regionName(table: Table | null, region: string): string {
   return table.regions.find((r) => r.id === region)?.name ?? region;
 }
 
-function Source({ text }: { text: string }) {
+export function Source({ text }: { text: string }) {
   return text.startsWith("http") ? (
     <a className="text-forest underline decoration-forest/30 underline-offset-2" href={text} target="_blank" rel="noreferrer">
       {new URL(text).hostname.replace(/^www\./, "")}
@@ -105,19 +126,8 @@ export default function RecordingLaws({
   if (!table) return error ? <p className="text-hint text-trail-deep">{error}</p> : null;
 
   const country = region.startsWith("US") ? "US" : region;
-  const entry =
-    region === "US" || !region ? null : (table.regions.find((r) => r.id === region) ?? table.fallback);
-  const countries = [
-    { value: "US", label: "United States" },
-    ...table.regions
-      .filter((r) => r.country !== "US")
-      .map((r) => ({ value: r.id, label: r.name }))
-      .sort((a, b) => a.label.localeCompare(b.label)),
-    { value: OTHER, label: table.fallback.name },
-  ];
-  const states = table.regions
-    .filter((r) => r.country === "US")
-    .map((r) => ({ value: r.id, label: r.name }));
+  const entry = entryFor(table, region);
+  const { countries, states } = regionOptions(table);
   const suggest = entry?.retention;
   const alreadySet = suggest && retention === suggest.suggest;
 
