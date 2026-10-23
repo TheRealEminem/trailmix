@@ -400,8 +400,10 @@ _TRACKED = {
 }
 
 
-def update_meeting(meeting_id: int, why: str | None = None, **fields) -> None:
-    """Changes columns of a meeting. `why` goes in the history ("you renamed it", "transcribed with ...")."""
+def update_meeting(meeting_id: int, why: str | None = None, merge_s: float = 0, **fields) -> None:
+    """Changes columns of a meeting. `why` goes in the history ("you renamed it", "transcribed with ..."). With
+    `merge_s`, a change to a field whose last history entry has the same `why` and is less than that many seconds old
+    updates that entry instead of adding one, so notes saved as you type make one entry per stretch of typing."""
     bad = set(fields) - _UPDATABLE
     if bad:
         raise ValueError(f"Cannot update columns: {bad}")
@@ -419,6 +421,18 @@ def update_meeting(meeting_id: int, why: str | None = None, **fields) -> None:
         for k in tracked:
             before, after = (old[k] if old else None), fields[k]
             if str(before) != str(after) and not (before in (None, "") and after in (None, "")):
+                last = conn.execute(
+                    "SELECT id, old_value FROM history WHERE meeting_id = ? AND field = ? AND why IS ? AND"
+                    " at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?) ORDER BY id DESC LIMIT 1",
+                    (meeting_id, k, why, f"-{merge_s} seconds")).fetchone() if merge_s else None
+                if last and last["id"] == conn.execute("SELECT max(id) FROM history WHERE meeting_id = ? AND field = ?",
+                                                       (meeting_id, k)).fetchone()[0]:
+                    if str(last["old_value"]) == str(after):  # typed back to how it was: no change after all
+                        conn.execute("DELETE FROM history WHERE id = ?", (last["id"],))
+                    else:
+                        conn.execute("UPDATE history SET new_value = ?, at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+                                     " WHERE id = ?", (None if after is None else str(after), last["id"]))
+                    continue
                 conn.execute("INSERT INTO history (meeting_id, field, old_value, new_value, why) VALUES (?, ?, ?, ?, ?)",
                              (meeting_id, k, None if before is None else str(before),
                               None if after is None else str(after), why))

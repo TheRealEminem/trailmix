@@ -929,7 +929,6 @@ export const api = {
   stats: () => request<StatsInfo>("/stats"),
   lockdown: () => request<{ on: boolean }>("/lockdown"),
   vocabulary: () => request<{ learned: string[]; seeded: string[] }>("/vocabulary"),
-  addMyNote: (id: number, text: string) => request<MyNote[]>(`/meetings/${id}/my-notes`, json("POST", { text })),
   setMyNotes: (id: number, notes: MyNote[]) => request<MyNote[]>(`/meetings/${id}/my-notes`, json("PUT", { notes })),
   nativeRecorder: () => request<NativeRecorder>("/recorder"),
   ollama: () => request<OllamaStatus>("/ollama"),

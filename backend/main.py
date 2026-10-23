@@ -1095,10 +1095,11 @@ def add_my_note(meeting_id: int, body: MyNote):
 
 @app.put("/api/meetings/{meeting_id}/my-notes")
 def replace_my_notes(meeting_id: int, body: MyNotes):
-    """Your notes after editing or deleting some. Regenerate rewrites the notes with them."""
+    """Your notes after editing them, saved as you type (one history entry per stretch of typing). Each is a line of
+    markdown; leading spaces nest a list item, so only the end is trimmed. Regenerate rewrites the notes with them."""
     _get_or_404(meeting_id)
-    notes = [{"t": n.t, "text": n.text.strip()[:4000]} for n in body.notes if n.text.strip()]
-    db.update_meeting(meeting_id, why="you edited your notes", my_notes_json=notes or None)
+    notes = [{"t": n.t, "text": n.text.rstrip()[:4000]} for n in body.notes if n.text.strip()]
+    db.update_meeting(meeting_id, why="you edited your notes", merge_s=120, my_notes_json=notes or None)
     return notes
 
 

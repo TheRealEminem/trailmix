@@ -186,7 +186,7 @@ def test_your_own_notes_are_worked_in_and_their_links_kept(monkeypatch):
     assert mine == ["[12:34] Venue deposit is $500, see https://example.com/venue."]
     summary, _, _ = llm_engine.summarize("[00:01] You: Let's book the venue.", cfg, "auto", "general", [],
                                          want_title=False, mine=mine)
-    assert "NOTES TYPED BY THE PERSON WHO RECORDED THE MEETING" in prompts[0] and "[12:34] Venue deposit is $500" in prompts[0]
+    assert "MY NOTES, TYPED BY THE PERSON WHO RECORDED THE MEETING" in prompts[0] and "[12:34] Venue deposit is $500" in prompts[0]
     # the model left the note out, so it's kept word for word (link included)
     assert summary.endswith("## Your Notes\n- Venue deposit is $500, see https://example.com/venue.")
 
@@ -200,6 +200,41 @@ def test_notes_worked_in_are_not_repeated_but_missing_links_are_added():
     notes = "## Discussion\n- Mark wants pilot pricing at $2,000 per month."
     mine = ["[03:10] Pilot pricing: aim for $2,000/month. Deck: https://example.com/pilot-deck"]
     assert llm_engine.keep_mine(notes, mine) == notes + "\n\n## Links\n- https://example.com/pilot-deck"
+
+
+def test_your_headings_become_the_outline_of_the_notes():
+    mine = ["[01:05] # Budget", "[01:10] - ask Sam about the $500 deposit", "  [01:12] - by Friday",
+            "[04:00] ## Venue", "[04:02] 1. **Hall B** [map](https://example.com/map)"]
+    _, prompt = templates.final_prompt("general", "", "[00:01] You: hello", False, [], "About.", 30, mine)
+    material, rules = prompt.split("\n---\n")
+    assert "\n".join(mine) in material  # as typed: markdown, indents and all
+    assert "Use MY NOTES as the outline" in rules and "Keep their headings, in their order" in rules
+    assert "They have no headings" not in rules and "Use these sections" not in rules
+    assert "After their sections" in rules and "## Discussion" in rules  # the template shapes the rest
+    assert "Only use information from\nthe transcript above and MY NOTES" in rules
+    assert rules.index("Use MY NOTES") < rules.index("## Action Items") < rules.index("Start your reply")
+
+
+def test_without_headings_your_lines_are_grouped_in_the_order_you_wrote_them():
+    mine = ["[01:10] Venue deposit is $500", "[02:30] Sam to confirm catering"]
+    _, prompt = templates.final_prompt("standup", "", "[00:01] You: hello", False, [], "About.", 30, mine)
+    rules = prompt.split("\n---\n")[1]
+    assert "They have no headings" in rules and "in the order they wrote them" in rules
+    assert "Keep their headings" not in rules and "## By Person" in rules
+
+
+def test_without_your_notes_the_prompt_is_unchanged():
+    _, prompt = templates.final_prompt("general", "", "[00:01] You: hello", False, [], "About.", 30)
+    rules = prompt.split("\n---\n")[1]
+    assert "MY NOTES" not in prompt and "outline" not in rules
+    assert rules.startswith("Write the notes for this meeting from the transcript above. Use these sections:\n\n## Overview")
+    assert "Only use information from\nthe transcript above. Do not invent" in rules
+
+
+def test_reworded_headings_are_not_kept_but_left_out_lines_are_without_their_markup():
+    notes = "## Spending Plan\n- Sam will confirm the venue deposit."
+    mine = ["[01:05] # Budget", "[01:10] - Sam confirms the venue deposit", "  [01:12] 1. Catering quote from Rosa"]
+    assert llm_engine.keep_mine(notes, mine) == notes + "\n\n## Your Notes\n- Catering quote from Rosa"
 
 
 def test_workspace_note_style_is_used_unless_one_was_picked(monkeypatch):
