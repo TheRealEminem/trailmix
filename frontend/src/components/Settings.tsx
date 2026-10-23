@@ -85,6 +85,8 @@ interface Props {
   onChanged: () => void;
   onQuit: () => void;
   onSignOut: () => void;
+  /** Open the first-run setup again. */
+  onRunSetup: () => void;
 }
 
 function Section({
@@ -1685,6 +1687,7 @@ export default function Settings({
   onChanged,
   onQuit,
   onSignOut,
+  onRunSetup,
 }: Props) {
   const [s, setS] = useState<SettingsT | null>(null);
   const organize = useOrganize(onWorkspacesChanged);
@@ -2353,6 +2356,14 @@ export default function Settings({
         {native?.available && native.call_reminders !== undefined && (
           <CallReminders native={native} />
         )}
+        <Row
+          label="Setup"
+          hint="The first-run questions again, one at a time: your name, transcription, notes and a sound check."
+        >
+          <button className="btn btn-sm btn-soft" onClick={onRunSetup}>
+            Run setup again
+          </button>
+        </Row>
         {health?.auth ? (
           <Row
             label="Sign out"
