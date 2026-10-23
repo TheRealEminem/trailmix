@@ -1,6 +1,7 @@
 // One icon family for the whole app: Lucide, 1.8 stroke, currentColor.
 // Sizes: 16 for everyday UI, 18 for important controls, 20 for primary actions.
 import {
+  ArrowRight,
   ArrowUp,
   AudioLines,
   Backpack,
@@ -10,6 +11,7 @@ import {
   CalendarDays,
   Check,
   ChevronDown,
+  ChevronLeft,
   Circle,
   Clock,
   Cloud,
@@ -107,3 +109,5 @@ export const CloudIcon = icon(Cloud);
 export const LaptopIcon = icon(Laptop);
 export const MenuIcon = icon(Menu);
 export const ArrowUpIcon = icon(ArrowUp);
+export const ArrowRightIcon = icon(ArrowRight);
+export const ChevronLeftIcon = icon(ChevronLeft);
