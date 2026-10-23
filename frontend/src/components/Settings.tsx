@@ -21,6 +21,7 @@ import type {
   Settings as SettingsT,
 } from "../api";
 import { tildePath } from "../format";
+import { TRANSCRIBERS } from "../transcribers";
 import type { ThemePref } from "../theme";
 import {
   AlertIcon,
@@ -1516,30 +1517,8 @@ function ProviderCard({
   );
 }
 
-// The Mac worker's address depends on your network, so that preset leaves the URL for you to type.
-const TRANSCRIBE_PRESETS = [
-  {
-    name: "Trailmix Mac worker",
-    url: "",
-    model: "large",
-    live: "live",
-    hint: "Your own Mac: run ./trailmix worker on it, then enter its address.",
-  },
-  {
-    name: "OpenAI",
-    url: "https://api.openai.com/v1",
-    model: "whisper-1",
-    live: "whisper-1",
-    hint: "Cloud; billed per minute.",
-  },
-  {
-    name: "Groq",
-    url: "https://api.groq.com/openai/v1",
-    model: "whisper-large-v3-turbo",
-    live: "whisper-large-v3-turbo",
-    hint: "Cloud; very fast.",
-  },
-];
+// Your own server's address depends on your network, so that preset leaves the URL for you to type.
+const TRANSCRIBE_PRESETS = TRANSCRIBERS.filter((t) => t.engine === "remote");
 
 const PROVIDER_IDS: ProviderId[] = [
   "ollama",

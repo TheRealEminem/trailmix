@@ -8,6 +8,8 @@ import type {
   SpeechModels,
   Workspace,
 } from "../api";
+import { TRANSCRIBERS, transcriberFor } from "../transcribers";
+import type { Transcriber } from "../transcribers";
 import { CheckIcon, CloseIcon } from "./icons";
 import RecordingLaws from "./RecordingLaws";
 import SoundCheck, { soundCheckPassed } from "./SoundCheck";
@@ -111,14 +113,16 @@ export default function SetupCard({
   const [speech, setSpeech] = useState<SpeechModels | null>(null);
   const [ollama, setOllama] = useState<OllamaStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Where speech becomes text: this Mac, or Google Gemini (which labels the speakers).
+  // Where speech becomes text: this Mac, or one of TRANSCRIBERS (Google, OpenAI, Groq, your own server).
   const [engine, setEngine] = useState<"local" | "remote" | "gemini">("local");
-  const [googleKeySaved, setGoogleKeySaved] = useState(false);
+  const [remote, setRemote] = useState({ url: "", model: "", live: "" });
+  const [savedKeys, setSavedKeys] = useState({ gemini: false, transcribe: false, openai: false });
   const [locked, setLocked] = useState(false);
   const [legal, setLegal] = useState({ region: "", retention: 30 });
   const [engineChosen, setEngineChosen] = useState(() => remembered(TRANSCRIPTION_CHOSEN_KEY));
-  const [pickingGoogle, setPickingGoogle] = useState(false);
-  const [googleKey, setGoogleKey] = useState("");
+  const [picking, setPicking] = useState<Transcriber | null>(null);
+  const [cloudKey, setCloudKey] = useState("");
+  const [serverUrl, setServerUrl] = useState("");
   const [engineBusy, setEngineBusy] = useState(false);
   const [engineError, setEngineError] = useState<string | null>(null);
   const [device, setDevice] = useState<DeviceAdvice | null>(null);
@@ -153,7 +157,12 @@ export default function SetupCard({
           if (!alive) return;
           setName(s.your_name);
           setEngine(s.transcribe_engine);
-          setGoogleKeySaved(!!s.secret_hints?.gemini_api_key);
+          setRemote({ url: s.transcribe_url, model: s.transcribe_model, live: s.transcribe_live_model });
+          setSavedKeys({
+            gemini: !!s.secret_hints?.gemini_api_key,
+            transcribe: !!s.secret_hints?.transcribe_api_key,
+            openai: !!s.secret_hints?.openai_api_key,
+          });
           setLocked(!!s.lockdown);
           setLegal({ region: s.legal_region, retention: s.audio_retention_days });
         })
@@ -195,7 +204,8 @@ export default function SetupCard({
   const deviceDone = !device || device.verdict === "local" || !health.summary.local;
   // Settled once you've picked, or it was already set up (a cloud engine, or meetings recorded before this step existed).
   const engineDone =
-    engineChosen || engine === "remote" || (engine === "gemini" && googleKeySaved) || meetingCount > 0;
+    engineChosen || engine === "remote" || (engine === "gemini" && savedKeys.gemini) || meetingCount > 0;
+  const chosenCloud = transcriberFor(engine, remote.url);
   // Open while suggestions are waiting to be added, or meetings are being sorted into new workspaces.
   const ideasLeft = (organize.job?.suggestions ?? []).filter(
     (idea) => !workspaces.some((w) => w.name.toLowerCase() === idea.name.toLowerCase()),
@@ -233,7 +243,7 @@ export default function SetupCard({
   const pct = ollama?.pull?.progress;
   const chooseThisMac = async () => {
     setEngineError(null);
-    setPickingGoogle(false);
+    setPicking(null);
     try {
       await api.putSettings({ transcribe_engine: "local" });
       setEngine("local");
@@ -244,29 +254,57 @@ export default function SetupCard({
       setEngineError((e as Error).message);
     }
   };
-  // Saves the key (if one was typed), switches to Gemini, and proves it works; goes back to this Mac if it doesn't.
-  const chooseGoogle = async () => {
+  // A key is already saved for this one (your own server may not need any).
+  const keySaved = (t: Transcriber) =>
+    t.engine === "gemini" ? savedKeys.gemini : t.id === "server" || (savedKeys.transcribe && remote.url === t.url);
+  const ready = (t: Transcriber) =>
+    (keySaved(t) || !!cloudKey.trim()) && (t.id !== "server" || /^https?:\/\/\S/.test(serverUrl.trim()));
+  // Saves the choice and the key (if one was typed), and proves it works; goes back to how it was if it doesn't.
+  const chooseCloud = async (t: Transcriber) => {
+    const key = cloudKey.trim();
+    const url = t.id === "server" ? serverUrl.trim().replace(/\/+$/, "") : t.url;
+    // A different address gets the key typed here or none, so one service's key is never sent to another.
+    const newKey = t.engine === "remote" && url !== remote.url;
+    const shareKey = t.id === "openai" && !!key && !savedKeys.openai; // also writes notes with OpenAI
     setEngineBusy(true);
     setEngineError(null);
     try {
-      await api.putSettings({
-        transcribe_engine: "gemini",
-        ...(googleKey.trim() ? { gemini_api_key: googleKey.trim() } : {}),
-      });
+      await api.putSettings(
+        t.engine === "gemini"
+          ? { transcribe_engine: "gemini", ...(key ? { gemini_api_key: key } : {}) }
+          : {
+              transcribe_engine: "remote",
+              transcribe_url: url,
+              transcribe_model: t.model,
+              transcribe_live_model: t.live,
+              ...(key || newKey ? { transcribe_api_key: key } : {}),
+              ...(shareKey ? { openai_api_key: key } : {}),
+            },
+      );
       try {
         await api.transcriptionTest();
       } catch (e) {
         // Not working: back to how it was, and don't keep a key that doesn't work.
         await api.putSettings({
-          transcribe_engine: engine === "gemini" ? "local" : engine,
-          ...(googleKey.trim() ? { gemini_api_key: "" } : {}),
+          transcribe_engine: engine === t.engine ? "local" : engine,
+          transcribe_url: remote.url,
+          transcribe_model: remote.model,
+          transcribe_live_model: remote.live,
+          ...(key && t.engine === "gemini" ? { gemini_api_key: "" } : {}),
+          ...(key && t.engine === "remote" ? { transcribe_api_key: "" } : {}),
+          ...(shareKey ? { openai_api_key: "" } : {}),
         });
         throw e;
       }
-      setEngine("gemini");
-      setGoogleKeySaved(true);
-      setGoogleKey("");
-      setPickingGoogle(false);
+      setEngine(t.engine);
+      if (t.engine === "remote") setRemote({ url, model: t.model, live: t.live });
+      setSavedKeys((k) =>
+        t.engine === "gemini"
+          ? { ...k, gemini: true }
+          : { ...k, transcribe: !!key || (k.transcribe && !newKey), openai: k.openai || shareKey },
+      );
+      setCloudKey("");
+      setPicking(null);
       setEngineChosen(true);
       remember(TRANSCRIPTION_CHOSEN_KEY);
       onChanged();
@@ -381,18 +419,15 @@ export default function SetupCard({
           done={engineDone}
           title={
             engineDone
-              ? engine === "gemini"
-                ? "Transcription: Google Gemini, with speaker labels"
-                : engine === "remote"
-                  ? "Transcription: your own server"
-                  : "Transcription: on this Mac"
+              ? chosenCloud
+                ? `Transcription: ${chosenCloud.id === "server" ? "your own server" : chosenCloud.name}${chosenCloud.engine === "gemini" ? ", with speaker labels" : ""}`
+                : "Transcription: on this Mac"
               : "Choose how recordings become text"
           }
         >
           On this Mac is private and free, but a download of about 1.7 GB; it labels you and the other side of a call.
-          Google Gemini needs no download and tells the individual people apart, but your recordings are sent to
-          Google and the transcript arrives a few minutes after you stop.
-          {device?.verdict === "cloud" && " This Mac is short on space, so Gemini is the easier fit."}
+          A cloud service needs no download, but your recordings are sent to it; you bring your own API key.
+          {device?.verdict === "cloud" && " This Mac is short on space, so a cloud service is the easier fit."}
           <div className="mt-2 flex flex-wrap gap-2">
             <button className="btn btn-sm btn-soft" onClick={() => void chooseThisMac()}>
               On this Mac
@@ -400,40 +435,85 @@ export default function SetupCard({
             {!locked && (
               <button
                 className={`btn btn-sm ${device?.verdict === "cloud" ? "btn-primary" : "btn-soft"}`}
-                onClick={() => (googleKeySaved ? void chooseGoogle() : setPickingGoogle(true))}
+                onClick={() => setPicking(picking ? null : TRANSCRIBERS[0])}
+                aria-expanded={!!picking}
                 disabled={engineBusy}
               >
-                {googleKeySaved ? "Use Google Gemini" : "Google Gemini…"}
+                Cloud or your own server…
               </button>
             )}
           </div>
           {locked && <p className="mt-1.5">Lockdown mode is on, so recordings stay on this Mac.</p>}
-          {pickingGoogle && !googleKeySaved && (
-            <div className="mt-2">
-              <p className="mb-1.5">
-                Paste a Google AI API key (a free one works, but it's rate-limited, so long meetings take a bit longer; create one at{" "}
-                <a className="underline" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
-                  aistudio.google.com/apikey
-                </a>
-                ). It's kept on this computer, and also writes your notes if you pick Gemini for summaries.
+          {picking && !locked && (
+            <div className="mt-3">
+              <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Transcription service">
+                {TRANSCRIBERS.map((t) => (
+                  <button
+                    key={t.id}
+                    role="radio"
+                    aria-checked={picking.id === t.id}
+                    className={`btn btn-sm rounded-full px-3.5 ${picking.id === t.id ? "btn-primary" : "btn-soft"}`}
+                    onClick={() => {
+                      setPicking(t);
+                      setCloudKey("");
+                      setEngineError(null);
+                    }}
+                  >
+                    {t.name}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 mb-1.5">
+                {picking.about}
+                {picking.keyUrl && (
+                  <>
+                    {" "}
+                    Create a key at{" "}
+                    <a className="underline" href={picking.keyUrl} target="_blank" rel="noreferrer">
+                      {picking.keyUrl.replace(/^https:\/\//, "")}
+                    </a>
+                    ; it's kept on this computer.
+                  </>
+                )}
+                {picking.id === "server" && " The model and live draft can be changed in Settings → Transcription."}
               </p>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
+                {picking.id === "server" && (
+                  <input
+                    className="field h-8 w-64 px-2.5 font-mono text-label"
+                    placeholder="http://my-mac.local:8770/v1"
+                    value={serverUrl}
+                    onChange={(e) => setServerUrl(e.target.value)}
+                    aria-label="Server address"
+                    autoComplete="off"
+                  />
+                )}
                 <input
                   type="password"
                   className="field h-8 w-64 px-2.5 text-label"
-                  placeholder="Google API key"
-                  value={googleKey}
-                  onChange={(e) => setGoogleKey(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && googleKey.trim() && void chooseGoogle()}
-                  aria-label="Google API key"
+                  placeholder={
+                    keySaved(picking)
+                      ? picking.id === "server"
+                        ? "Token (optional)"
+                        : `Saved ${picking.name} key`
+                      : `${picking.name} API key`
+                  }
+                  value={cloudKey}
+                  onChange={(e) => setCloudKey(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && ready(picking) && void chooseCloud(picking)}
+                  aria-label={`${picking.name} API key`}
                   autoComplete="off"
                 />
                 <button
                   className="btn btn-sm btn-primary"
-                  onClick={() => void chooseGoogle()}
-                  disabled={!googleKey.trim() || engineBusy}
+                  onClick={() => void chooseCloud(picking)}
+                  disabled={!ready(picking) || engineBusy}
                 >
-                  {engineBusy ? "Checking…" : "Save and check"}
+                  {engineBusy
+                    ? "Checking…"
+                    : keySaved(picking) && !cloudKey.trim() && picking.id !== "server"
+                      ? `Use ${picking.name}`
+                      : "Save and check"}
                 </button>
               </div>
             </div>
