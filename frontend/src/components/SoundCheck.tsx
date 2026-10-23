@@ -26,7 +26,14 @@ export const soundCheckPassed = (n: NativeRecorder | null) =>
  * Plays a chime and listens: checks that your mic and other apps' audio both reach Trailmix, walking you
  * through the macOS permission prompts (what they say, what to click) and what to switch on if it fails.
  */
-export default function SoundCheck({ native }: { native: NativeRecorder }) {
+export default function SoundCheck({
+  native,
+  brief = false,
+}: {
+  native: NativeRecorder;
+  /** The page around it already says what the check does: start at the macOS prompts. */
+  brief?: boolean;
+}) {
   const [askedAt, setAskedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const result = native.sound_check;
@@ -51,9 +58,9 @@ export default function SoundCheck({ native }: { native: NativeRecorder }) {
       {!running && !fresh && (
         <>
           <p>
-            Trailmix plays two short chimes and listens for 5 seconds, to make
-            sure both sides of your calls get recorded. The first time, macOS
-            asks twice:
+            {brief
+              ? "The first time, macOS asks twice:"
+              : "Trailmix plays two short chimes and listens for 5 seconds, to make sure both sides of your calls get recorded. The first time, macOS asks twice:"}
           </p>
           <ol className="mt-1.5 list-decimal space-y-1 pl-5">
             <li>
@@ -155,7 +162,7 @@ export default function SoundCheck({ native }: { native: NativeRecorder }) {
 
       {error && <p className="mt-2 text-trail-deep">{error}</p>}
       {!running && (
-        <button className="btn btn-sm btn-soft mt-2.5" onClick={run}>
+        <button type="button" className={`btn mt-2.5 ${brief ? "btn-md btn-primary" : "btn-sm btn-soft"}`} onClick={run}>
           {fresh ? "Run it again" : "Run sound check"}
         </button>
       )}

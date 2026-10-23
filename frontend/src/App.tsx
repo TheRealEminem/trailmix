@@ -29,9 +29,10 @@ import Settings from "./components/Settings";
 import ImportPanel from "./components/ImportPanel";
 import ModelsBanner from "./components/ModelsBanner";
 import UpdateBanner from "./components/UpdateBanner";
-import SetupCard from "./components/SetupCard";
 import StatsNotice from "./components/StatsNotice";
 import WhatsNew from "./components/WhatsNew";
+import Welcome, { needsSetup } from "./components/Welcome";
+import WorkspacesTip from "./components/WorkspacesTip";
 import Sidebar from "./components/Sidebar";
 import type { View } from "./components/Sidebar";
 import TasksView from "./components/TasksView";
@@ -133,6 +134,9 @@ export default function App() {
   // sheet opens by itself for the imports waiting on that choice.
   const [preflightIds, setPreflightIds] = useState<number[] | null>(null);
   const [justImported, setJustImported] = useState(false);
+  // First-run setup, full screen: decided once the meeting list is in (Settings → App can bring it back).
+  const [welcome, setWelcome] = useState(false);
+  const setupChecked = useRef(false);
 
   const [micDeviceId, setMicDeviceId] = useState(savedMicId);
   const [includeMeetingAudio, setIncludeMeetingAudio] = usePref(
@@ -179,6 +183,15 @@ export default function App() {
     window.addEventListener(AUTH_EVENT, onAuth);
     return () => window.removeEventListener(AUTH_EVENT, onAuth);
   }, []);
+
+  useEffect(() => {
+    if (authState !== "ok" || !listLoaded || setupChecked.current) return;
+    setupChecked.current = true;
+    api
+      .getSettings()
+      .then((s) => needsSetup(s, meetings.length) && setWelcome(true))
+      .catch(() => undefined);
+  }, [authState, listLoaded, meetings.length]);
 
   // Which workspace you're in: remembered here, and told to the server so recordings started from the menu bar
   // or the hotkey go into it too.
@@ -830,6 +843,7 @@ export default function App() {
               onTheme={theme.setPref}
               onChanged={() => void refreshHealth()}
               onQuit={() => void handleQuit()}
+              onRunSetup={() => setWelcome(true)}
               onSignOut={() =>
                 void api.logout().then(() => setAuthState("needed"))
               }
@@ -870,15 +884,13 @@ export default function App() {
             </div>
           ) : showRecorder ? (
             <>
-              {!rec && !remote && <StatsNotice />}
-              {!rec && !remote && <WhatsNew health={health} />}
+              {/* Mounted after setup, which asks about stats itself, so they read what it saved. */}
+              {!rec && !remote && !welcome && <StatsNotice />}
+              {!rec && !remote && !welcome && <WhatsNew health={health} />}
               {!rec && !remote && (
-                <SetupCard
-                  health={health}
-                  hasMeetings={meetings.length > 0}
+                <WorkspacesTip
                   meetingCount={meetings.length}
                   workspaces={workspaces}
-                  native={native}
                   onOpenSettings={(section) => {
                     goView("settings");
                     if (section)
@@ -890,10 +902,7 @@ export default function App() {
                         150,
                       );
                   }}
-                  onChanged={() => {
-                    void refreshHealth();
-                    void refreshList();
-                  }}
+                  onChanged={() => void refreshList()}
                 />
               )}
               <Recorder
@@ -1020,6 +1029,16 @@ export default function App() {
       />
       <TooltipLayer />
       {confirmDialog}
+      {/* Out of the way while a call is being recorded (say, started from the menu bar); back after. */}
+      {welcome && !rec && !remote && (
+        <Welcome
+          health={health}
+          native={native}
+          dusk={theme.dusk}
+          onChanged={() => void refreshHealth()}
+          onDone={() => setWelcome(false)}
+        />
+      )}
       {preflightIds && (
         <PreflightSheet
           key={preflightIds.join(",")}
