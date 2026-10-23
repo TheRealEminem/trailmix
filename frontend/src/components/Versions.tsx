@@ -362,7 +362,7 @@ export default function Versions({
                     </label>
                   )}
                   {estimate && (
-                    <span data-tip={`Up to ${Math.round(estimate.minutes)} minutes of audio (each track counts)${estimate.per_minute ? ` at $${estimate.per_minute}/min` : ""}; prices as of ${estimate.as_of}`}>
+                    <span data-tip={`Up to ${Math.round(estimate.minutes)} minutes of audio (${estimate.mixed ? "your mic and the call mixed into one recording" : "each track counts"})${estimate.per_minute ? ` at $${estimate.per_minute}/min` : ""}; prices as of ${estimate.as_of}`}>
                       {estimate.cost == null
                         ? "price unknown"
                         : estimate.cost === 0

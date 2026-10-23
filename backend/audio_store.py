@@ -18,6 +18,8 @@ SAMPLE_RATE = 16000
 BYTES_PER_SEC = SAMPLE_RATE * 2
 OPUS_BITRATE = os.getenv("TRAILMIX_OPUS_BITRATE", "48k")
 
+PLAYBACK_COPY_DAYS = 3  # a played-back mix (mix.ogg) is kept this long after it was last played
+
 TRACKS = {0: "mic", 1: "system"}  # channel id used on the wire -> track name
 
 
@@ -126,8 +128,24 @@ def sweep_expired() -> int:
     return cleaned
 
 
+def prune_playback_copies() -> int:
+    """Deletes the cached playback mixes (mix.ogg) nobody has played lately: they duplicate the two tracks, and
+    playback_path rebuilds one in a few seconds when a recording is played again. Returns the bytes freed."""
+    cutoff = datetime.now().timestamp() - PLAYBACK_COPY_DAYS * 86400
+    freed = 0
+    for mix in db.AUDIO_DIR.glob("*/mix.ogg"):
+        try:
+            if mix.stat().st_mtime < cutoff:
+                freed += mix.stat().st_size
+                mix.unlink()
+        except OSError:
+            pass  # played or removed just now
+    return freed
+
+
 def playback_path(meeting: dict) -> Path | None:
-    """One file with both sides of the conversation, for the in-app player. Built once, then cached.
+    """One file with both sides of the conversation, for the in-app player. Built when a recording is played, kept
+    for a few days (prune_playback_copies), then rebuilt if needed.
     None if there's no finished audio (still recording, not yet compressed, or deleted)."""
     folder = track_dir(meeting)
     if meeting.get("audio_deleted") or not folder or not folder.exists() or any(folder.glob("*.pcm")):
@@ -150,4 +168,6 @@ def playback_path(meeting: dict) -> Path | None:
             tmp.unlink(missing_ok=True)
             raise RuntimeError(f"Could not prepare audio for playback: {proc.stderr.strip()[:300]}")
         tmp.replace(mix)
+    else:
+        os.utime(mix)  # played again: keep it a while longer
     return mix

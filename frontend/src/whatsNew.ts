@@ -9,6 +9,34 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.17.0",
+    items: [
+      {
+        title: "A blank page for your notes while you record",
+        body: "While a meeting records, Trailmix is now a page you type on: # makes a heading, - a list, and links stay links. The timer, Stop, the live transcript and Catch me up sit in a bar at the bottom, out of the way until you open it.",
+        where: "Start a recording",
+      },
+      {
+        title: "Notes built around yours",
+        body: "When you've typed notes, the meeting's notes keep your headings as their sections, in your order, and fill in what was said under each of your lines.",
+      },
+      {
+        title: "Catch me up from the menu bar",
+        body: "\"What did I miss?\", \"Explain that\" or your own question, answered right in the menu bar while you record, without bringing up the window.",
+        where: "Menu bar → Catch me up",
+      },
+      {
+        title: "Transcribe with any service",
+        body: "Pick Google, OpenAI, Groq or your own server for transcription, with your own key.",
+        where: "Settings → Transcription",
+      },
+      {
+        title: "Less disk space for old recordings",
+        body: "Trailmix now clears its temporary playback copies of old recordings to save disk space.",
+      },
+    ],
+  },
+  {
     version: "0.16.1",
     items: [
       {

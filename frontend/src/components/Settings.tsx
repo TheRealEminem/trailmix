@@ -710,6 +710,9 @@ function SpendRow() {
 
 const money = (c: number | null) => (c == null ? "an unknown price" : c === 0 ? "free" : `about $${c < 0.1 ? c.toFixed(3) : c.toFixed(2)}`);
 
+/** How the audio goes: one mixed recording of the mic and the call, or each track on its own (so each counts). */
+const sentAs = (e: { mixed?: boolean }) => (e.mixed ? "your mic and the call mixed into one recording" : "each track counts");
+
 function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => void }) {
   const [engine, setEngine] = useState<TranscribeEngine>(up.transcripts.best?.engine ?? "gemini");
   const [model, setModel] = useState("");
@@ -767,7 +770,7 @@ function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => 
     if (e && (e.cost ?? 1) > 0) {
       const ok = await confirm({
         title: `Transcribe ${e.meetings.length} meeting${e.meetings.length === 1 ? "" : "s"} again?`,
-        body: `This sends up to ${Math.round(e.minutes)} minutes of audio (each track counts) to ${
+        body: `This sends up to ${Math.round(e.minutes)} minutes of audio (${sentAs(e)}) to ${
           engine === "gemini" ? "Google" : "the transcription service"
         }: ${money(e.cost)}, at ${e.per_minute != null ? `$${e.per_minute}/min` : "a price Trailmix doesn't know"} (prices as of ${e.as_of}). The newest meetings go first, ${limit} at a time; nothing is replaced unless you chose that.`,
         confirmLabel: "Go ahead",
@@ -871,7 +874,7 @@ function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => 
           <p className="mt-2 text-hint text-ink-soft">
             {estimates.all.meetings.length === 0
               ? "No meeting has its audio kept."
-              : `${estimates.all.meetings.length} of ${estimates.all.available} meetings · ${Math.round(estimates.all.minutes)} minutes of audio (both tracks) · ${money(estimates.all.cost)}`}
+              : `${estimates.all.meetings.length} of ${estimates.all.available} meetings · ${Math.round(estimates.all.minutes)} minutes of audio (${sentAs(estimates.all)}) · ${money(estimates.all.cost)}`}
             {estimates.all.per_minute ? ` at $${estimates.all.per_minute}/min, an upper bound; prices as of ${estimates.all.as_of}` : ""}
           </p>
         )}
