@@ -71,7 +71,12 @@ def transcribe(audio: np.ndarray, base_url: str, api_key: str, model: str, langu
     if r.status_code == 400 and "response_format" in r.text:  # e.g. gpt-4o-transcribe only does plain json
         r = call("json")
     if r.status_code >= 400:
-        raise RemoteError(f"Transcription endpoint returned {r.status_code}: {r.text[:300]}")
+        import llm_engine
+
+        detail = llm_engine._error_text(r)
+        if r.status_code in (401, 403):
+            raise RemoteError(f"{urlparse(base_url).netloc or base_url} didn't accept the API key: {detail}")
+        raise RemoteError(f"Transcription endpoint returned {r.status_code}: {detail}")
     body = r.json()
     segs = [
         {"start": float(s["start"]), "end": float(s["end"]), "text": s["text"].strip()}
