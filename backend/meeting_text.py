@@ -24,9 +24,15 @@ def my_notes(m: dict) -> list[dict]:
 
 
 def my_notes_lines(m: dict) -> list[str]:
-    """Your notes as the notes AI reads them: "[12:34] text", or just the text when typed afterwards."""
-    return [(f"[{fmt(n['t'])}] " if n.get("t") is not None else "") + n["text"].strip()
-            for n in my_notes(m) if n.get("text", "").strip()]
+    """Your notes as the notes AI reads them: "[12:34] text", or just the text when typed afterwards. Each is a line
+    of markdown ("# Plan", "- ask Sam"); a nested list item keeps its indent in front of the moment."""
+    out = []
+    for n in my_notes(m):
+        text = n.get("text", "")
+        if text.strip():
+            indent = text[:len(text) - len(text.lstrip())]
+            out.append(indent + (f"[{fmt(n['t'])}] " if n.get("t") is not None else "") + text.strip())
+    return out
 
 
 _URL = re.compile(r"https?://[^\s<>()\[\]]+[^\s<>()\[\].,;:!?'\"]")

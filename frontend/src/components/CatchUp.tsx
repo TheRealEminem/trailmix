@@ -8,13 +8,6 @@ import { formatDuration } from "../format";
 import { AlertIcon, ArrowUpIcon, CompassIcon, SparkleIcon } from "./icons";
 import { Spinner } from "./ui";
 
-interface Props {
-  /** The meeting being recorded, whichever app captures it. */
-  meetingId: number;
-  /** Shows that moment in the live transcript (a timestamp in an answer was clicked). */
-  onSeek: (seconds: number) => void;
-}
-
 const QUICK: { kind: Exclude<CatchUpKind, "question">; label: string; tip: string }[] = [
   { kind: "missed", label: "What did I miss?", tip: "The gist of the last five minutes" },
   { kind: "explain", label: "Explain that", tip: "The last thing said, in plainer words" },
@@ -52,38 +45,16 @@ const linkTimes = (text: string) =>
     return `[${t}](#t-${secs})`;
   });
 
-/** "Catch me up": quick questions about the meeting so far, while it's still recording (backend/catch_up.py). */
-export default function CatchUp({ meetingId, onSeek }: Props) {
+/** "Catch me up": quick questions about the meeting so far, while it's still recording (backend/catch_up.py). The
+ * state lives here; the recording bar puts the questions (CatchUpAsk) and the answers (CatchUpAnswers) where they fit.
+ * `onAsked` runs when a question goes out, so the answers can be brought into view. */
+export function useCatchUp(meetingId: number, onAsked?: () => void) {
   const [plan, setPlan] = useState<CatchUpPlan | null>(null);
   const [entries, setEntries] = useState<CatchUpEntry[]>([]);
   const [question, setQuestion] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showAll, setShowAll] = useState(false);
   const busy = pending !== null;
-  // The recording screen re-renders every second (the timer). Stable link components keep the timestamp buttons
-  // from being swapped out under the pointer, which would lose the click.
-  const seekRef = useRef(onSeek);
-  seekRef.current = onSeek;
-  const components = useMemo<Components>(
-    () => ({
-      a: ({ href, children }) =>
-        href?.startsWith("#t-") ? (
-          <button
-            onClick={() => seekRef.current(Number(href.slice(3)))}
-            className="chip mx-0.5 bg-sun-soft align-middle font-mono text-sun-deep no-underline transition-colors hover:bg-sun/30"
-            data-tip="Show in the live transcript"
-          >
-            {children}
-          </button>
-        ) : (
-          <a href={href} target="_blank" rel="noreferrer">
-            {children}
-          </a>
-        ),
-    }),
-    [],
-  );
 
   useEffect(() => {
     let alive = true;
@@ -108,6 +79,7 @@ export default function CatchUp({ meetingId, onSeek }: Props) {
     if (busy) return;
     setPending(label);
     setError(null);
+    onAsked?.();
     if (kind === "question") setQuestion("");
     try {
       const e = await api.catchUp(meetingId, kind, text);
@@ -120,25 +92,122 @@ export default function CatchUp({ meetingId, onSeek }: Props) {
     }
   };
 
-  const ready = !!plan?.ready;
-  const newestFirst = [...entries].reverse();
+  return { plan, entries, question, setQuestion, pending, error, busy, ready: !!plan?.ready, ask };
+}
+
+export type CatchUp = ReturnType<typeof useCatchUp>;
+
+/** Who answers and about what a question costs, e.g. "Gemini · gemini-3.6-flash · about 0.4¢ a question". */
+export function CatchUpPrice({ c }: { c: CatchUp }) {
+  if (!c.plan?.ready) return null;
+  return (
+    <span className="text-meta text-ink-soft" data-tip={priceTip(c.plan)}>
+      {c.plan.label}
+      {c.plan.model ? ` · ${c.plan.model}` : ""} · {priceNote(c.plan)}
+    </span>
+  );
+}
+
+/** The quick questions and a box for your own, in one row that fits the recording bar. */
+export function CatchUpAsk({ c }: { c: CatchUp }) {
+  const { plan, busy, ready } = c;
+  if (plan && !ready) return null;
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        const q = c.question.trim();
+        if (q) void c.ask("question", q, q);
+      }}
+      className="flex flex-wrap items-center gap-2"
+      data-testid="catch-up"
+    >
+      <div className="field flex min-w-0 flex-1 basis-64 items-center gap-2 py-0.5 pl-3.5 pr-1 focus-within:border-[color:color-mix(in_srgb,var(--forest)_55%,transparent)] focus-within:shadow-focus">
+        <CompassIcon size={15} className="shrink-0 text-forest" />
+        <input
+          value={c.question}
+          onChange={(e) => c.setQuestion(e.target.value)}
+          placeholder="Ask anything about the meeting so far…"
+          className="h-8 min-w-0 flex-1 bg-transparent text-label outline-none"
+          disabled={busy || !ready}
+          aria-label="Question about the meeting so far"
+        />
+        {plan && !plan.local && money(plan.costs.question, false) && (
+          <span className="hidden shrink-0 text-meta tabular-nums text-ink-soft sm:inline" data-tip="About what this question costs">
+            ~{money(plan.costs.question, false)}
+          </span>
+        )}
+        <button
+          type="submit"
+          disabled={busy || !ready || !c.question.trim()}
+          className="btn btn-primary h-7 w-7 shrink-0 rounded-sm p-0"
+          aria-label="Ask"
+          data-tip="Ask (Enter)"
+        >
+          <ArrowUpIcon size={15} strokeWidth={2.2} />
+        </button>
+      </div>
+      <div className="flex max-w-full gap-1.5 overflow-x-auto">
+        {QUICK.map((q) => {
+          const off = plan?.off[q.kind];
+          const cost = plan && !plan.local ? money(plan.costs[q.kind], false) : null;
+          return (
+            <button
+              key={q.kind}
+              type="button"
+              onClick={() => void c.ask(q.kind, q.label)}
+              disabled={busy || !ready || !!off}
+              className="btn btn-sm btn-soft shrink-0 rounded-full px-3 font-normal"
+              data-tip={off ?? (cost ? `${q.tip} · about ${cost}` : q.tip)}
+            >
+              {q.label}
+            </button>
+          );
+        })}
+      </div>
+    </form>
+  );
+}
+
+/** Answers so far, newest first, with what's being asked now on top. Timestamps show that moment in the transcript. */
+export function CatchUpAnswers({ c, onSeek }: { c: CatchUp; onSeek: (seconds: number) => void }) {
+  const [showAll, setShowAll] = useState(false);
+  const { plan, pending, error } = c;
+  // The recording screen re-renders every second (the timer). Stable link components keep the timestamp buttons
+  // from being swapped out under the pointer, which would lose the click.
+  const seekRef = useRef(onSeek);
+  seekRef.current = onSeek;
+  const components = useMemo<Components>(
+    () => ({
+      a: ({ href, children }) =>
+        href?.startsWith("#t-") ? (
+          <button
+            onClick={() => seekRef.current(Number(href.slice(3)))}
+            className="chip mx-0.5 bg-sun-soft align-middle font-mono text-sun-deep no-underline transition-colors hover:bg-sun/30"
+            data-tip="Show in the live transcript"
+          >
+            {children}
+          </button>
+        ) : (
+          <a href={href} target="_blank" rel="noreferrer">
+            {children}
+          </a>
+        ),
+    }),
+    [],
+  );
+  const newestFirst = [...c.entries].reverse();
   const shown = showAll ? newestFirst : newestFirst.slice(0, SHOWN);
 
   return (
-    <div className="border-t border-line px-5 py-5 sm:px-6" data-testid="catch-up">
+    <div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <CompassIcon size={16} className="text-forest" />
           <span className="text-label font-medium">Catch me up</span>
         </div>
-        {plan?.ready && (
-          <span className="text-meta text-ink-soft" data-tip={priceTip(plan)}>
-            {plan.label}
-            {plan.model ? ` · ${plan.model}` : ""} · {priceNote(plan)}
-          </span>
-        )}
+        <CatchUpPrice c={c} />
       </div>
-
       {plan && !plan.ready && plan.reason && <p className="text-label leading-relaxed text-ink-soft">{plan.reason}</p>}
       {plan?.note && <p className="mb-3 text-meta text-ink-soft">{plan.note}</p>}
       {plan?.warning && (
@@ -147,72 +216,20 @@ export default function CatchUp({ meetingId, onSeek }: Props) {
           {plan.warning}
         </p>
       )}
-
-      {(ready || !plan) && (
-        <>
-          <div className="flex flex-wrap gap-2">
-            {QUICK.map((q) => {
-              const off = plan?.off[q.kind];
-              const cost = plan && !plan.local ? money(plan.costs[q.kind], false) : null;
-              return (
-                <button
-                  key={q.kind}
-                  onClick={() => void ask(q.kind, q.label)}
-                  disabled={busy || !ready || !!off}
-                  className="btn btn-sm btn-soft rounded-full px-3.5 font-normal"
-                  data-tip={off ?? (cost ? `${q.tip} · about ${cost}` : q.tip)}
-                >
-                  {q.label}
-                  {cost && !off && <span className="text-meta tabular-nums text-ink-soft">~{cost}</span>}
-                </button>
-              );
-            })}
-          </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const q = question.trim();
-              if (q) void ask("question", q, q);
-            }}
-            className="mt-3"
-          >
-            <div className="field flex items-center gap-2 py-1 pl-4 pr-1 focus-within:border-[color:color-mix(in_srgb,var(--forest)_55%,transparent)] focus-within:shadow-focus">
-              <input
-                value={question}
-                onChange={(e) => setQuestion(e.target.value)}
-                placeholder="Ask about the meeting so far…"
-                className="h-9 min-w-0 flex-1 bg-transparent text-body outline-none"
-                disabled={busy || !ready}
-                aria-label="Question about the meeting so far"
-              />
-              {plan && !plan.local && money(plan.costs.question, false) && (
-                <span className="shrink-0 text-meta tabular-nums text-ink-soft" data-tip="About what this question costs">
-                  ~{money(plan.costs.question, false)}
-                </span>
-              )}
-              <button
-                type="submit"
-                disabled={busy || !ready || !question.trim()}
-                className="btn btn-primary h-8 w-8 shrink-0 rounded-sm p-0"
-                aria-label="Ask"
-                data-tip="Ask (Enter)"
-              >
-                <ArrowUpIcon size={16} strokeWidth={2.2} />
-              </button>
-            </div>
-          </form>
-        </>
-      )}
-
       {error && (
-        <p className="mt-3 flex items-start gap-2 text-label leading-relaxed text-trail-deep">
+        <p className="mb-3 flex items-start gap-2 text-label leading-relaxed text-trail-deep">
           <AlertIcon size={16} className="mt-0.5 shrink-0" />
           {error}
         </p>
       )}
-
-      {(busy || shown.length > 0) && (
-        <div data-private="questions and answers" className="mt-5 space-y-4">
+      {!pending && shown.length === 0 && plan?.ready && (
+        <p className="text-label text-ink-soft">
+          Zoned out for a moment? Ask what you missed, have the last thing explained, or ask anything about the meeting
+          so far.
+        </p>
+      )}
+      {(pending || shown.length > 0) && (
+        <div data-private="questions and answers" className="space-y-4">
           {pending && (
             <div className="animate-enter rounded-lg border border-line bg-surface-subtle/60 px-4 py-3">
               <div className="text-label font-medium">{pending}</div>

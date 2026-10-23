@@ -23,6 +23,32 @@ struct Bookmark: Decodable, Equatable {
     let note: String
 }
 
+/// A question asked while the meeting is recording, and its answer (backend/catch_up.py). `a` is markdown with
+/// timestamps like [12:34].
+struct CatchUpEntry: Decodable, Equatable {
+    let q: String
+    let a: String
+    let label: String
+    let at: String
+    let kind: String?
+    let t: Double?  // seconds into the recording when it was asked
+}
+
+/// Who would answer a catch-up question right now, and about what it costs (GET /api/meetings/{id}/catch-up).
+struct CatchUpPlan: Decodable, Equatable {
+    let ready: Bool
+    let reason: String?  // why it can't be asked yet
+    let label: String?
+    let local: Bool
+    let cost: Double?  // dollars for "What did I miss?": 0 on this Mac, nil where the price isn't known
+    let costs: [String: Double?]
+    let note: String?
+    let warning: String?
+    let kinds: [String: String]
+    let off: [String: String]  // quick questions this AI isn't good enough for, with why
+    let history: [CatchUpEntry]
+}
+
 enum ServerError: LocalizedError, Equatable {
     case offline
     case needsToken
@@ -44,6 +70,12 @@ final class ServerClient {
     let base: URL
     private let token: String
     private let session: URLSession
+    /// For calls that wait on an AI: an answer can take a minute, well past the usual timeout.
+    private lazy var slowSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 90
+        return URLSession(configuration: config)
+    }()
 
     init(base: URL, token: String) {
         self.base = base
@@ -64,11 +96,13 @@ final class ServerClient {
         return request
     }
 
-    private func call(_ path: String, method: String = "GET", json: [String: Any]? = nil) async throws -> Data {
+    private func call(_ path: String, method: String = "GET", json: [String: Any]? = nil, slow: Bool = false) async throws -> Data {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request(path, method: method, json: json))
+            (data, response) = try await (slow ? slowSession : session).data(for: request(path, method: method, json: json))
+        } catch let error as URLError where slow && error.code == .timedOut {
+            throw ServerError.rejected("The AI took too long to answer. Try again in a moment.")
         } catch {
             throw ServerError.offline
         }
@@ -107,6 +141,16 @@ final class ServerClient {
 
     func stop(_ id: Int) async throws {
         _ = try await call("meetings/\(id)/stop", method: "POST")
+    }
+
+    func catchUpPlan(_ id: Int) async throws -> CatchUpPlan {
+        try JSONDecoder().decode(CatchUpPlan.self, from: await call("meetings/\(id)/catch-up"))
+    }
+
+    /// "missed", "explain", "decided", or "question" with your own question.
+    func catchUp(_ id: Int, kind: String, question: String = "") async throws -> CatchUpEntry {
+        let data = try await call("meetings/\(id)/catch-up", method: "POST", json: ["kind": kind, "question": question], slow: true)
+        return try JSONDecoder().decode(CatchUpEntry.self, from: data)
     }
 
     /// Tells the server this recorder is here and what it would record; returns the commands waiting for it

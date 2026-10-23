@@ -1017,16 +1017,19 @@ export default function App() {
       </main>
 
       <Toast toast={toast} onClose={closeToast} />
-      <ReportButton
-        page={
-          view === "main"
-            ? meeting && meeting.id === selectedId
-              ? "Meeting"
-              : "Home"
-            : view.charAt(0).toUpperCase() + view.slice(1)
-        }
-        meetingId={view === "main" && meeting ? meeting.id : null}
-      />
+      {/* Not over the recording bar while you take notes. */}
+      {!(showRecorder && view === "main" && (rec || remote)) && (
+        <ReportButton
+          page={
+            view === "main"
+              ? meeting && meeting.id === selectedId
+                ? "Meeting"
+                : "Home"
+              : view.charAt(0).toUpperCase() + view.slice(1)
+          }
+          meetingId={view === "main" && meeting ? meeting.id : null}
+        />
+      )}
       <TooltipLayer />
       {confirmDialog}
       {/* Out of the way while a call is being recorded (say, started from the menu bar); back after. */}

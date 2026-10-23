@@ -288,6 +288,9 @@ private struct RecordingPanel: View {
                 Text("\(model.marks.count) moment\(model.marks.count == 1 ? "" : "s") flagged")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
+            if model.phase == .recording {
+                CatchUpSection(model: model)
+            }
         }
     }
 }
@@ -321,7 +324,238 @@ private struct OtherRecordingPanel: View {
             }
             Text("\(prefs.markShortcut.display) marks and \(prefs.toggleShortcut.display) stops this recording too.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
+            CatchUpSection(model: model)
         }
+    }
+}
+
+// MARK: - Catch me up
+
+/// Quick questions about the meeting so far, answered right in the menu (backend/catch_up.py). The state is the
+/// model's, so an answer still lands when the menu closed while it was coming.
+private struct CatchUpSection: View {
+    @ObservedObject var model: HelperModel
+    @StateObject private var expanded: ViewState<Bool>
+    @StateObject private var question = ViewState("")
+
+    private static let quick: [(kind: String, label: String, icon: String)] = [
+        ("missed", "What did I miss?", "clock.arrow.circlepath"),
+        ("explain", "Explain that", "text.bubble"),
+        ("decided", "What's been decided?", "checkmark.seal"),
+    ]
+
+    init(model: HelperModel) {
+        self.model = model
+        _expanded = StateObject(wrappedValue: ViewState(model.catchUpUnseen || model.catchUpPending != nil))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            MenuRow(title: "Catch me up", icon: "sparkles", trailing: expanded.value ? "▾" : "▸") {
+                withAnimation(.easeOut(duration: 0.18)) { expanded.value.toggle() }
+            }
+            .padding(.horizontal, -8)
+            if expanded.value {
+                content.transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .onAppear {
+            if model.catchUpUnseen || model.catchUpPending != nil { expanded.value = true }
+            model.catchUpUnseen = false
+        }
+    }
+
+    @ViewBuilder private var content: some View {
+        let plan = model.catchUpPlan
+        if let plan, !plan.ready {
+            Text(plan.reason ?? "Catch me up can't answer for this recording.")
+                .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            VStack(spacing: 6) {
+                ForEach(Self.quick, id: \.kind) { quickButton($0, plan) }
+            }
+            ForEach(Self.quick.filter { plan?.off[$0.kind] != nil }, id: \.kind) { q in
+                (Text(plan?.kinds[q.kind] ?? q.label).fontWeight(.semibold) + Text(" " + (plan?.off[q.kind] ?? "")))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            TextField("Ask anything about the meeting so far…", text: $question.value)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12))
+                .disabled(model.catchUpPending != nil)
+                .onSubmit(ask)
+        }
+        if let note = plan?.note {
+            Text(note).font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        if let warning = plan?.warning {
+            MessageRow(text: warning, tone: .warning, dismiss: nil)
+        }
+        if let error = model.catchUpError {
+            MessageRow(text: error, tone: .error) { model.catchUpError = nil }
+        }
+        if let pending = model.catchUpPending {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(pending).font(.system(size: 12, weight: .semibold)).lineLimit(2)
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Reading the meeting so far…").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.05)))
+        } else if let latest = model.catchUpEntries.last {
+            CatchUpAnswer(entry: latest, showLabel: latest.label != plan?.label)
+        }
+        HStack(spacing: 6) {
+            if let plan, plan.ready, let label = plan.label {
+                Label(plan.local ? "\(label) · on this Mac, free" : label, systemImage: "sparkles")
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    .help(plan.local ? "" : "Prices are estimates and grow as the meeting goes on")
+            }
+            Spacer(minLength: 0)
+            if let id = model.catchUpMeetingID {
+                Button("Open in Trailmix") { model.openTrailmix(meeting: id) }
+                    .buttonStyle(.link)
+                    .font(.system(size: 11, weight: .medium))
+            }
+        }
+    }
+
+    private func quickButton(_ q: (kind: String, label: String, icon: String), _ plan: CatchUpPlan?) -> some View {
+        let label = plan?.kinds[q.kind] ?? q.label
+        let off = plan?.off[q.kind]
+        let cost = plan.flatMap { money($0.costs[q.kind] ?? nil, local: $0.local) }
+        return Button { model.catchUp(q.kind) } label: {
+            HStack(spacing: 8) {
+                if model.catchUpPending == label {
+                    ProgressView().controlSize(.mini).frame(width: 16)
+                } else {
+                    Image(systemName: q.icon).foregroundStyle(Brand.forest).frame(width: 16)
+                }
+                Text(label)
+                Spacer(minLength: 0)
+                if let cost, plan?.local == false {
+                    Text("~\(cost)").font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+                }
+            }
+            .padding(.horizontal, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(SoftButtonStyle())
+        .disabled(model.catchUpPending != nil || off != nil)
+        .opacity(off != nil ? 0.45 : 1)
+        .help(off ?? "")
+    }
+
+    private func ask() {
+        let text = question.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, model.catchUpPending == nil else { return }
+        model.catchUp("question", question: text)
+        question.value = ""
+    }
+
+    /// About what one question costs: "free" on this Mac, "0.4¢", "$0.012"; nil where the price isn't known.
+    private func money(_ cost: Double?, local: Bool) -> String? {
+        if local { return "free" }
+        guard let cost else { return nil }
+        if cost < 0.01 { return String(format: cost < 0.001 ? "%.2f¢" : "%.1f¢", cost * 100) }
+        return String(format: "$%.3f", cost)
+    }
+}
+
+/// One answer: the question, then the markdown line by line (bullets laid out by hand, since SwiftUI's markdown
+/// is inline only), scrolling once it's taller than the menu should get.
+private struct CatchUpAnswer: View {
+    let entry: CatchUpEntry
+    /// Who answered, when it isn't the AI named below (another one stepped in).
+    let showLabel: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(entry.q).font(.system(size: 12, weight: .semibold)).lineLimit(2)
+                Spacer(minLength: 6)
+                if let t = entry.t {
+                    Text("asked at \(clock(t))").font(.system(size: 10.5)).foregroundStyle(.secondary).monospacedDigit()
+                }
+            }
+            ViewThatFits(in: .vertical) {
+                lines
+                ScrollView { lines }
+            }
+            .frame(maxHeight: 260)
+            if showLabel {
+                Label(entry.label, systemImage: "sparkles")
+                    .font(.system(size: 10.5)).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.05)))
+    }
+
+    private var lines: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(AnswerLine.parse(entry.a).enumerated()), id: \.offset) { _, line in
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    if let bullet = line.bullet {
+                        Text(bullet).foregroundStyle(.secondary).monospacedDigit()
+                    }
+                    Text(line.text).fontWeight(line.heading ? .semibold : .regular)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.leading, CGFloat(line.indent) * 12)
+            }
+        }
+        .font(.system(size: 12))
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A line of an answer: "- point", "1. step", "## Heading" or plain text, with its inline markdown parsed and
+/// timestamps like [12:34] picked out.
+private struct AnswerLine {
+    let text: AttributedString
+    var bullet: String?
+    var indent = 0
+    var heading = false
+
+    private static let timestamp = try! NSRegularExpression(pattern: #"\[(?:\d+:)?\d{1,2}:\d\d\]"#)
+
+    static func parse(_ markdown: String) -> [AnswerLine] {
+        markdown.split(separator: "\n").compactMap { raw in
+            let indent = raw.prefix { $0 == " " || $0 == "\t" }.count / 2
+            var text = raw.trimmingCharacters(in: .whitespaces)
+            if text.isEmpty { return nil }
+            if let marker = ["- ", "* ", "+ ", "• "].first(where: text.hasPrefix) {
+                return AnswerLine(text: inline(String(text.dropFirst(marker.count))), bullet: "•", indent: indent)
+            }
+            if let number = text.range(of: #"^\d+[.)] "#, options: .regularExpression) {
+                return AnswerLine(text: inline(String(text[number.upperBound...])),
+                                  bullet: text[number].trimmingCharacters(in: .whitespaces), indent: indent)
+            }
+            if text.hasPrefix("#") {
+                text = String(text.drop { $0 == "#" }).trimmingCharacters(in: .whitespaces)
+                return AnswerLine(text: inline(text), heading: true)
+            }
+            return AnswerLine(text: inline(text))
+        }
+    }
+
+    private static func inline(_ text: String) -> AttributedString {
+        var parsed = (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
+        let plain = String(parsed.characters)
+        for match in timestamp.matches(in: plain, range: NSRange(plain.startIndex..., in: plain)) {
+            if let range = Range(match.range, in: parsed) {
+                parsed[range].foregroundColor = Brand.sunInk
+            }
+        }
+        return parsed
     }
 }
 

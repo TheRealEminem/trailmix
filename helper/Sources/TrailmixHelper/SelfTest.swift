@@ -7,6 +7,7 @@ import SwiftUI
 ///   TrailmixHelper --self-test http://127.0.0.1:8790 me.wav them.wav
 ///   TrailmixHelper --list-audio
 ///   TrailmixHelper --snapshot /tmp/shots
+///   TrailmixHelper --catch-up-test http://127.0.0.1:8790 /tmp/catch-up.png
 @MainActor
 enum SelfTest {
     static func run(_ args: [String]) {
@@ -221,6 +222,45 @@ enum SelfTest {
         NSApp.run()
     }
 
+    /// Catch me up from the menu, against a server that has a meeting recording (in its window) with a live
+    /// transcript: the plan loads when the menu opens, an answer arrives past the usual timeout, and a failed one
+    /// says why. Saves the menu as it then looks.
+    static func catchUpTest(_ args: [String]) {
+        let rest = Array(args.drop { $0 != "--catch-up-test" }.dropFirst())
+        guard let first = rest.first, let server = URL(string: first) else {
+            print("usage: --catch-up-test <server> [<out.png>]")
+            exit(2)
+        }
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.prohibited)
+        let model = HelperModel()
+        model.serverOverride = server
+        Task {
+            await model.poll()
+            expect(model.other != nil, "sees the recording in the window (\(model.connection))")
+            model.menuOpen = true
+            expect(await waitUntil(10) { model.catchUpPlan != nil }, "plan loaded when the menu opened (\(model.catchUpError ?? "no error"))")
+            expect(model.catchUpPlan?.ready == true, "ready: \(model.catchUpPlan?.label ?? "?"), \(model.catchUpPlan?.reason ?? "no reason")")
+            model.catchUp("missed")
+            expect(model.catchUpPending == "What did I miss?", "asking: \(model.catchUpPending ?? "nothing")")
+            model.menuOpen = false  // the answer lands while the menu is closed
+            expect(await waitUntil(60) { model.catchUpPending == nil }, "answer arrived")
+            expect(model.catchUpError == nil, "no error (\(model.catchUpError ?? ""))")
+            expect(model.catchUpEntries.last?.a.contains("March") == true, "answer: \(model.catchUpEntries.last?.a.prefix(40) ?? "none")")
+            expect(model.catchUpUnseen, "the menu will open on it")
+            model.catchUp("question", question: "fail")
+            expect(await waitUntil(20) { model.catchUpPending == nil }, "failed question came back")
+            expect(model.catchUpError?.contains("fake AI is down") == true, "says why: \(model.catchUpError ?? "nothing")")
+            model.catchUpError = nil
+            model.menuOpen = true
+            await model.loadCatchUp()
+            if rest.count > 1 { Snapshot.save(model, dark: false, to: rest[1]) }
+            print(failures == 0 ? "All checks passed." : "\(failures) check(s) failed.")
+            exit(failures == 0 ? 0 : 1)
+        }
+        NSApp.run()
+    }
+
     /// What the meeting-audio menu would offer right now. Needs no permission.
     static func listAudio() {
         print("Microphones:")
@@ -243,20 +283,7 @@ enum Snapshot {
             for state in HelperModel.PreviewState.allCases {
                 let model = HelperModel()
                 model.preview(state)
-                let view = MenuView(model: model, prefs: model.prefs, meters: model.meters)
-                    .background(Color(nsColor: .windowBackgroundColor))
-                let host = NSHostingView(rootView: view)
-                host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-                host.frame.size = host.fittingSize
-                let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
-                window.appearance = host.appearance
-                window.contentView = host
-                host.layoutSubtreeIfNeeded()
-                guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { continue }
-                host.cacheDisplay(in: host.bounds, to: rep)
-                let path = "\(folder)/\(state)\(dark ? "-dark" : "").png"
-                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
-                print("saved \(path)")
+                save(model, dark: dark, to: "\(folder)/\(state)\(dark ? "-dark" : "").png")
             }
         }
         for (name, image) in [("icon", Brand.menuIcon), ("icon-offline", Brand.menuIconOffline)] {
@@ -271,5 +298,22 @@ enum Snapshot {
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(folder)/\(name).png"))
             }
         }
+    }
+
+    /// The menu as this model has it, as a PNG.
+    static func save(_ model: HelperModel, dark: Bool, to path: String) {
+        let view = MenuView(model: model, prefs: model.prefs, meters: model.meters)
+            .background(Color(nsColor: .windowBackgroundColor))
+        let host = NSHostingView(rootView: view)
+        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        host.frame.size = host.fittingSize
+        let window = NSWindow(contentRect: host.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.appearance = host.appearance
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+        print("saved \(path)")
     }
 }

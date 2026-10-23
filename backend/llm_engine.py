@@ -540,9 +540,17 @@ _COMMON = set("""the and for with that this from have about what when were they 
 should which while into your just like want also some more most than then been being will idea think liked""".split())
 
 
+_MARKER = re.compile(r"^\s*(?:\[[\d:]+\]\s*)?(?:[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+)?")
+
+
+def _plain(note: str) -> str:
+    """A typed note line without its indent, moment and list marker: "  [01:12] - by Friday" is "by Friday"."""
+    return _MARKER.sub("", note, count=1).strip()
+
+
 def _reflected(note: str, summary: str) -> bool:
     """Whether the notes cover a typed note: at least half its telling words (numbers, names, longer words)."""
-    text = meeting_text._URL.sub(" ", re.sub(r"^\[[\d:]+\]\s*", "", note))  # links are checked on their own
+    text = meeting_text._URL.sub(" ", _plain(note))  # links are checked on their own
     words = {w.lower() for w in _WORD.findall(text)}
     telling = {w for w in words if (len(w) > 4 or any(c.isdigit() for c in w)) and w not in _COMMON}
     if not telling:
@@ -553,8 +561,9 @@ def _reflected(note: str, summary: str) -> bool:
 
 def keep_mine(summary: str, mine: list[str]) -> str:
     """Nothing you typed gets lost: notes the model didn't work in go under "Your Notes" word for word, and any
-    link still missing goes under "Links"."""
-    left_out = [re.sub(r"^\[[\d:]+\]\s*", "", n) for n in mine if not _reflected(n, summary)]
+    link still missing goes under "Links". Your headings are left out: they only shape the notes, and the model
+    may well have reworded one as a section title."""
+    left_out = [_plain(n) for n in mine if not templates.is_heading(n) and not _reflected(n, summary)]
     if left_out:
         summary = f"{summary.rstrip()}\n\n## Your Notes\n" + "\n".join(f"- {n}" for n in left_out)
     missing = [u for u in meeting_text.links(list(mine)) if u not in summary]
