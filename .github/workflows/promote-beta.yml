@@ -1,7 +1,8 @@
 # Makes the newest beta the release everyone gets once it's been tried: every day, scripts/auto-promote.sh checks
 # the newest pre-release, and if it's been out 3 days with no open "[Beta X.Y.Z] [blocks me]" issue, promotes it
 # (the same as running scripts/promote.sh by hand). Otherwise it just logs why not.
-#   Actions tab -> "Promote beta" -> Run   -> checks now (tick "dry run" to only see what it would do)
+#   Actions tab -> "Promote beta" -> Run   -> checks now (tick "dry run" to only see what it would do, "now" to not
+#                                             wait the 3 days; open "blocks me" reports still stop it)
 name: Promote beta
 
 on:
@@ -11,6 +12,10 @@ on:
     inputs:
       dry_run:
         description: "Dry run: only say what it would do"
+        type: boolean
+        default: false
+      now:
+        description: "Now: don't wait for it to be out 3 days"
         type: boolean
         default: false
 
@@ -28,4 +33,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TRAILMIX_REPO: ${{ github.repository }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          BETA_DAYS: ${{ inputs.now && '0' || '3' }}
         run: scripts/auto-promote.sh
