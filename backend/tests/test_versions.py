@@ -40,6 +40,28 @@ def test_every_change_to_a_tracked_field_is_recorded_with_old_and_new(fresh_db):
     assert (rows[0]["old_value"], rows[0]["new_value"], rows[0]["why"]) == ("Weekly sync", "Budget review", "you renamed it")
 
 
+def test_notes_saved_as_you_type_make_one_history_entry_per_stretch(fresh_db):
+    mid = meeting_with_transcript()
+    client = TestClient(main.app)
+    for text in ("# Plan", "# Plan\n", "# Plan B"):
+        client.put(f"/api/meetings/{mid}/my-notes", json={"notes": [{"t": 3.0, "text": text}, {"t": 9.0, "text": "  - nested"}]})
+    rows = db.history_for(mid, "my_notes_json")
+    assert len(rows) == 1 and rows[0]["old_value"] is None
+    assert json.loads(rows[0]["new_value"]) == [{"t": 3.0, "text": "# Plan B"}, {"t": 9.0, "text": "  - nested"}]
+    db.update_meeting(mid, why="you renamed it", title="Other")          # another field doesn't end the stretch
+    client.put(f"/api/meetings/{mid}/my-notes", json={"notes": [{"t": 3.0, "text": "# Plan C"}]})
+    assert len(db.history_for(mid, "my_notes_json")) == 1
+    client.put(f"/api/meetings/{mid}/my-notes", json={"notes": []})      # typed back to nothing: no change after all
+    assert db.history_for(mid, "my_notes_json") == []
+
+
+def test_a_merge_only_joins_an_entry_from_the_same_kind_of_change(fresh_db):
+    mid = meeting_with_transcript()
+    db.update_meeting(mid, why="merged a copy", my_notes_json=[{"t": None, "text": "from the copy"}])
+    db.update_meeting(mid, why="you edited your notes", merge_s=120, my_notes_json=[{"t": None, "text": "mine"}])
+    assert [r["why"] for r in db.history_for(mid, "my_notes_json")] == ["you edited your notes", "merged a copy"]
+
+
 def test_replacing_a_transcript_keeps_the_old_text_in_the_history(fresh_db):
     mid = meeting_with_transcript()
     db.update_meeting(mid, why="redone", transcript="[00:00] Speaker 1: hello there friend")

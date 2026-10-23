@@ -599,6 +599,35 @@ textarea::placeholder {
   @apply text-forest underline decoration-forest/30 underline-offset-2;
 }
 
+/* Your notes as a page you type on (NotesEditor): the summary's look, plus a top-level heading and the hint shown
+   on an empty page. */
+.notes-editor {
+  @apply min-h-[3lh] break-words;
+}
+.notes-editor:focus-visible {
+  outline: none; /* the page is the thing you type on; the caret says where you are */
+}
+.notes-editor > :first-child {
+  @apply mt-0;
+}
+.notes-editor h1 {
+  @apply mb-2 mt-8 font-display text-[1.6rem] font-medium leading-tight tracking-[-0.015em] text-ink;
+}
+.notes-editor h2 {
+  @apply mt-7;
+}
+.notes-editor li > p {
+  @apply my-0;
+}
+.notes-editor ol > li {
+  @apply pl-1;
+}
+.notes-editor p.is-empty:first-child:last-child::before,
+.notes-editor .is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  @apply pointer-events-none float-left h-0 text-ink-soft;
+}
+
 /* Notes appearing as they're written: each new block fades up into place. */
 .prose-draft > *,
 .prose-draft li {

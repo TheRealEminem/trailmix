@@ -51,8 +51,18 @@ final class HelperModel: ObservableObject {
     @Published private(set) var shortcutProblem: String?
     @Published var notice: String?
     @Published var error: String?
+    /// Catch me up, for whichever recording is live: who would answer, the answers so far, the question being
+    /// asked now, and why the last one failed. Kept here because the menu closes when you click away.
+    @Published private(set) var catchUpPlan: CatchUpPlan?
+    @Published private(set) var catchUpEntries: [CatchUpEntry] = []
+    @Published private(set) var catchUpPending: String?
+    @Published var catchUpError: String?
+    /// An answer came while the menu was closed, so the menu opens on it.
+    var catchUpUnseen = false
     /// Set by the menu while it's open; notifications are only for when it isn't.
-    var menuOpen = false
+    var menuOpen = false {
+        didSet { if menuOpen, !oldValue, catchUpMeetingID != nil { Task { await loadCatchUp() } } }
+    }
 
     let prefs = Prefs.shared
     let meters = Meters()
@@ -217,6 +227,7 @@ final class HelperModel: ObservableObject {
             connection = .online
             other = live.first { $0.id != meetingID }
             otherFetchedAt = Date()
+            syncCatchUp()
         } catch ServerError.needsToken {
             connection = .needsToken
             other = nil
@@ -309,6 +320,7 @@ final class HelperModel: ObservableObject {
             capturingMeetingAudio = started.contains { $0.0 == Wire.meetingAudio }
             micName = started.first { $0.0 == Wire.mic }?.1.name ?? ""
             phase = .recording
+            syncCatchUp()
             listen(socket, id: id)
             watchMeetingAudio(id)
             play("Pop")
@@ -367,6 +379,77 @@ final class HelperModel: ObservableObject {
         } else {
             NSSound.beep()
         }
+    }
+
+    // MARK: Catch me up
+
+    /// The recording catch-up questions go to: this app's, or the one the Trailmix window is capturing.
+    var catchUpMeetingID: Int? { meetingID ?? other?.id }
+    private var catchUpMeeting: Int?
+
+    /// Starts afresh when the live recording changes, and clears everything once none is.
+    private func syncCatchUp() {
+        guard catchUpMeeting != catchUpMeetingID else { return }
+        catchUpMeeting = catchUpMeetingID
+        catchUpPlan = nil
+        catchUpEntries = []
+        catchUpPending = nil
+        catchUpError = nil
+        catchUpUnseen = false
+        if menuOpen, catchUpMeeting != nil { Task { await loadCatchUp() } }
+    }
+
+    /// Who would answer and about what it costs (that grows with the transcript), plus questions asked in the window.
+    func loadCatchUp() async {
+        guard let id = catchUpMeetingID else { return }
+        do {
+            let plan = try await client().catchUpPlan(id)
+            guard id == catchUpMeetingID else { return }
+            catchUpPlan = plan
+            if plan.history.count >= catchUpEntries.count { catchUpEntries = plan.history }
+        } catch {
+            // Only worth saying before there's a plan to go on (an older server, say); later the last one stands.
+            guard id == catchUpMeetingID, catchUpPlan == nil else { return }
+            catchUpError = error.localizedDescription
+        }
+    }
+
+    /// "missed", "explain", "decided", or "question" with your own. The answer shows in the menu, or in a
+    /// notification if the menu was closed meanwhile.
+    func catchUp(_ kind: String, question: String = "") {
+        guard catchUpPending == nil, let id = catchUpMeetingID else { return }
+        catchUpPending = kind == "question" ? question : catchUpPlan?.kinds[kind] ?? kind
+        catchUpError = nil
+        Task {
+            do {
+                let entry = try await client().catchUp(id, kind: kind, question: question)
+                guard id == catchUpMeetingID else { return }
+                catchUpEntries.append(entry)
+                catchUpPending = nil
+                if !menuOpen { catchUpUnseen = true }
+                alertIfHidden(entry.q, Self.plain(entry.a))
+                await loadCatchUp()
+            } catch {
+                guard id == catchUpMeetingID else { return }
+                catchUpPending = nil
+                catchUpError = error.localizedDescription
+                if !menuOpen { catchUpUnseen = true }
+                alertIfHidden("Couldn't catch you up", error.localizedDescription)
+            }
+        }
+    }
+
+    /// An answer without its markdown, for a notification.
+    private static func plain(_ markdown: String) -> String {
+        markdown.split(separator: "\n").map { line -> String in
+            var text = line.trimmingCharacters(in: .whitespaces)
+            for marker in ["- ", "* ", "• "] where text.hasPrefix(marker) { text = "• " + text.dropFirst(marker.count) }
+            while text.hasPrefix("#") { text.removeFirst() }
+            return text.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "__", with: "")
+                .trimmingCharacters(in: .whitespaces)
+        }
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n")
     }
 
     // MARK: The recording's WebSocket
@@ -447,6 +530,7 @@ final class HelperModel: ObservableObject {
         meters.mic = 0
         meters.meeting = 0
         phase = .idle
+        syncCatchUp()
     }
 
     private func stopSources(_ list: [(UInt8, AudioSource)]) {
@@ -622,7 +706,7 @@ final class HelperModel: ObservableObject {
     // MARK: Snapshots
 
     enum PreviewState: String, CaseIterable {
-        case idle, offline, recording, window, problem
+        case idle, offline, recording, window, problem, catchUp
     }
 
     /// Puts the model in a representative state for `--snapshot` renders.
@@ -631,7 +715,7 @@ final class HelperModel: ObservableObject {
         switch state {
         case .idle, .offline:
             lastMeetingID = state == .idle ? 12 : nil
-        case .recording, .problem:
+        case .recording, .problem, .catchUp:
             phase = .recording
             startedAt = Date().addingTimeInterval(-754)
             now = Date()
@@ -644,6 +728,19 @@ final class HelperModel: ObservableObject {
             if state == .problem {
                 meters.meeting = 0
                 notice = "\(Brand.appName) can't hear other apps. Allow it under System Settings → Privacy & Security → Screen & System Audio Recording, then stop and start again."
+            }
+            if state == .catchUp {
+                meetingID = 12
+                catchUpMeeting = 12
+                catchUpPlan = CatchUpPlan(
+                    ready: true, reason: nil, label: "Google Gemini", local: false, cost: 0.0042,
+                    costs: ["missed": 0.0042, "explain": 0.0031, "decided": 0.0058, "question": 0.0047], note: nil, warning: nil,
+                    kinds: ["missed": "What did I miss?", "explain": "Explain that", "decided": "What's been decided?"], off: [:], history: [])
+                catchUpEntries = [CatchUpEntry(
+                    q: "What did I miss?",
+                    a: "You missed the **beta date** discussion:\n\n- Launch moves to **Nov 12**, a week later than planned [9:41]\n- Sam fixes the login bug by Wednesday [11:02]\n- Priya updates the docs before the beta goes out [12:15]",
+                    label: "Google Gemini", at: "", kind: "missed", t: 750)]
+                catchUpUnseen = true
             }
         case .window:
             other = LiveRecording(id: 7, title: "Weekly sync", client: "web", duration: 1834, has_system: true, draft: true,

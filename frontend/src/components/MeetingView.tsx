@@ -24,7 +24,7 @@ import { WorkspacePicker } from "./Workspaces";
 import PipelineStatus from "./PipelineStatus";
 import Questions from "./Questions";
 import MeetingDate from "./MeetingDate";
-import MyNotes from "./MyNotes";
+import NotesEditor from "./NotesEditor";
 import Summary from "./Summary";
 import Transcript from "./Transcript";
 import Versions from "./Versions";
@@ -298,10 +298,10 @@ export default function MeetingView({
           {tab === "notes" && (
             <div>
               <p className="mb-4 text-hint leading-relaxed text-ink-soft">
-                What you typed during the meeting, each at the moment you typed it. The notes AI works these into the
-                summary and keeps every link. After changing them, press Regenerate under the summary.
+                What you typed during the meeting. The notes AI builds the summary around them, headings and all, and
+                keeps every link. Edits save as you type; press Regenerate under the summary to use them.
               </p>
-              <MyNotes meetingId={m.id} notes={m.my_notes} onChanged={on.onChanged} />
+              <NotesEditor key={m.id} meetingId={m.id} notes={m.my_notes} onSaved={on.onChanged} />
             </div>
           )}
           {tab === "transcript" && m.transcript && (

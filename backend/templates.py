@@ -1,5 +1,7 @@
 """Summary templates: what the notes should look like for different kinds of meetings."""
 
+import re
+
 ACTION_RULE = (
     'Always end with a "## Action Items" section: one bullet per task, written as '
     '"- [ ] <person\'s name>: <task> (<due date, if one was mentioned>)", for example '
@@ -147,19 +149,44 @@ what is in the transcript.
 """
 
 
+_MY_HEADING = re.compile(r"^\s*(?:\[[\d:]+\]\s*)?#{1,6}\s")
+
+
+def is_heading(line: str) -> bool:
+    """Whether one of your typed note lines ("[12:34] # Budget", "## Plan") is a heading."""
+    return bool(_MY_HEADING.match(line))
+
+
+def _outline(mine: list[str], shape: str, source: str) -> str:
+    """How the notes are built around the ones you typed (as Granola does): your notes are the outline, with your
+    headings as the sections, and the template only shapes what you didn't cover."""
+    if any(is_heading(line) for line in mine):
+        sections = ("Keep their headings, in their order and in their words, as your sections (a \"#\" or \"##\" "
+                    "heading becomes a \"## \" section, a \"###\" heading a \"### \" subsection). Under each, ")
+    else:
+        sections = ("They have no headings: group their lines under \"## \" topic headings of your own, in the "
+                    "order they wrote them. Under each, ")
+    return (f"""Use MY NOTES as the outline of your notes: they are what the person recording most wanted remembered.
+{sections}turn each of their lines into a clear bullet in the same place and order (nested lines stay nested), then add
+the detail from {source} beneath it as sub-bullets: what was said and by whom, names, numbers, dates, and where it
+landed. Keep their numbers, names and links exactly, and write in the third person ("Dale liked…", not "I liked…").
+After their sections, add what else is worth noting that their notes don't cover, using these sections where they
+fit (leave out any that would be empty or only repeat theirs):
+
+{shape.removeprefix("Use these sections:").strip()}""")
+
+
 def final_prompt(template_id: str, custom: str, material: str, from_notes: bool, moments: list[str],
                  about: str, minutes: float, mine: list[str] = ()) -> tuple[str, str]:
     """(system, prompt) for the meeting notes. The material comes first and the instructions after it,
     so they're the last thing the model reads (and never the part a too-long prompt loses). `mine`: the notes
-    you typed yourself, which the notes must work in."""
+    you typed yourself (lines of markdown), which become the notes' outline."""
     own, own_rule = "", ""
     if mine:
-        own = ("\n\nNOTES TYPED BY THE PERSON WHO RECORDED THE MEETING (\"I\" is them; a [time] is when it was typed):\n"
-               + "\n".join(f"- {line}" for line in mine))
-        own_rule = ("\nThe typed notes are what the person recording most wanted remembered. Every one of them must "
-                    "appear in your notes: put each under the topic it belongs to as an ordinary bullet, keep its "
-                    "numbers, names and links exactly, and write it in the third person (\"Dale liked…\", not \"I "
-                    "liked…\"). Never say they came from typed notes, and never give a point a time it doesn't have.")
+        own = ("\n\nMY NOTES, TYPED BY THE PERSON WHO RECORDED THE MEETING (\"I\" is them; a [time] is when a line "
+               "was typed):\n" + "\n".join(mine))
+        own_rule = ("\nNever say anything came from typed notes or MY NOTES, and never give a point a time it "
+                    "doesn't have.")
     flagged = ""
     if moments:
         # Only "cover them": the Flagged Moments section itself is written by Trailmix from the real flags
@@ -170,6 +197,7 @@ def final_prompt(template_id: str, custom: str, material: str, from_notes: bool,
         )
     label = "NOTES TAKEN DURING THE MEETING, IN ORDER" if from_notes else "TRANSCRIPT"
     source = "the notes above" if from_notes else "the transcript above"
+    shape = _outline(mine, _shape(template_id, custom), source) if mine else _shape(template_id, custom)
     combine = (" They cover the meeting in order: combine them into one set of notes for the whole meeting, and"
                " don't mention parts or sections." if from_notes else "")
     return FINAL_SYSTEM, f"""{about}
@@ -178,11 +206,11 @@ def final_prompt(template_id: str, custom: str, material: str, from_notes: bool,
 {material}{own}
 
 ---
-Write the notes for this meeting from {source}.{combine} {_shape(template_id, custom)}
+Write the notes for this meeting from {source}.{combine} {shape}
 
 {ACTION_RULE}
 {_length(minutes)} Summarize in your own words; never copy transcript lines. Only use information from
-{source}{" and the listener's own notes" if mine else ""}. Do not invent names, dates, or facts.{flagged}{own_rule}
+{source}{" and MY NOTES" if mine else ""}. Do not invent names, dates, or facts.{flagged}{own_rule}
 Start your reply directly with the first heading.
 """
 
