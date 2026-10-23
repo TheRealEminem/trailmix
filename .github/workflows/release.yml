@@ -1,6 +1,10 @@
 # Builds the Mac app, tries it end to end, and publishes it as a *pre-release* (a beta).
 #   git tag v0.1.0 && git push --tags      -> builds, tests, publishes Trailmix-0.1.0-arm64.dmg as a pre-release
 #   Actions tab -> "Build Mac app" -> Run   -> builds and tests it, keeps it as a downloadable artifact only
+#     ... on main, with "Release it" ticked -> tags main as v<VERSION> and publishes it, as a pushed tag would
+#     ... and "To everyone" ticked too      -> also promotes it right away (scripts/promote.sh), skipping the beta days
+# No terminal needed: the Run button works from the GitHub website or app. Releasing stays a person's call;
+# automation (Claude Code sessions included) shouldn't press it on its own.
 #
 # Nothing is published unless scripts/smoke-test.sh passes: as a fresh install, and as an update from the
 # current release (installed, then updated by its own auto-updater). A pre-release only reaches people with
@@ -11,6 +15,15 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Release it: tag main as v<VERSION> and publish it as a beta (unticked: a test build only)"
+        type: boolean
+        default: false
+      everyone:
+        description: "To everyone: promote it right away instead of after 3 days as a beta (needs Release it)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -25,9 +38,29 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Build Trailmix.app and the disk image
+      # The release this run makes, if any: the pushed tag, or v<VERSION> when run with "Release it". Checked before
+      # the build, so a version that's already out (VERSION not bumped) stops here rather than after it.
+      - name: Which version this releases
+        id: release
+        env:
+          RELEASE: ${{ inputs.release && '1' || '0' }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then export TRAILMIX_VERSION="${GITHUB_REF_NAME#v}"
+          tag=""
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then tag="$GITHUB_REF_NAME"
+          elif [[ "$RELEASE" == 1 ]]; then
+            [[ "$GITHUB_REF" == refs/heads/main ]] || { echo "::error::Releases are made from main, not $GITHUB_REF_NAME"; exit 1; }
+            tag="v$(cat VERSION)"
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "::error::$tag is already out. Bump VERSION (and add a What's new entry) first."; exit 1
+            fi
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "${tag:-A test build: nothing is published}"
+      - name: Build Trailmix.app and the disk image
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if [[ -n "$TAG" ]]; then export TRAILMIX_VERSION="${TAG#v}"
           else export TRAILMIX_VERSION="$(cat VERSION).$GITHUB_RUN_NUMBER"; fi  # a test build: newer than the release, to update to
           scripts/build-app.sh --dmg
       - uses: actions/upload-artifact@v4
@@ -60,12 +93,22 @@ jobs:
             echo "No earlier release to update from"
           fi
       - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: steps.release.outputs.tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
         # Also a copy with a fixed name, so the download page can always link to releases/latest/download/Trailmix-arm64.dmg
         # ("latest" skips pre-releases, so the page keeps offering the last promoted version)
+        # --target makes the tag on this commit when the run was started with "Release it" (a tag made with this
+        # workflow's token doesn't start another run, so it isn't built twice).
         run: |
           cp dist/Trailmix-*-arm64.dmg dist/Trailmix-arm64.dmg
-          gh release create "$GITHUB_REF_NAME" dist/Trailmix-*-arm64.dmg dist/Trailmix-*-arm64.dmg.sha256 dist/Trailmix-arm64.dmg \
-            --title "Trailmix ${GITHUB_REF_NAME#v}" --generate-notes --prerelease
+          gh release create "$TAG" dist/Trailmix-*-arm64.dmg dist/Trailmix-*-arm64.dmg.sha256 dist/Trailmix-arm64.dmg \
+            --target "$GITHUB_SHA" --title "Trailmix ${TAG#v}" --generate-notes --prerelease
+      - name: Give it to everyone
+        if: steps.release.outputs.tag != '' && inputs.everyone
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TRAILMIX_REPO: ${{ github.repository }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: scripts/promote.sh "$TAG"

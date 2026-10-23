@@ -4,6 +4,8 @@
 export interface Transcriber {
   id: "gemini" | "openai" | "groq" | "server";
   name: string;
+  /** For a tight row of choices. */
+  short: string;
   engine: "gemini" | "remote";
   /** Endpoint for a remote engine; empty for your own server, whose address you type. */
   url: string;
@@ -20,6 +22,7 @@ export const TRANSCRIBERS: Transcriber[] = [
   {
     id: "gemini",
     name: "Google Gemini",
+    short: "Google",
     engine: "gemini",
     url: "",
     model: "",
@@ -32,6 +35,7 @@ export const TRANSCRIBERS: Transcriber[] = [
   {
     id: "openai",
     name: "OpenAI",
+    short: "OpenAI",
     engine: "remote",
     url: "https://api.openai.com/v1",
     model: "whisper-1",
@@ -44,6 +48,7 @@ export const TRANSCRIBERS: Transcriber[] = [
   {
     id: "groq",
     name: "Groq",
+    short: "Groq",
     engine: "remote",
     url: "https://api.groq.com/openai/v1",
     model: "whisper-large-v3-turbo",
@@ -55,6 +60,7 @@ export const TRANSCRIBERS: Transcriber[] = [
   {
     id: "server",
     name: "Your own server",
+    short: "Your server",
     engine: "remote",
     url: "",
     model: "large",
