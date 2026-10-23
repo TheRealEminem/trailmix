@@ -140,6 +140,7 @@ API key for a cloud provider. First use downloads the Whisper models (base ≈ 1
 recording:   data/audio/<id>/mic.pcm + system.pcm     raw 16 kHz int16, appended + flushed every ~250 ms  (~115 MB/hour/track)
 stopped:     each track -> mic.ogg / system.ogg        Opus 48 kbps (~21 MB/hour/track); .pcm deleted only after the .ogg is verified
 processed:   the .ogg files stay for TRAILMIX_AUDIO_RETENTION_DAYS (default 30), then the folder is deleted (checked at startup and every 6 h)
+playing:     the player gets a mix of both tracks (mix.ogg), built on first play; deleted again if unplayed for 3 days, rebuilt when needed
 any time:    "Delete audio now" in the meeting view, or deleting the meeting
 ```
 
