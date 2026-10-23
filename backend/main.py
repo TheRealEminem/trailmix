@@ -71,6 +71,7 @@ UI_DIR = Path(os.getenv("TRAILMIX_UI_DIR", Path(__file__).resolve().parent.paren
 async def _sweep_loop():
     while True:
         await run_in_threadpool(store.sweep_expired)
+        await run_in_threadpool(store.prune_playback_copies)  # the playback mixes nobody has played lately
         await run_in_threadpool(model_ranks.refresh)  # newer model rankings from the Trailmix site, once a day
         await run_in_threadpool(recording_laws.refresh)  # and corrections to the recording-laws table
         await asyncio.sleep(SWEEP_INTERVAL_S)
@@ -1778,16 +1779,16 @@ def _estimate(meetings: list[dict], engine: str, model: str | None, cfg: dict) -
     """What redoing these meetings' transcripts would send and cost: {meetings: [{id, title, minutes, cost}],
     minutes, cost (None if the price isn't known), per_minute, as_of}. An upper bound: a silent track isn't sent."""
     model = model or (cfg["gemini_transcribe_model"] if engine == "gemini" else cfg["transcribe_model"] if engine == "remote" else None)
+    mixed = engine == "gemini" and bool(cfg["gemini_mix_tracks"])  # one recording of your mic and the call, not two
     rows = []
     for m in meetings:
-        minutes = pricing.meeting_minutes(m["duration_sec"], bool(m["has_system"]),
-                                          mixed=engine == "gemini" and bool(cfg["gemini_mix_tracks"]))
+        minutes = pricing.meeting_minutes(m["duration_sec"], bool(m["has_system"]), mixed=mixed)
         rows.append({"id": m["id"], "title": m["title"], "minutes": round(minutes, 1),
                      "cost": pricing.cost(minutes, engine, model)})
     known = all(r["cost"] is not None for r in rows)
     return {"meetings": rows, "minutes": round(sum(r["minutes"] for r in rows), 1),
             "cost": round(sum(r["cost"] for r in rows), 4) if known else None,
-            "per_minute": pricing.per_minute(engine, model), "model": model, "as_of": pricing.AS_OF}
+            "per_minute": pricing.per_minute(engine, model), "model": model, "as_of": pricing.AS_OF, "mixed": mixed}
 
 
 @app.get("/api/meetings/{meeting_id}/trial/estimate")

@@ -211,13 +211,15 @@ export interface BatchJob {
 /** What redoing some transcripts would send and cost, before anything is spent. */
 export interface TrialEstimate {
   meetings: { id: number; title: string; minutes: number; cost: number | null }[];
-  /** minutes of audio that would be sent (each track counts; an upper bound) */
+  /** minutes of audio that would be sent (an upper bound: a silent track isn't sent) */
   minutes: number;
   /** US dollars, about (null: the price of this model isn't known) */
   cost: number | null;
   per_minute: number | null;
   model: string | null;
   as_of: string;
+  /** the mic and the call go as one mixed recording (so each minute of meeting counts once), not as two tracks */
+  mixed?: boolean;
   /** how many meetings qualify before the limit */
   available?: number;
   limit?: number;

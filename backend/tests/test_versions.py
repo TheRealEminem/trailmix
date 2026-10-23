@@ -456,3 +456,13 @@ def test_the_economy_path_sends_the_audio_and_reports_the_tokens_used(monkeypatc
 
     assert pricing.transcript_cost("gemini-3.5-flash-lite", 1368, usage) == pytest.approx(0.0277, abs=0.0005)   # exact tokens
     assert pricing.transcript_cost("gemini-3.5-flash-lite", 60, None) == 0.0013                                # a guess before
+
+
+def test_the_estimate_says_whether_the_mic_and_call_go_as_one_recording(client, fresh_db, monkeypatch):
+    mid = meeting_with_transcript()
+    db.update_meeting(mid, duration_sec=3600, has_system=1)
+    monkeypatch.setattr(main.settings, "get_all", lambda: {**main.settings.DEFAULTS, "gemini_api_key": "k", "lockdown": False})
+    mixed = client.get(f"/api/meetings/{mid}/trial/estimate", params={"engine": "gemini"}).json()
+    apart = client.get(f"/api/meetings/{mid}/trial/estimate", params={"engine": "gemini", "mix_tracks": "false"}).json()
+    other = client.get(f"/api/meetings/{mid}/trial/estimate", params={"engine": "local"}).json()
+    assert (mixed["mixed"], apart["mixed"], other["mixed"]) == (True, False, False)
