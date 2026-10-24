@@ -50,6 +50,12 @@ import {
   Users,
   X,
   Download,
+  FileText,
+  Image,
+  Link,
+  Minimize2,
+  Paperclip,
+  Presentation,
 } from "lucide-react";
 import type { LucideIcon, LucideProps } from "lucide-react";
 
@@ -76,6 +82,12 @@ export const AlertIcon = icon(TriangleAlert);
 export const DownloadIcon = icon(Download);
 export const RefreshIcon = icon(RotateCw);
 export const FolderIcon = icon(Folder);
+export const PaperclipIcon = icon(Paperclip);
+export const FileIcon = icon(FileText);
+export const ImageIcon = icon(Image);
+export const SlidesIcon = icon(Presentation);
+export const LinkIcon = icon(Link);
+export const ShrinkIcon = icon(Minimize2);
 export const CloseIcon = icon(X);
 export const MonitorIcon = icon(Monitor);
 export const SunIcon = icon(Sun);

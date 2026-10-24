@@ -5,6 +5,7 @@
         meeting.json                 everything, for re-importing into Trailmix (archive.py)
         Recording.ogg                the call, both sides       } when exporting audio, or for meetings set to
         Tracks/You.ogg, Them.ogg     each side on its own       } "Keep forever"
+        Attachments/Deck.pptx        slides, PDFs and photos added to the meeting (hard-linked too)
 
 Audio is hard-linked, not copied: on the same disk the exported file and Trailmix's own are the same bytes
 under two names, so exporting it takes no extra space, and when Trailmix's 30-day clean-up removes its name
@@ -19,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 import archive
+import attachments
 import audio_store as store
 import database as db
 import documents
@@ -61,6 +63,8 @@ def documents_for(m: dict, cfg: dict) -> dict[str, bytes]:
     if not (include_summary or include_transcript):
         return {}
     summary = meeting_text.summary_with_tasks(m["summary"], db.tasks_for(m["id"])) if include_summary else None
+    if summary and (materials := attachments.materials_markdown(m["id"])):
+        summary += "\n\n" + materials  # after the tasks were ticked, so none of it is taken for one
     transcript = _transcript(m, cfg) if include_transcript else None
     title = _safe_name(m["title"])
     when, length, who = _local_date(m), m.get("duration_sec") or 0, _speakers(m, cfg)
@@ -121,6 +125,12 @@ def export_meeting(m: dict, cfg: dict, include_audio: bool | None = None) -> lis
     for name, data in documents_for(m, cfg).items():
         _write(folder / name, data)
         written.append(folder / name)
+
+    for att_id, rel in attachments.export_names(m["id"]).items():
+        source = attachments.file_of(db.get_attachment(att_id))
+        if source and source.exists():
+            _link(source, folder / rel)
+            written.append(folder / rel)
 
     audio = None
     with_audio = cfg.get("export_audio") if include_audio is None else include_audio

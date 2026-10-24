@@ -109,14 +109,14 @@ final class MainWindow: NSObject, NSWindowDelegate, WKUIDelegate, WKNavigationDe
         }
     }
 
-    /// File and folder pickers on the page (importing transcripts, or a Trailmix export folder).
+    /// File and folder pickers on the page (importing transcripts or a Trailmix export folder, attaching files).
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo,
                  completionHandler: @escaping @MainActor ([URL]?) -> Void) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = parameters.allowsDirectories
         panel.canChooseFiles = !parameters.allowsDirectories
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
-        panel.prompt = parameters.allowsDirectories ? "Import Folder" : "Import"
+        panel.prompt = parameters.allowsDirectories ? "Choose Folder" : "Choose"
         if let window { panel.beginSheetModal(for: window) { completionHandler($0 == .OK ? panel.urls : nil) } }
         else { panel.begin { completionHandler($0 == .OK ? panel.urls : nil) } }
     }

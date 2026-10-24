@@ -52,6 +52,7 @@ final class BundledServer {
         environment["TRAILMIX_DATA_DIR"] = Bundled.dataDirectory.path
         environment["TRAILMIX_UI_DIR"] = resources.appendingPathComponent("ui").path
         environment["TRAILMIX_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
+        environment["TRAILMIX_HELPER"] = Bundle.main.executablePath  // its --ocr reads photos for attachments.py
 
         let backend = resources.appendingPathComponent("backend")
         let server = Process()

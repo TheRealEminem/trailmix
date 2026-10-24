@@ -26,6 +26,7 @@ import { TrailScene } from "./illustrations";
 import LevelMeters from "./LevelMeter";
 import MicPicker from "./MicPicker";
 import { CatchUpAnswers, CatchUpAsk, useCatchUp } from "./CatchUp";
+import { LiveAttachments } from "./Attachments";
 import NotesEditor from "./NotesEditor";
 import SoundCheck from "./SoundCheck";
 import { Collapse, ControlRow, Pulse, Segmented, SpeakerChip, Spinner, SwitchRow } from "./ui";
@@ -489,6 +490,12 @@ function Notepad({ p }: { p: Props }) {
           </p>
         )}
       </div>
+
+      {v.meetingId > 0 && (
+        <div className="mt-8 border-t border-line pt-5 animate-enter" style={delay(90)}>
+          <LiveAttachments meetingId={v.meetingId} />
+        </div>
+      )}
 
       <div className="sticky bottom-4 z-20 mt-10 animate-enter" style={delay(120)}>
         <section aria-label="Live recording" className="glass overflow-hidden !bg-surface shadow-lg">

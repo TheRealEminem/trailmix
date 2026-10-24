@@ -3,6 +3,7 @@
 Every provider is reduced to one call, generate(provider, cfg, prompt, system) -> text, so summaries,
 titles and Q&A work the same whichever one you pick. `cfg` is settings.get_all().
 """
+import base64
 import json
 import os
 import re
@@ -185,7 +186,7 @@ def ollama_ram_needed_gb(cfg: dict) -> float:
 
 
 def _ollama(cfg: dict, prompt: str, system: str | None, keep_alive: str, temperature: float = 0.2,
-            on_text: OnText = None) -> str:
+            on_text: OnText = None, images: list[bytes] | None = None) -> str:
     model = model_for("ollama", cfg)
     if not model:
         raise LLMError(f"Ollama isn't reachable at {cfg['ollama_url']} (or has no models installed)")
@@ -198,6 +199,8 @@ def _ollama(cfg: dict, prompt: str, system: str | None, keep_alive: str, tempera
     }
     if system:
         body["system"] = system
+    if images:
+        body["images"] = [base64.b64encode(b).decode() for b in images]
     url = f"{cfg['ollama_url']}/api/generate"
     if not on_text:
         return _post(url, json=body).json().get("response") or ""
@@ -266,12 +269,16 @@ def _error_text_of(data) -> str:
     return str(err.get("message") if isinstance(err, dict) else err)[:300]
 
 
-def _anthropic(cfg: dict, prompt: str, system: str | None, on_text: OnText = None) -> str:
+def _anthropic(cfg: dict, prompt: str, system: str | None, on_text: OnText = None,
+               images: list[bytes] | None = None) -> str:
     import anthropic
 
     client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"], timeout=600, max_retries=2)
     model = cfg["anthropic_model"]
-    params = {"model": model, "max_tokens": MAX_TOKENS, "messages": [{"role": "user", "content": prompt}]}
+    content = [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                            "data": base64.b64encode(b).decode()}} for b in images or []]
+    content = content + [{"type": "text", "text": prompt}] if content else prompt
+    params = {"model": model, "max_tokens": MAX_TOKENS, "messages": [{"role": "user", "content": content}]}
     if system:
         params["system"] = system
     # If a safety classifier declines, the API re-runs the request on a suitable model.
@@ -305,8 +312,11 @@ def _anthropic(cfg: dict, prompt: str, system: str | None, on_text: OnText = Non
 
 
 def _openai_compatible(base: str, key: str, model: str, prompt: str, system: str | None, pid: str,
-                       on_text: OnText = None) -> str:
-    messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": prompt}]
+                       on_text: OnText = None, images: list[bytes] | None = None) -> str:
+    content = [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(b).decode()}"}}
+               for b in images or []]
+    content = [{"type": "text", "text": prompt}] + content if content else prompt
+    messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": content}]
     body: dict = {"model": model, "messages": messages}
     if pid == "openai":
         body["max_completion_tokens"] = MAX_TOKENS  # newer OpenAI models reject max_tokens / custom temperature
@@ -338,8 +348,10 @@ def _count(usage: dict | None, meta: dict | None) -> None:
         usage["out"] = usage.get("out", 0) + meta.get("candidatesTokenCount", 0) + meta.get("thoughtsTokenCount", 0)
 
 
-def _gemini(cfg: dict, prompt: str, system: str | None, on_text: OnText = None, usage: dict | None = None) -> str:
-    body: dict = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+def _gemini(cfg: dict, prompt: str, system: str | None, on_text: OnText = None, usage: dict | None = None,
+            images: list[bytes] | None = None) -> str:
+    pictures = [{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(b).decode()}} for b in images or []]
+    body: dict = {"contents": [{"role": "user", "parts": [*pictures, {"text": prompt}]}]}
     if system:
         body["systemInstruction"] = {"parts": [{"text": system}]}
     headers = {"x-goog-api-key": cfg["gemini_api_key"]}
@@ -372,25 +384,27 @@ def _gemini(cfg: dict, prompt: str, system: str | None, on_text: OnText = None, 
 
 
 def generate(pid: str, cfg: dict, prompt: str, system: str | None = None, keep_alive: str | None = None,
-             exact: bool = False, on_text: OnText = None, usage: dict | None = None) -> str:
+             exact: bool = False, on_text: OnText = None, usage: dict | None = None,
+             images: list[bytes] | None = None) -> str:
     """`exact`: the same answer every time (no sampling) where the provider allows it, for picking from a list.
     `on_text`: stream the reply, calling it with the text so far as it's written.
-    `usage`: filled with the tokens the provider reported, {"in", "out"}, where it reports them (Gemini)."""
+    `usage`: filled with the tokens the provider reported, {"in", "out"}, where it reports them (Gemini).
+    `images`: JPEG pictures to show the model with the prompt (it has to be one that can see them)."""
     ok, why = configured(pid, cfg)
     if not ok:
         raise LLMError(why)
     if pid == "ollama":
-        text = _ollama(cfg, prompt, system, keep_alive or OLLAMA_KEEP_ALIVE, 0.0 if exact else 0.2, on_text)
+        text = _ollama(cfg, prompt, system, keep_alive or OLLAMA_KEEP_ALIVE, 0.0 if exact else 0.2, on_text, images)
     elif pid == "anthropic":
-        text = _anthropic(cfg, prompt, system, on_text)
+        text = _anthropic(cfg, prompt, system, on_text, images)
     elif pid == "gemini":
-        text = _gemini(cfg, prompt, system, on_text, usage)
+        text = _gemini(cfg, prompt, system, on_text, usage, images)
     elif pid == "custom":
         text = _openai_compatible(cfg["custom_base_url"], cfg["custom_api_key"], cfg["custom_model"], prompt, system, pid,
-                                  on_text)
+                                  on_text, images)
     else:
         text = _openai_compatible(PROVIDERS[pid]["base"], cfg[f"{pid}_api_key"], cfg[f"{pid}_model"], prompt, system, pid,
-                                  on_text)
+                                  on_text, images)
     text = text.strip()
     if not text:
         raise LLMError(f"{label(pid, cfg)} returned an empty response")

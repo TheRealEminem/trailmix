@@ -8,3 +8,5 @@ numpy>=1.26
 psutil>=6.0
 anthropic>=1.0
 fpdf2>=2.8
+pypdfium2>=4.30  # attachments: PDF text, previews and flattening
+pillow-heif>=0.18  # attachments: iPhone (HEIC) photos

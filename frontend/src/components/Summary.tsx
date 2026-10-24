@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import type { Health, Meeting, Task } from "../api";
 import { AlertIcon, CheckIcon, CompassIcon, FlagIcon, LeafIcon, RefreshIcon, SignpostIcon, SparkleIcon } from "./icons";
 import { ContourBadge } from "./illustrations";
+import { AttachedMaterials } from "./Attachments";
 import TaskItem from "./TaskItem";
 import { CopyButton } from "./ui";
 
@@ -87,6 +88,8 @@ export default function Summary({ meeting, health, onResummarize, onToggleTask }
           </div>
         )
       )}
+
+      <AttachedMaterials items={meeting.attachments} />
 
       {canRegenerate && (
         <div className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5">

@@ -12,6 +12,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
+import attachments
 import database as db
 import meeting_text
 
@@ -55,6 +56,7 @@ def record(m: dict, audio: dict | None) -> dict:
         "history": [{k: h[k] for k in ("at", "field", "old_value", "new_value", "why")}
                     for h in reversed(db.history_for(m["id"], limit=100000))],
         "audio": audio,
+        "attachments": attachments.records(m["id"]),
         "keep_audio": bool(m.get("keep_audio")),
         "workspace": (db.get_workspace(m["workspace_id"]) or {}).get("name") if m.get("workspace_id") else None,
         "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -119,6 +121,7 @@ def restore(data: dict, folder: Path | None) -> int | None:
         db.replace_history(meeting_id, data["history"])
     if folder:
         _restore_audio(meeting_id, data.get("audio") or {}, folder)
+    attachments.restore(meeting_id, data.get("attachments") or [], folder)
     return meeting_id
 
 
