@@ -365,6 +365,12 @@ export interface Settings {
   custom_model: string;
   custom_api_key: string;
   transcribe_engine: "local" | "remote" | "gemini";
+  /** Who reads attachments added to the searchable notes: this computer only, or your summary provider */
+  attachments_engine: "local" | "provider";
+  /** Offer to shrink a file bigger than this many MB (a HEIC photo is always offered) */
+  attachments_shrink_over_mb: number;
+  /** Shrink those without asking */
+  attachments_always_shrink: boolean;
   transcribe_url: string;
   transcribe_api_key: string;
   transcribe_model: string;
@@ -447,6 +453,41 @@ export interface Meeting extends MeetingListItem {
   speaker_names: Record<string, string>;
   qa: QA[];
   tasks: Task[];
+  attachments: Attachment[];
+}
+
+/** A file or link kept with a meeting's notes. Its text and digest are only read when it's searchable. */
+export interface Attachment {
+  id: number;
+  kind: "image" | "pdf" | "slides" | "document" | "other" | "link";
+  name: string;
+  mime: string | null;
+  size: number;
+  /** Its size before it was shrunk (null: kept as it was). */
+  original_size: number | null;
+  url: string | null;
+  caption: string;
+  /** In the searchable notes: read, digested, searchable, and part of what Ask sees (never tasks). */
+  searchable: boolean;
+  status: "ready" | "reading" | "error";
+  /** What went wrong, or a note about how it was read. */
+  error: string | null;
+  digest: string | null;
+  has_text: boolean;
+  has_preview: boolean;
+  can_shrink: boolean;
+  created_at: string;
+}
+
+/** A big upload waiting for "shrink it?". */
+export interface PendingAttachment {
+  id: string;
+  name: string;
+  kind: Attachment["kind"];
+  size: number;
+  /** About how big it would be shrunk. */
+  estimate: number;
+  searchable: boolean;
 }
 
 export interface ProviderInfo {
@@ -917,6 +958,28 @@ export const api = {
     meeting_id: number | null;
   }) => request<ProblemReport>("/report", json("POST", r)),
   /** One file as the request body (streamed to disk on the server, however big). */
+  addAttachment: (meetingId: number, file: File, searchable: boolean) =>
+    request<{ attachment?: Attachment; pending?: PendingAttachment }>(
+      `/meetings/${meetingId}/attachments?name=${encodeURIComponent(file.name)}&searchable=${searchable}`,
+      { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream" } },
+    ),
+  finishAttachment: (meetingId: number, p: PendingAttachment, shrink: boolean) =>
+    request<Attachment>(
+      `/meetings/${meetingId}/attachments/pending/${p.id}`,
+      json("POST", { name: p.name, shrink, searchable: p.searchable }),
+    ),
+  cancelAttachment: (meetingId: number, pendingId: string) =>
+    request<void>(`/meetings/${meetingId}/attachments/pending/${pendingId}`, { method: "DELETE" }),
+  addAttachmentLink: (meetingId: number, url: string, searchable: boolean) =>
+    request<Attachment>(`/meetings/${meetingId}/attachments/link`, json("POST", { url, searchable })),
+  updateAttachment: (id: number, patch: { searchable?: boolean; name?: string; caption?: string }) =>
+    request<Attachment>(`/attachments/${id}`, json("PATCH", patch)),
+  shrinkAttachment: (id: number) => request<Attachment>(`/attachments/${id}/shrink`, json("POST")),
+  rereadAttachment: (id: number) => request<Attachment>(`/attachments/${id}/read`, json("POST")),
+  deleteAttachment: (id: number) => request<void>(`/attachments/${id}`, { method: "DELETE" }),
+  attachmentPath: (id: number) => request<{ path: string }>(`/attachments/${id}/reveal`, json("POST")),
+  attachmentUrl: (id: number, download = false) => `/api/attachments/${id}/file${download ? "?download=true" : ""}`,
+  attachmentPreviewUrl: (id: number) => `/api/attachments/${id}/preview`,
   importFile: (file: File) =>
     request<FileImport>(
       `/import/file?name=${encodeURIComponent(file.name)}&modified=${file.lastModified || 0}`,
