@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Renders the logo (frontend/public/favicon.svg) into a macOS .icns file: scripts/make-icon.sh <out.icns>
+# Renders the full-bleed logo (scripts/AppIcon.svg) into a macOS .icns file: scripts/make-icon.sh <out.icns>
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${1:?usage: make-icon.sh <out.icns>}"
@@ -9,21 +9,20 @@ trap 'rm -rf "$TMP"' EXIT
 # The rendered icon is kept in scripts/AppIcon.icns (committed), because Quick Look needs a desktop session and
 # CI has none. Delete that file, or change the logo, to render it again.
 CACHED="$ROOT/scripts/AppIcon.icns"
-if [ -f "$CACHED" ] && [ "$CACHED" -nt "$ROOT/frontend/public/favicon.svg" ]; then
+if [ -f "$CACHED" ] && [ "$CACHED" -nt "$ROOT/scripts/AppIcon.svg" ]; then
   mkdir -p "$(dirname "$OUT")"
   cp "$CACHED" "$OUT"
   exit 0
 fi
 
-# Quick Look renders the SVG; macOS icons sit inside a margin (824px artwork on a 1024px canvas).
-if qlmanage -t -s 1024 -o "$TMP" "$ROOT/frontend/public/favicon.svg" >/dev/null 2>&1 && [ -f "$TMP/favicon.svg.png" ]; then
-  sips -z 824 824 "$TMP/favicon.svg.png" --out "$TMP/art.png" >/dev/null
-  sips -p 1024 1024 "$TMP/art.png" --out "$TMP/favicon.svg.png" >/dev/null
+# Quick Look renders the SVG. The artwork fills the whole 1024px square, with no rounded corners or margin: newer
+# macOS masks icons itself, and one that arrives pre-masked and padded is shown small on a gray plate.
+if qlmanage -t -s 1024 -o "$TMP" "$ROOT/scripts/AppIcon.svg" >/dev/null 2>&1 && [ -f "$TMP/AppIcon.svg.png" ]; then
   SET="$TMP/AppIcon.iconset"
   mkdir -p "$SET"
   for s in 16 32 128 256 512; do
-    sips -z $s $s "$TMP/favicon.svg.png" --out "$SET/icon_${s}x${s}.png" >/dev/null
-    sips -z $((s * 2)) $((s * 2)) "$TMP/favicon.svg.png" --out "$SET/icon_${s}x${s}@2x.png" >/dev/null
+    sips -z $s $s "$TMP/AppIcon.svg.png" --out "$SET/icon_${s}x${s}.png" >/dev/null
+    sips -z $((s * 2)) $((s * 2)) "$TMP/AppIcon.svg.png" --out "$SET/icon_${s}x${s}@2x.png" >/dev/null
   done
   mkdir -p "$(dirname "$OUT")"
   iconutil -c icns "$SET" -o "$OUT"
