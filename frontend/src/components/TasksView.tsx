@@ -4,22 +4,25 @@ import type { TaskWithMeeting, WorkspaceFilter } from "../api";
 import { formatLongDate } from "../format";
 import { CheckSquareIcon } from "./icons";
 import { ContourBadge } from "./illustrations";
-import TaskItem from "./TaskItem";
+import TaskItem, { useTracker } from "./TaskItem";
 import { PageHeader, Skeleton, Switch } from "./ui";
+import type { ToastState } from "./ui";
 import { inWorkspace } from "./Workspaces";
 
 interface Props {
   onOpenMeeting: (id: number) => void;
   onChanged: () => void;
   onError: (msg: string) => void;
+  onToast: (t: ToastState) => void;
   /** Only tasks from meetings in this workspace. */
   workspace: WorkspaceFilter;
 }
 
 /** Every action item from every meeting (in the workspace you're in), with the open ones first. */
-export default function TasksView({ onOpenMeeting, onChanged, onError, workspace }: Props) {
+export default function TasksView({ onOpenMeeting, onChanged, onError, onToast, workspace }: Props) {
   const [tasks, setTasks] = useState<TaskWithMeeting[] | null>(null);
   const [showDone, setShowDone] = useState(false);
+  const tracker = useTracker();
 
   const load = () =>
     api
@@ -39,6 +42,43 @@ export default function TasksView({ onOpenMeeting, onChanged, onError, workspace
     } catch (e) {
       onError((e as Error).message);
       void load();
+    }
+  };
+
+  const remove = async (t: TaskWithMeeting) => {
+    setTasks((xs) => xs?.filter((x) => x.id !== t.id) ?? null);
+    try {
+      await api.deleteTask(t.id);
+      onChanged();
+      onToast({
+        tone: "success",
+        text: "Task deleted.",
+        action: {
+          label: "Undo",
+          run: () =>
+            void api
+              .restoreTask(t.id)
+              .then(() => {
+                void load();
+                onChanged();
+              })
+              .catch((e: Error) => onError(e.message)),
+        },
+      });
+    } catch (e) {
+      onError((e as Error).message);
+      void load();
+    }
+  };
+
+  const send = async (t: TaskWithMeeting) => {
+    try {
+      const { ticket } = await api.sendTask(t.id);
+      setTasks((xs) => xs?.map((x) => (x.id === t.id ? { ...x, ticket } : x)) ?? null);
+      onToast({ tone: "success", text: `Sent to ${ticket.name}.` });
+    } catch (e) {
+      onError((e as Error).message);
+      void load(); // it may have been sent already
     }
   };
 
@@ -100,7 +140,14 @@ export default function TasksView({ onOpenMeeting, onChanged, onError, workspace
               </button>
               <div className="space-y-px">
                 {g.items.map((t) => (
-                  <TaskItem key={t.id} text={t.text} done={t.done} onToggle={(d) => void toggle(t, d)} />
+                  <TaskItem
+                    key={t.id}
+                    task={t}
+                    tracker={tracker}
+                    onToggle={(d) => void toggle(t, d)}
+                    onDelete={() => void remove(t)}
+                    onSend={() => send(t)}
+                  />
                 ))}
               </div>
             </section>

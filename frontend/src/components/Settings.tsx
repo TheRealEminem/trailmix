@@ -18,6 +18,7 @@ import type {
   ProviderId,
   RecordingLaws as RecordingLawsT,
   Settings as SettingsT,
+  Tracker,
 } from "../api";
 import { tildePath } from "../format";
 import { useBigSpend } from "../spend";
@@ -53,6 +54,7 @@ import {
   CompassIcon,
   PaperclipIcon,
   ShrinkIcon,
+  CheckSquareIcon,
 } from "./icons";
 import {
   OrganizeProgress,
@@ -192,10 +194,13 @@ function SecretField({
   hint,
   onSave,
   label,
+  what = "API key",
 }: {
   hint: string | null | undefined;
   onSave: (v: string) => void;
   label: string;
+  /** What it is, for the placeholder. */
+  what?: string;
 }) {
   const [v, setV] = useState("");
   return (
@@ -207,7 +212,7 @@ function SecretField({
         spellCheck={false}
         aria-label={label}
         placeholder={
-          hint ? `Saved (${hint}), paste to replace` : "Paste API key"
+          hint ? `Saved (${hint}), paste to replace` : `Paste ${what}`
         }
         onChange={(e) => setV(e.target.value)}
         onKeyDown={(e) => {
@@ -2305,6 +2310,8 @@ export default function Settings({
         />
       </Section>
 
+      <TasksSection s={s} save={save} />
+
       <Section
         icon={<BackpackIcon size={16} />}
         title="Export"
@@ -2496,6 +2503,103 @@ export default function Settings({
         )}
       </Section>
     </div>
+  );
+}
+
+/** Where "Send to …" on a task makes a ticket: one picker of trackers, then what the chosen one needs, as its rows. */
+function TasksSection({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT>) => Promise<void> }) {
+  const [trackers, setTrackers] = useState<Tracker[]>([]);
+  const [projects, setProjects] = useState<{ id: string; name: string }[] | null>(null);
+  const [check, setCheck] = useState<{ ok: boolean; text: string } | "busy" | null>(null);
+  const tracker = trackers.find((t) => t.id === s.task_tracker);
+  const values = s as unknown as Record<string, string>;
+  const address = tracker?.fields.find((f) => f.kind === "url")?.key;
+
+  useEffect(() => {
+    api
+      .trackers()
+      .then((t) => setTrackers(t.trackers))
+      .catch(() => undefined);
+  }, []);
+
+  // Its projects, for the picker (reading only), whenever it or where it is changes.
+  const loadProjects = async (report: boolean) => {
+    if (!tracker) return;
+    if (report) setCheck("busy");
+    try {
+      const found = await api.trackerProjects(tracker.id);
+      setProjects(found);
+      if (report)
+        setCheck({ ok: true, text: `${tracker.name} is answering, with ${found.length} project${found.length === 1 ? "" : "s"}.` });
+    } catch (e) {
+      setProjects(null);
+      if (report) setCheck({ ok: false, text: (e as Error).message });
+    }
+  };
+  useEffect(() => {
+    setCheck(null);
+    void loadProjects(false);
+  }, [tracker?.id, address && values[address], s.secret_hints]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <Section
+      icon={<CheckSquareIcon size={16} />}
+      id="tasks"
+      title="Tasks"
+      blurb="Send a meeting's action items on to where you keep track of work. Each task goes once, with a link back to its meeting."
+      delay={230}
+    >
+      <Row label="Send tasks to" hint={tracker ? tracker.blurb : "Nowhere: tasks stay in Trailmix."}>
+        <Select
+          label="Send tasks to"
+          value={s.task_tracker}
+          onChange={(v) => void save({ task_tracker: v })}
+          options={[{ value: "", label: "Nowhere" }, ...trackers.map((t) => ({ value: t.id, label: t.name }))]}
+        />
+      </Row>
+      {tracker?.fields.map((f) => (
+        <Row key={f.key} label={f.label} hint={f.hint}>
+          {f.kind === "secret" ? (
+            <SecretField
+              label={f.label}
+              what={f.label.toLowerCase()}
+              hint={s.secret_hints?.[f.key]}
+              onSave={(v) => void save({ [f.key]: v })}
+            />
+          ) : f.kind === "project" ? (
+            <Select
+              label={f.label}
+              value={values[f.key] ?? ""}
+              onChange={(v) => void save({ [f.key]: v })}
+              options={[
+                { value: "", label: "No project" },
+                ...(projects ?? []).map((p) => ({ value: p.id, label: p.name })),
+                // the saved one, while the list isn't there (it's closed, or the project's gone)
+                ...(values[f.key] && !projects?.some((p) => p.id === values[f.key])
+                  ? [{ value: values[f.key], label: projects ? "A project that's gone" : "The saved project" }]
+                  : []),
+              ]}
+            />
+          ) : (
+            <TextField
+              label={f.label}
+              mono
+              value={values[f.key] ?? ""}
+              placeholder={f.placeholder}
+              onSave={(v) => void save({ [f.key]: v })}
+            />
+          )}
+        </Row>
+      ))}
+      {tracker && (
+        <div className="py-4">
+          <button className="btn btn-sm btn-soft" disabled={check === "busy"} onClick={() => void loadProjects(true)}>
+            Check the connection
+          </button>
+          <TestResult state={check} />
+        </div>
+      )}
+    </Section>
   );
 }
 

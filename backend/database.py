@@ -44,7 +44,9 @@ CREATE TABLE IF NOT EXISTS action_items (
     meeting_id  INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
     position    INTEGER NOT NULL,
     text        TEXT NOT NULL,
-    done        INTEGER NOT NULL DEFAULT 0
+    done        INTEGER NOT NULL DEFAULT 0,
+    deleted     INTEGER NOT NULL DEFAULT 0,  -- you removed it: hidden, and kept hidden when the notes are rewritten
+    ticket_json TEXT                         -- where it was sent: {"tracker", "id", "url", "at"} (trackers.py)
 );
 CREATE INDEX IF NOT EXISTS action_items_meeting ON action_items(meeting_id);
 
@@ -234,6 +236,10 @@ def init_db() -> None:
                 conn.execute(f"ALTER TABLE usage ADD COLUMN {name} INTEGER")
         if "template" not in {r["name"] for r in conn.execute("PRAGMA table_info(workspaces)")}:
             conn.execute("ALTER TABLE workspaces ADD COLUMN template TEXT NOT NULL DEFAULT ''")  # its note style
+        tasks_have = {r["name"] for r in conn.execute("PRAGMA table_info(action_items)")}
+        for name, decl in (("deleted", "INTEGER NOT NULL DEFAULT 0"), ("ticket_json", "TEXT")):
+            if name not in tasks_have:
+                conn.execute(f"ALTER TABLE action_items ADD COLUMN {name} {decl}")
         have = {r["name"] for r in conn.execute("PRAGMA table_info(meetings)")}
         for name, decl in _ADDED_COLUMNS.items():
             if name not in have:
@@ -735,43 +741,77 @@ def _norm(text: str) -> str:
 
 
 def replace_tasks(meeting_id: int, texts: list[str]) -> None:
-    """Replaces a meeting's action items, keeping 'done' on items whose text survived a regenerate."""
+    """Replaces a meeting's action items. An item whose text survived a regenerate keeps what you did to it: ticked
+    off, deleted, or sent to your task tracker."""
     with connect() as conn:
-        done = {_norm(r["text"]) for r in conn.execute(
-            "SELECT text FROM action_items WHERE meeting_id = ? AND done = 1", (meeting_id,))}
+        kept = {_norm(r["text"]): r for r in conn.execute(
+            "SELECT text, done, deleted, ticket_json FROM action_items WHERE meeting_id = ? "
+            "AND (done = 1 OR deleted = 1 OR ticket_json IS NOT NULL)", (meeting_id,))}
         conn.execute("DELETE FROM action_items WHERE meeting_id = ?", (meeting_id,))
+        rows = []
+        for i, t in enumerate(texts):
+            k = kept.get(_norm(t))
+            rows.append((meeting_id, i, t, k["done"] if k else 0, k["deleted"] if k else 0, k["ticket_json"] if k else None))
         conn.executemany(
-            "INSERT INTO action_items (meeting_id, position, text, done) VALUES (?, ?, ?, ?)",
-            [(meeting_id, i, t, int(_norm(t) in done)) for i, t in enumerate(texts)],
+            "INSERT INTO action_items (meeting_id, position, text, done, deleted, ticket_json) VALUES (?, ?, ?, ?, ?, ?)",
+            rows,
         )
 
 
-def tasks_for(meeting_id: int) -> list[dict]:
+def _task(row) -> dict:
+    out = {**dict(row), "done": bool(row["done"])}
+    if "deleted" in out:
+        out["deleted"] = bool(out["deleted"])
+    ticket = out.pop("ticket_json", None)
+    out["ticket"] = json.loads(ticket) if ticket else None
+    return out
+
+
+def tasks_for(meeting_id: int, *, deleted: bool = False) -> list[dict]:
+    """The meeting's action items in order. With deleted=True, also the ones you deleted (marked so): for keeping
+    them deleted in exports and archives, which line them up with the summary's bullets."""
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, text, done FROM action_items WHERE meeting_id = ? ORDER BY position", (meeting_id,)
+            f"SELECT id, text, done, deleted, ticket_json FROM action_items WHERE meeting_id = ? "
+            f"{'' if deleted else 'AND deleted = 0'} ORDER BY position", (meeting_id,)
         ).fetchall()
-    return [{**dict(r), "done": bool(r["done"])} for r in rows]
+    return [_task(r) for r in rows]
 
 
 def all_tasks() -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
-            """SELECT a.id, a.text, a.done, a.meeting_id, m.title AS meeting_title, m.created_at AS meeting_created_at,
-                      m.workspace_id
+            """SELECT a.id, a.text, a.done, a.ticket_json, a.meeting_id, m.title AS meeting_title,
+                      m.created_at AS meeting_created_at, m.workspace_id
                FROM action_items a JOIN meetings m ON m.id = a.meeting_id
+               WHERE a.deleted = 0
                ORDER BY a.done, m.created_at DESC, m.id DESC, a.position"""
         ).fetchall()
-    return [{**dict(r), "done": bool(r["done"])} for r in rows]
+    return [_task(r) for r in rows]
 
 
-def set_task_done(task_id: int, done: bool) -> int | None:
-    """Returns the task's meeting id, or None if there's no such task."""
+def get_task(task_id: int) -> dict | None:
+    """One action item, deleted or not, with its meeting's id."""
+    with connect() as conn:
+        row = conn.execute("SELECT id, meeting_id, text, done, deleted, ticket_json FROM action_items WHERE id = ?",
+                           (task_id,)).fetchone()
+    return _task(row) if row else None
+
+
+def update_task(task_id: int, *, done: bool | None = None, deleted: bool | None = None,
+                ticket: dict | None = None) -> int | None:
+    """Ticks a task off (or back on), deletes or restores it, or records the ticket it became. Returns the task's
+    meeting id, or None if there's no such task."""
     with connect() as conn:
         row = conn.execute("SELECT meeting_id FROM action_items WHERE id = ?", (task_id,)).fetchone()
         if not row:
             return None
-        conn.execute("UPDATE action_items SET done = ? WHERE id = ?", (int(done), task_id))
+        if done is not None:
+            conn.execute("UPDATE action_items SET done = ? WHERE id = ?", (int(done), task_id))
+        if deleted is not None:
+            conn.execute("UPDATE action_items SET deleted = ? WHERE id = ?", (int(deleted), task_id))
+        if ticket is not None:
+            conn.execute("UPDATE action_items SET ticket_json = ? WHERE id = ?", (json.dumps(ticket), task_id))
     return row["meeting_id"]
 
 

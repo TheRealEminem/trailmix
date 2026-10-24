@@ -702,12 +702,14 @@ export function useConfirm(): [(o: ConfirmOptions) => Promise<boolean>, ReactNod
 export interface ToastState {
   tone: "error" | "success";
   text: string;
+  /** A button on it, e.g. Undo. The toast stays a little longer to give you time. */
+  action?: { label: string; run: () => void };
 }
 
 export function Toast({ toast, onClose }: { toast: ToastState | null; onClose: () => void }) {
   useEffect(() => {
     if (!toast || toast.tone === "error") return; // errors stay until dismissed
-    const t = setTimeout(onClose, 3400);
+    const t = setTimeout(onClose, toast.action ? 6000 : 3400);
     return () => clearTimeout(t);
   }, [toast, onClose]);
 
@@ -723,6 +725,17 @@ export function Toast({ toast, onClose }: { toast: ToastState | null; onClose: (
           {error ? <AlertIcon size={16} /> : <CheckIcon size={16} />}
         </span>
         <span className="min-w-0 self-center break-words leading-relaxed">{toast.text}</span>
+        {toast.action && (
+          <button
+            className="btn btn-sm btn-ghost shrink-0 self-center"
+            onClick={() => {
+              toast.action?.run();
+              onClose();
+            }}
+          >
+            {toast.action.label}
+          </button>
+        )}
         <button onClick={onClose} className="icon-btn h-7 w-7 shrink-0" aria-label="Dismiss">
           <CloseIcon size={16} />
         </button>

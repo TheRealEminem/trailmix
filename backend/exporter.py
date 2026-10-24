@@ -62,7 +62,7 @@ def documents_for(m: dict, cfg: dict) -> dict[str, bytes]:
     include_transcript = cfg["export_transcript"] and bool(m.get("transcript"))
     if not (include_summary or include_transcript):
         return {}
-    summary = meeting_text.summary_with_tasks(m["summary"], db.tasks_for(m["id"])) if include_summary else None
+    summary = meeting_text.summary_with_tasks(m["summary"], db.tasks_for(m["id"], deleted=True)) if include_summary else None
     if summary and (materials := attachments.materials_markdown(m["id"])):
         summary += "\n\n" + materials  # after the tasks were ticked, so none of it is taken for one
     transcript = _transcript(m, cfg) if include_transcript else None

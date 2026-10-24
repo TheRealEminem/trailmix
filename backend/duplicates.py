@@ -202,7 +202,7 @@ def merge(a_id: int, b_id: int, score_: float | None = None) -> int:
                                   + (json.loads(gone["tags_json"]) if gone.get("tags_json") else [])))
         if tags:
             changes["tags_json"] = tags
-        record = {"meeting": {k: v for k, v in gone.items()}, "tasks": db.tasks_for(gone["id"]),
+        record = {"meeting": {k: v for k, v in gone.items()}, "tasks": db.tasks_for(gone["id"], deleted=True),
                   "before": {"version": before, "summary": keep.get("summary"), "summary_provider": keep.get("summary_provider"),
                              "summary_model": keep.get("summary_model"), "title": keep["title"],
                              "title_auto": keep.get("title_auto"), "workspace_id": keep.get("workspace_id")},
@@ -245,8 +245,11 @@ def unmerge(meeting_id: int) -> int:
         db.update_meeting(back, why="split off again from the meeting it was merged into", status="done",
                           not_duplicate_json=[meeting_id], **fields)
         with db.connect() as conn:
-            conn.executemany("INSERT INTO action_items (meeting_id, position, text, done) VALUES (?, ?, ?, ?)",
-                             [(back, i, t["text"], int(t["done"])) for i, t in enumerate(record["tasks"])])
+            conn.executemany("INSERT INTO action_items (meeting_id, position, text, done, deleted, ticket_json) "
+                             "VALUES (?, ?, ?, ?, ?, ?)",
+                             [(back, i, t["text"], int(t["done"]), int(t.get("deleted") or 0),
+                               json.dumps(t["ticket"]) if t.get("ticket") else None)
+                              for i, t in enumerate(record["tasks"])])
         before = record["before"]
         if before.get("version") and db.get_transcript_version(before["version"]):
             pipeline.apply_version(meeting_id, before["version"])
