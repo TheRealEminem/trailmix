@@ -3,7 +3,7 @@ importing it rebuilds the meeting exactly (notes, transcript, tasks and their ti
 the recording when it's alongside).
 
     {"format": "trailmix-meeting", "version": 1, "uid": …, "title": …, "created_at": …, "duration_sec": …,
-     "speakers": {"You": "Dale", "Them": "Dana"}, "summary": "## Overview…", "tasks": [{"text", "done"}],
+     "speakers": {"You": "Dale", "Them": "Dana"}, "summary": "## Overview…", "tasks": [{"text", "done", "deleted"?, "ticket"?}],
      "bookmarks": [{"t", "note"}], "my_notes": [{"t", "text"}], "qa": […], "transcript": [{"start", "end", "speaker", "text"}],
      "audio": {"recording": "Recording.ogg", "tracks": {"mic": "Tracks/You.ogg", "system": "Tracks/Them.ogg"}}}
 """
@@ -42,7 +42,8 @@ def record(m: dict, audio: dict | None) -> dict:
         "tags": json.loads(m["tags_json"]) if m.get("tags_json") else [],
         "tags_model": m.get("tags_model"),
         "template": m.get("requested_template"),
-        "tasks": [{"text": t["text"], "done": bool(t["done"])} for t in db.tasks_for(m["id"])],
+        "tasks": [{"text": t["text"], "done": t["done"], **({"deleted": True} if t["deleted"] else {}),
+                   **({"ticket": t["ticket"]} if t["ticket"] else {})} for t in db.tasks_for(m["id"], deleted=True)],
         "bookmarks": meeting_text.bookmarks(m),
         "my_notes": meeting_text.my_notes(m),
         "qa": json.loads(m["qa_json"]) if m.get("qa_json") else [],
@@ -107,9 +108,10 @@ def restore(data: dict, folder: Path | None) -> int | None:
         db.update_meeting(meeting_id, workspace_id=space["id"] if space else db.create_workspace(data["workspace"]))
     tasks = data.get("tasks") or []
     db.replace_tasks(meeting_id, [t["text"] for t in tasks])
-    for i, t in enumerate(db.tasks_for(meeting_id)):
-        if i < len(tasks) and tasks[i].get("done"):
-            db.set_task_done(t["id"], True)
+    for i, t in enumerate(db.tasks_for(meeting_id, deleted=True)):
+        if i < len(tasks):
+            db.update_task(t["id"], done=bool(tasks[i].get("done")), deleted=bool(tasks[i].get("deleted")),
+                           ticket=tasks[i].get("ticket") or None)
     for v in data.get("versions") or []:
         segs = [{k: s.get(k) for k in ("start", "end", "speaker", "text")} for s in v.get("transcript", []) if s.get("text")]
         db.add_transcript_version(

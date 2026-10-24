@@ -265,6 +265,25 @@ export interface Task {
   id: number;
   text: string;
   done: boolean;
+  /** The ticket it became in your task tracker (sent once). */
+  ticket: Ticket | null;
+}
+
+export interface Ticket {
+  tracker: string;
+  /** The tracker's name, e.g. "Traverse". */
+  name: string;
+  id: string;
+  url: string;
+  at: string;
+}
+
+/** A place tasks can be sent to (Settings → Tasks), and what it needs set up, each field a setting. */
+export interface Tracker {
+  id: string;
+  name: string;
+  blurb: string;
+  fields: { key: string; label: string; hint: string; kind: "url" | "secret" | "project"; placeholder: string }[];
 }
 
 export interface TaskWithMeeting extends Task {
@@ -417,6 +436,11 @@ export interface Settings {
   attachments_shrink_over_mb: number;
   /** Shrink those without asking */
   attachments_always_shrink: boolean;
+  /** Where "Send to …" on a task makes a ticket: "" (nowhere) or a tracker's id. */
+  task_tracker: string;
+  traverse_url: string;
+  traverse_api_key: string;
+  traverse_project: string;
   transcribe_url: string;
   transcribe_api_key: string;
   transcribe_model: string;
@@ -501,6 +525,8 @@ export interface Meeting extends MeetingListItem {
   speaker_names: Record<string, string>;
   qa: QA[];
   tasks: Task[];
+  /** How many of its tasks you deleted (when it's all of them, there's no Action Items section). */
+  tasks_deleted: number;
   attachments: Attachment[];
 }
 
@@ -1145,6 +1171,11 @@ export const api = {
     ),
   tasks: () => request<TaskWithMeeting[]>("/tasks"),
   setTaskDone: (id: number, done: boolean) => request<{ ok: true }>(`/tasks/${id}`, json("PATCH", { done })),
+  deleteTask: (id: number) => request<{ ok: true }>(`/tasks/${id}`, { method: "DELETE" }),
+  restoreTask: (id: number) => request<{ ok: true }>(`/tasks/${id}`, json("PATCH", { deleted: false })),
+  sendTask: (id: number) => request<{ ticket: Ticket }>(`/tasks/${id}/send`, json("POST")),
+  trackers: () => request<{ active: string; trackers: Tracker[] }>("/trackers"),
+  trackerProjects: (id: string) => request<{ id: string; name: string }[]>(`/trackers/${id}/projects`),
   exportNow: (id: number) => request<{ paths: string[] }>(`/meetings/${id}/export`, json("POST")),
   deleteAudio: (id: number) => request<void>(`/meetings/${id}/audio`, { method: "DELETE" }),
   deleteMeeting: (id: number) => request<void>(`/meetings/${id}`, { method: "DELETE" }),

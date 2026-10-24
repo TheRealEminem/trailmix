@@ -99,6 +99,11 @@ DEFAULTS = {
     "auto_import": [],                  # sources whose new meetings come in by themselves (sources.py)
     "auto_import_keep_notes": True,     # with their notes as the summary (off: Trailmix writes new ones)
     "watch_folders": [],                # folders whose new recordings and transcripts come in by themselves (watched.py)
+    # Tasks: where "Send to …" on a task makes a ticket (trackers.py). Empty: nowhere, and it isn't offered.
+    "task_tracker": "",
+    "traverse_url": "http://127.0.0.1:8793",
+    "traverse_api_key": "",             # only when Traverse's sign-in is on (its access token)
+    "traverse_project": "",             # a Traverse project's id; empty: no project
     # Export
     "auto_export": False,
     "export_dir": str(Path.home() / "Documents" / "Trailmix"),
@@ -124,6 +129,7 @@ CHOICES = {
     "live_notes": ("auto", "on", "off"),
     "duplicates": ("merge", "ask", "keep"),
     "attachments_engine": ("local", "provider"),
+    "task_tracker": ("", "traverse"),
 }
 
 
@@ -197,7 +203,7 @@ def update(changes: dict, internal: bool = False) -> dict:
         folder = Path(changes["export_dir"]).expanduser()
         if not folder.is_absolute():
             raise ValueError("Export folder must be an absolute path (or start with ~)")
-    for key in ("ollama_url", "custom_base_url", "transcribe_url"):
+    for key in ("ollama_url", "custom_base_url", "transcribe_url", "traverse_url"):
         v = changes.get(key)
         if v and not v.startswith(("http://", "https://")):
             raise ValueError(f"{key.replace('_', ' ')} must start with http:// or https://")

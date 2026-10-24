@@ -37,6 +37,7 @@ import {
   Power,
   RotateCw,
   Search,
+  Send,
   Share,
   Signpost,
   SlidersHorizontal,
@@ -87,6 +88,7 @@ export const FileIcon = icon(FileText);
 export const ImageIcon = icon(Image);
 export const SlidesIcon = icon(Presentation);
 export const LinkIcon = icon(Link);
+export const SendIcon = icon(Send);
 export const ShrinkIcon = icon(Minimize2);
 export const CloseIcon = icon(X);
 export const MonitorIcon = icon(Monitor);

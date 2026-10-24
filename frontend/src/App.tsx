@@ -661,6 +661,34 @@ export default function App() {
     void refreshTasks();
   };
 
+  const handleDeleteTask = async (t: Task) => {
+    if (!meeting) return;
+    const id = meeting.id;
+    setMeeting({ ...meeting, tasks: meeting.tasks.filter((x) => x.id !== t.id), tasks_deleted: meeting.tasks_deleted + 1 });
+    await guarded(async () => {
+      await api.deleteTask(t.id);
+      setToast({
+        tone: "success",
+        text: "Task deleted.",
+        action: {
+          label: "Undo",
+          run: () => void guarded(() => api.restoreTask(t.id), id).then(() => void refreshTasks()),
+        },
+      });
+    }, id);
+    void refreshTasks();
+  };
+
+  const handleSendTask = async (t: Task) => {
+    if (!meeting) return;
+    const id = meeting.id;
+    await guarded(async () => {
+      const { ticket } = await api.sendTask(t.id);
+      setToast({ tone: "success", text: `Sent to ${ticket.name}.` });
+    }, id);
+    void refreshTasks();
+  };
+
   const handleQuit = async () => {
     const ok = await confirm({
       title: "Quit Trailmix?",
@@ -854,6 +882,7 @@ export default function App() {
               onOpenMeeting={openMeeting}
               onChanged={() => void refreshTasks()}
               onError={fail}
+              onToast={setToast}
             />
           ) : view === "import" ? (
             <ImportPanel
@@ -1003,6 +1032,8 @@ export default function App() {
                 void guarded(() => api.setSpeakers(meeting.id, n), meeting.id)
               }
               onToggleTask={(t, d) => void handleToggleTask(t, d)}
+              onDeleteTask={(t) => void handleDeleteTask(t)}
+              onSendTask={handleSendTask}
               onError={fail}
             />
           ) : (

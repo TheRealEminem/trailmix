@@ -55,6 +55,7 @@ import resources
 import settings
 import telemetry
 import templates
+import trackers
 import model_ranks
 import recording_laws
 import pricing
@@ -316,7 +317,8 @@ class BookmarksPut(BaseModel):
 
 
 class TaskPatch(BaseModel):
-    done: bool
+    done: bool | None = None
+    deleted: bool | None = None  # false: back from being deleted (Undo)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
@@ -342,7 +344,9 @@ def _present(m: dict) -> dict:
     out["my_notes"] = meeting_text.my_notes(m)
     out["speaker_names"] = meeting_text.speaker_names(m, cfg)
     out["qa"] = json.loads(m["qa_json"]) if m.get("qa_json") else []
-    out["tasks"] = db.tasks_for(m["id"])
+    tasks = db.tasks_for(m["id"], deleted=True)
+    out["tasks"] = [t for t in tasks if not t["deleted"]]
+    out["tasks_deleted"] = len(tasks) - len(out["tasks"])  # all of them deleted: no Action Items section at all
     out["attachments"] = [attachments.present(a) for a in db.attachments_for(m["id"])]
     out["summary_draft"] = None if m["summary"] else pipeline.draft(m["id"])  # the notes so far, while they're written
     out["title_auto"] = bool(m["title_auto"])
@@ -2248,11 +2252,53 @@ def list_tasks():
 
 @app.patch("/api/tasks/{task_id}")
 def update_task(task_id: int, body: TaskPatch):
-    meeting_id = db.set_task_done(task_id, body.done)
+    meeting_id = db.update_task(task_id, done=body.done, deleted=body.deleted)
     if meeting_id is None:
         raise HTTPException(404, "Task not found")
     _reexport(meeting_id)
     return {"ok": True}
+
+
+@app.delete("/api/tasks/{task_id}")
+def delete_task(task_id: int):
+    """Hides the task without ticking it off. It stays hidden when the notes are rewritten, and is left out of
+    exports; PATCH {"deleted": false} brings it back."""
+    meeting_id = db.update_task(task_id, deleted=True)
+    if meeting_id is None:
+        raise HTTPException(404, "Task not found")
+    _reexport(meeting_id)
+    return {"ok": True}
+
+
+@app.post("/api/tasks/{task_id}/send")
+def send_task(task_id: int, request: Request):
+    """Makes a ticket from the task in the tracker picked in Settings → Tasks (trackers.py), once."""
+    try:
+        ticket = trackers.send(task_id, str(request.base_url))
+    except LookupError:
+        raise HTTPException(404, "Task not found")
+    except trackers.AlreadySent:
+        raise HTTPException(409, "This task was already sent")
+    except trackers.TrackerError as e:
+        raise HTTPException(502, str(e))
+    _reexport(db.get_task(task_id)["meeting_id"])  # meeting.json carries the ticket
+    return {"ticket": ticket}
+
+
+@app.get("/api/trackers")
+def list_trackers():
+    return trackers.describe()
+
+
+@app.get("/api/trackers/{tracker_id}/projects")
+def tracker_projects(tracker_id: str):
+    """The tracker's projects, for the project picker, read with the saved settings."""
+    try:
+        return trackers.get(tracker_id).projects(settings.get_all())
+    except KeyError:
+        raise HTTPException(404, "No such tracker")
+    except trackers.TrackerError as e:
+        raise HTTPException(502, str(e))
 
 
 # ── Files ──────────────────────────────────────────────────────────────
