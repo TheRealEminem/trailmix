@@ -255,15 +255,16 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
         early = live_notes.usable(m)
         try:
             inputs = notes_inputs(m, cfg)
-            summary, used, title = llm_engine.summarize(
-                inputs["transcript"], cfg, choice, inputs["template"], inputs["moments"],
-                want_title=bool(cfg["auto_title"] and m["title_auto"]),
-                about=inputs["about"], minutes=inputs["minutes"],
-                on_progress=lambda what: db.update_meeting(meeting_id, wait_reason=what),
-                on_draft=lambda text: _drafts.__setitem__(meeting_id, text),
-                early_notes=early,
-                mine=inputs["mine"],
-            )
+            with llm_engine.purpose("notes", meeting_id):
+                summary, used, title = llm_engine.summarize(
+                    inputs["transcript"], cfg, choice, inputs["template"], inputs["moments"],
+                    want_title=bool(cfg["auto_title"] and m["title_auto"]),
+                    about=inputs["about"], minutes=inputs["minutes"],
+                    on_progress=lambda what: db.update_meeting(meeting_id, wait_reason=what),
+                    on_draft=lambda text: _drafts.__setitem__(meeting_id, text),
+                    early_notes=early,
+                    mine=inputs["mine"],
+                )
             db.update_meeting(meeting_id, why=f"notes written by {llm_engine.model_for(used, cfg) or used}",
                               summary=summary, summary_provider=used, summary_model=llm_engine.model_for(used, cfg))
             _drafts.pop(meeting_id, None)

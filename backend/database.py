@@ -100,11 +100,13 @@ CREATE TABLE IF NOT EXISTS usage (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     meeting_id    INTEGER,
-    kind          TEXT NOT NULL,     -- transcript | live captions
+    kind          TEXT NOT NULL,     -- transcript | live captions | notes | questions | ... (the Usage panel names them)
     engine        TEXT NOT NULL,
     model         TEXT,
     audio_seconds REAL NOT NULL,
-    est_cost      REAL               -- US dollars; NULL when the price isn't known
+    est_cost      REAL,              -- US dollars; NULL when the price isn't known
+    tokens_in     INTEGER,           -- what the provider reported for text work (NULL for audio)
+    tokens_out    INTEGER
 );
 CREATE INDEX IF NOT EXISTS usage_at ON usage (at);
 
@@ -227,6 +229,9 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
         conn.executescript(HISTORY_SCHEMA)
         conn.execute(FTS_TABLE)
+        for name in ("tokens_in", "tokens_out"):  # usage rows from before text work was counted
+            if name not in {r["name"] for r in conn.execute("PRAGMA table_info(usage)")}:
+                conn.execute(f"ALTER TABLE usage ADD COLUMN {name} INTEGER")
         if "template" not in {r["name"] for r in conn.execute("PRAGMA table_info(workspaces)")}:
             conn.execute("ALTER TABLE workspaces ADD COLUMN template TEXT NOT NULL DEFAULT ''")  # its note style
         have = {r["name"] for r in conn.execute("PRAGMA table_info(meetings)")}
@@ -535,18 +540,21 @@ def mark_applied(meeting_id: int, version_id: int) -> None:
 
 
 def log_usage(meeting_id: int | None, kind: str, engine: str, model: str | None, audio_seconds: float,
-              est_cost: float | None) -> None:
+              est_cost: float | None, tokens_in: int | None = None, tokens_out: int | None = None) -> None:
     with connect() as conn:
-        conn.execute("INSERT INTO usage (meeting_id, kind, engine, model, audio_seconds, est_cost) VALUES (?, ?, ?, ?, ?, ?)",
-                     (meeting_id, kind, engine, model, audio_seconds, est_cost))
+        conn.execute("INSERT INTO usage (meeting_id, kind, engine, model, audio_seconds, est_cost, tokens_in, tokens_out) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                     (meeting_id, kind, engine, model, audio_seconds, est_cost, tokens_in, tokens_out))
 
 
 def usage_since(iso: str) -> list[dict]:
-    """Spending by kind, engine and model since `iso`: [{kind, engine, model, seconds, cost, unpriced}]."""
+    """What was used by kind, engine and model since `iso`:
+    [{kind, engine, model, seconds, tokens_in, tokens_out, cost, unpriced, n}]."""
     with connect() as conn:
         rows = conn.execute(
-            "SELECT kind, engine, model, sum(audio_seconds) AS seconds, sum(est_cost) AS cost, "
-            "sum(est_cost IS NULL) AS unpriced FROM usage WHERE at >= ? GROUP BY kind, engine, model ORDER BY cost DESC",
+            "SELECT kind, engine, model, sum(audio_seconds) AS seconds, sum(tokens_in) AS tokens_in, "
+            "sum(tokens_out) AS tokens_out, sum(est_cost) AS cost, sum(est_cost IS NULL) AS unpriced, count(*) AS n "
+            "FROM usage WHERE at >= ? GROUP BY kind, engine, model ORDER BY cost DESC, n DESC",
             (iso,)).fetchall()
     return [dict(r) for r in rows]
 

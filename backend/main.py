@@ -1555,7 +1555,8 @@ def ask_meeting(meeting_id: int, body: Question):
     cfg = settings.get_all()
     _local_llm_paused(cfg)
     try:
-        answer, used = llm_engine.ask(question, _meeting_context(meeting, cfg, question), cfg)
+        with llm_engine.purpose("questions", meeting_id):
+            answer, used = llm_engine.ask(question, _meeting_context(meeting, cfg, question), cfg)
     except llm_engine.LLMError as e:
         raise HTTPException(502, str(e))
     entry = {"q": question, "a": answer, "provider": used, "at": datetime.now(timezone.utc).isoformat()}
@@ -1808,7 +1809,7 @@ def trial_estimate(meeting_id: int, engine: str, model: str | None = None, mix_t
 
 @app.get("/api/usage")
 def usage(days: int = 30):
-    """What the paid speech engines were asked to do in the last `days` days, and about what it cost."""
+    """What the paid AI was asked to do in the last `days` days (audio minutes, tokens), and about what it cost."""
     start = datetime.now(timezone.utc) - timedelta(days=days)
     since = start.strftime("%Y-%m-%dT%H:%M:%S.") + f"{start.microsecond // 1000:03d}Z"  # as the database writes them
     rows = db.usage_since(since)
@@ -1967,8 +1968,9 @@ def retitle(meeting_id: int):
     _local_llm_paused(cfg)
     notes = llm_engine.place_moments(m["summary"], [])[:6000]
     try:
-        title, _ = llm_engine.run_chain("auto", cfg, lambda pid: llm_engine.clean_title(
-            llm_engine.generate(pid, cfg, llm_engine.TITLE_PROMPT.format(summary=notes))))
+        with llm_engine.purpose("notes", meeting_id):
+            title, _ = llm_engine.run_chain("auto", cfg, lambda pid: llm_engine.clean_title(
+                llm_engine.generate(pid, cfg, llm_engine.TITLE_PROMPT.format(summary=notes))))
     except llm_engine.LLMError as e:
         raise HTTPException(502, str(e))
     if not title:
@@ -2001,7 +2003,8 @@ def ask_everything(body: Question):
         blocks.append(f"[M{m['id']}] {m['title']} ({when})\n{meeting_text.excerpt(body_text, question, budget)}")
     context = "MEETINGS (each tagged like [M12]):\n\n" + "\n\n---\n\n".join(blocks)
     try:
-        answer, used = llm_engine.ask(question, context, cfg, cite_meetings=True)
+        with llm_engine.purpose("questions"):
+            answer, used = llm_engine.ask(question, context, cfg, cite_meetings=True)
     except llm_engine.LLMError as e:
         raise HTTPException(502, str(e))
     return {

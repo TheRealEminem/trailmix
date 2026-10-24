@@ -64,6 +64,7 @@ DEFAULTS = {
     "gemini_mix_tracks": True,          # send your mic and the call mixed as one recording: half the cost (mixdown.py)
     "live_final": _ROOMY,               # transcribe with the accurate model while recording (see live.py)
     "live_notes": "auto",               # notes written during the meeting: auto | on | off (live_notes.py)
+    "spend_warn_cents": 50,             # ask before one thing that would cost this much or more (0: never ask); Settings → Usage
     "whats_new_seen": "",               # the version whose "What's new" you last closed
     "setup_done": False,                # the first-run setup was finished or skipped (Welcome.tsx)
     # Attachments (attachments.py): what reads photos and writes the short digest of a file you add to the searchable
@@ -170,6 +171,8 @@ def update(changes: dict) -> dict:
             raise ValueError(f"Setting {key} must be a {type(DEFAULTS[key]).__name__}")
         if key == "audio_retention_days" and value < -1:
             raise ValueError("audio_retention_days must be -1 (forever), 0 (after transcription) or a number of days")
+        if key == "spend_warn_cents" and value < 0:
+            raise ValueError("spend_warn_cents must be 0 (never ask) or a number of cents")
         if key == "gemini_transcribe_model" and not value.strip():
             raise ValueError("gemini_transcribe_model can't be empty")
         if key in CHOICES and value not in CHOICES[key]:

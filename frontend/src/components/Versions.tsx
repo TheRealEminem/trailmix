@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Comparison, HistoryEntry, TranscribeEngine, TranscriptVersion, Trial, TrialEstimate } from "../api";
 import type { Health, Meeting } from "../api";
+import { useBigSpend } from "../spend";
 import { ClockIcon, RefreshIcon } from "./icons";
 import { Select, Spinner, useConfirm } from "./ui";
 
@@ -58,6 +59,7 @@ export default function Versions({
   health: Health | null;
   onChanged: () => void;
 }) {
+  const big = useBigSpend();
   const [open, setOpen] = useState(false);
   const [versions, setVersions] = useState<TranscriptVersion[]>([]);
   const [trial, setTrial] = useState<Trial | null>(null);
@@ -361,16 +363,11 @@ export default function Versions({
                       Half price: as a batch (back in minutes to hours)
                     </label>
                   )}
-                  {estimate && (
+                  {estimate && big(estimate.cost == null ? null : estimate.cost * (economy && batch ? 0.5 : 1), estimate.minutes > 120) && (
                     <span data-tip={`Up to ${Math.round(estimate.minutes)} minutes of audio (${estimate.mixed ? "your mic and the call mixed into one recording" : "each track counts"})${estimate.per_minute ? ` at $${estimate.per_minute}/min` : ""}; prices as of ${estimate.as_of}`}>
                       {estimate.cost == null
                         ? "price unknown"
-                        : estimate.cost === 0
-                          ? "free"
-                          : (() => {
-                              const c = estimate.cost * (economy && batch ? 0.5 : 1);
-                              return `about $${c < 0.1 ? c.toFixed(3) : c.toFixed(2)}`;
-                            })()}
+                        : `about $${(estimate.cost * (economy && batch ? 0.5 : 1)).toFixed(2)}`}
                     </span>
                   )}
                 </div>

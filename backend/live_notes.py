@@ -197,7 +197,8 @@ def _write(session: "live.LiveSession", start: float, end: float, cfg: dict) -> 
                 part = len(_state[mid]["notes"]) + 1
             system, prompt = templates.notes_prompt(text, part, None, about)
             # A local model lets go of its memory straight after, so it isn't held through the call.
-            notes = llm_engine.tidy(llm_engine.generate(_notes_provider(cfg)[0], cfg, prompt, system=system, keep_alive="0"))
+            with llm_engine.purpose("live notes", mid):
+                notes = llm_engine.tidy(llm_engine.generate(_notes_provider(cfg)[0], cfg, prompt, system=system, keep_alive="0"))
         with _lock:
             st = _state[mid]
             st["notes"].append({"start": start, "end": end, "text": notes})

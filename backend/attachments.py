@@ -574,7 +574,8 @@ def _picture_text(pictures: list[Path], name: str, cfg: dict) -> str:
     what = "this picture" if len(jpegs) == 1 else f"these {len(jpegs)} pages"
 
     def ask(pid: str) -> str:
-        return llm_engine.generate(pid, cfg, VISION_PROMPT.format(what=what), images=jpegs)
+        with llm_engine.purpose("attachments"):
+            return llm_engine.generate(pid, cfg, VISION_PROMPT.format(what=what), images=jpegs)
 
     try:
         text, _ = llm_engine.run_chain("auto", cfg, ask)
@@ -646,7 +647,8 @@ def write_digest(name: str, text: str, cfg: dict) -> tuple[str | None, str | Non
                 continue
             use = {**cfg, "ollama_model": small["name"]}
         try:
-            return llm_engine.tidy(llm_engine.generate(pid, use, prompt)), None
+            with llm_engine.purpose("attachments"):
+                return llm_engine.tidy(llm_engine.generate(pid, use, prompt)), None
         except llm_engine.LLMError as e:
             errors.append(f"{llm_engine.label(pid, cfg)}: {e}")
     raise AttachmentError(f"No digest yet ({'; '.join(errors)[:300]}). Its text is searchable already")
