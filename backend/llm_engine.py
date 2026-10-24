@@ -4,7 +4,10 @@ Every provider is reduced to one call, generate(provider, cfg, prompt, system) -
 titles and Q&A work the same whichever one you pick. `cfg` is settings.get_all().
 """
 import base64
+import contextlib
+import contextvars
 import json
+import logging
 import os
 import re
 from collections.abc import Callable, Iterator
@@ -12,8 +15,12 @@ from urllib.parse import urlparse
 
 import httpx
 
+import database as db
 import meeting_text
+import pricing
 import templates
+
+log = logging.getLogger(__name__)
 
 OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "0")  # "0" = unload right after the last call
 TIMEOUT = httpx.Timeout(600, connect=8)
@@ -270,7 +277,7 @@ def _error_text_of(data) -> str:
 
 
 def _anthropic(cfg: dict, prompt: str, system: str | None, on_text: OnText = None,
-               images: list[bytes] | None = None) -> str:
+               images: list[bytes] | None = None, usage: dict | None = None) -> str:
     import anthropic
 
     client = anthropic.Anthropic(api_key=cfg["anthropic_api_key"], timeout=600, max_retries=2)
@@ -306,13 +313,14 @@ def _anthropic(cfg: dict, prompt: str, system: str | None, on_text: OnText = Non
         raise LLMError(f"Claude API error {e.status_code}: {e.message}") from e
     except anthropic.APIConnectionError as e:
         raise LLMError(f"Couldn't reach the Claude API: {e}") from e
+    _tally(usage, msg.usage.input_tokens, msg.usage.output_tokens)
     if msg.stop_reason == "refusal":
         raise LLMError("Claude declined this request")
     return "".join(b.text for b in msg.content if b.type == "text")
 
 
 def _openai_compatible(base: str, key: str, model: str, prompt: str, system: str | None, pid: str,
-                       on_text: OnText = None, images: list[bytes] | None = None) -> str:
+                       on_text: OnText = None, images: list[bytes] | None = None, usage: dict | None = None) -> str:
     content = [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(b).decode()}"}}
                for b in images or []]
     content = [{"type": "text", "text": prompt}] + content if content else prompt
@@ -324,28 +332,69 @@ def _openai_compatible(base: str, key: str, model: str, prompt: str, system: str
         body["max_tokens"] = 8000
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     if on_text:
-        text = ""
-        for event in _sse(f"{base}/chat/completions", json={**body, "stream": True}, headers=headers):
+        text, counted = "", None
+        stream = {**body, "stream": True}
+        if pid in ("openai", "deepseek"):
+            stream["stream_options"] = {"include_usage": True}  # else a streamed reply says nothing of its tokens
+        for event in _sse(f"{base}/chat/completions", json=stream, headers=headers):
             if event.get("error"):
                 raise LLMError(f"{urlparse(base).netloc}: {_error_text_of(event)}")
+            counted = event.get("usage") or counted
             for choice in event.get("choices") or []:
                 piece = (choice.get("delta") or {}).get("content")
                 if piece:
                     text += piece
                     on_text(text)
+        _tally(usage, (counted or {}).get("prompt_tokens"), (counted or {}).get("completion_tokens"))
         return text
     r = _post(f"{base}/chat/completions", json=body, headers=headers)
     try:
-        return r.json()["choices"][0]["message"]["content"] or ""
+        reply = r.json()
+        _tally(usage, (reply.get("usage") or {}).get("prompt_tokens"), (reply.get("usage") or {}).get("completion_tokens"))
+        return reply["choices"][0]["message"]["content"] or ""
     except (KeyError, IndexError, ValueError) as e:
         raise LLMError(f"Unexpected response from {base}") from e
 
 
+def _tally(usage: dict | None, tokens_in: int | None, tokens_out: int | None) -> None:
+    """Adds the tokens a provider reported to `usage`: {"in", "out"}."""
+    if usage is not None and (tokens_in or tokens_out):
+        usage["in"] = usage.get("in", 0) + (tokens_in or 0)
+        usage["out"] = usage.get("out", 0) + (tokens_out or 0)
+
+
 def _count(usage: dict | None, meta: dict | None) -> None:
     """Adds the tokens Gemini reports (thinking counts as output, as it's billed) to `usage`: {"in", "out"}."""
-    if usage is not None and meta:
-        usage["in"] = usage.get("in", 0) + meta.get("promptTokenCount", 0)
-        usage["out"] = usage.get("out", 0) + meta.get("candidatesTokenCount", 0) + meta.get("thoughtsTokenCount", 0)
+    if meta:
+        _tally(usage, meta.get("promptTokenCount", 0),
+               meta.get("candidatesTokenCount", 0) + meta.get("thoughtsTokenCount", 0))
+
+
+# What the AI work being done is for, as the Usage panel in Settings names it, and the meeting it's for. Set with
+# purpose() around the calls; a call that sets neither is counted as "other".
+_purpose: contextvars.ContextVar[tuple[str, int | None]] = contextvars.ContextVar("purpose", default=("other", None))
+
+
+@contextlib.contextmanager
+def purpose(kind: str, meeting_id: int | None = None):
+    token = _purpose.set((kind, meeting_id))
+    try:
+        yield
+    finally:
+        _purpose.reset(token)
+
+
+def _meter(pid: str, cfg: dict, counts: dict) -> None:
+    """Writes down the tokens a cloud AI reported for one call (what Settings → Usage adds up). Never fails the call."""
+    if not (counts.get("in") or counts.get("out")):
+        return
+    kind, meeting_id = _purpose.get()
+    try:
+        model = model_for(pid, cfg)
+        spent = pricing.text_cost(model, counts.get("in", 0), counts.get("out", 0))
+        db.log_usage(meeting_id, kind, pid, model, 0, spent, counts.get("in", 0), counts.get("out", 0))
+    except Exception:
+        log.exception("couldn't record AI usage")
 
 
 def _gemini(cfg: dict, prompt: str, system: str | None, on_text: OnText = None, usage: dict | None = None,
@@ -388,23 +437,28 @@ def generate(pid: str, cfg: dict, prompt: str, system: str | None = None, keep_a
              images: list[bytes] | None = None) -> str:
     """`exact`: the same answer every time (no sampling) where the provider allows it, for picking from a list.
     `on_text`: stream the reply, calling it with the text so far as it's written.
-    `usage`: filled with the tokens the provider reported, {"in", "out"}, where it reports them (Gemini).
+    `usage`: filled with the tokens the provider reported, {"in", "out"}. A caller that passes it keeps its own tally;
+    otherwise a cloud call is counted for Settings → Usage under the current purpose().
     `images`: JPEG pictures to show the model with the prompt (it has to be one that can see them)."""
     ok, why = configured(pid, cfg)
     if not ok:
         raise LLMError(why)
+    metered = usage is None and not runs_here(pid, cfg) and pid != "ollama"  # nothing is billed for a model of yours
+    counts = {} if usage is None else usage
     if pid == "ollama":
         text = _ollama(cfg, prompt, system, keep_alive or OLLAMA_KEEP_ALIVE, 0.0 if exact else 0.2, on_text, images)
     elif pid == "anthropic":
-        text = _anthropic(cfg, prompt, system, on_text, images)
+        text = _anthropic(cfg, prompt, system, on_text, images, counts)
     elif pid == "gemini":
-        text = _gemini(cfg, prompt, system, on_text, usage, images)
+        text = _gemini(cfg, prompt, system, on_text, counts, images)
     elif pid == "custom":
         text = _openai_compatible(cfg["custom_base_url"], cfg["custom_api_key"], cfg["custom_model"], prompt, system, pid,
-                                  on_text, images)
+                                  on_text, images, counts)
     else:
         text = _openai_compatible(PROVIDERS[pid]["base"], cfg[f"{pid}_api_key"], cfg[f"{pid}_model"], prompt, system, pid,
-                                  on_text, images)
+                                  on_text, images, counts)
+    if metered:
+        _meter(pid, cfg, counts)
     text = text.strip()
     if not text:
         raise LLMError(f"{label(pid, cfg)} returned an empty response")

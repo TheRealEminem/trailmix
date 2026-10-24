@@ -209,7 +209,8 @@ def dismiss(question_id: int) -> None:
 def _ask_ai(cfg: dict, prompt: str, pid: str | None) -> str:
     for provider in [pid] if pid else llm_engine.chain("auto", cfg):
         try:
-            return llm_engine.generate(provider, cfg, prompt, keep_alive="5m", exact=True)
+            with llm_engine.purpose("tags & sorting"):
+                return llm_engine.generate(provider, cfg, prompt, keep_alive="5m", exact=True)
         except llm_engine.LLMError:
             continue
     return ""

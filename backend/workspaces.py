@@ -45,7 +45,8 @@ def _ask(cfg: dict, prompt: str, pid: str | None) -> tuple[str, str] | None:
     """(answer, model) from the given provider, or your chain; None if no AI could answer."""
     for provider in [pid] if pid else llm_engine.chain("auto", cfg):
         try:
-            answer = llm_engine.generate(provider, cfg, prompt, keep_alive="5m", exact=True)
+            with llm_engine.purpose("tags & sorting"):
+                answer = llm_engine.generate(provider, cfg, prompt, keep_alive="5m", exact=True)
             return answer, llm_engine.model_for(provider, cfg)
         except llm_engine.LLMError:
             continue

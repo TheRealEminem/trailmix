@@ -227,7 +227,21 @@ export interface TrialEstimate {
 
 export interface Usage {
   days: number;
-  rows: { kind: string; engine: string; model: string | null; seconds: number; cost: number | null; unpriced: number }[];
+  rows: {
+    kind: string;
+    engine: string;
+    model: string | null;
+    /** audio sent, in seconds (0 for text work) */
+    seconds: number;
+    /** tokens the provider reported for text work (null for audio) */
+    tokens_in: number | null;
+    tokens_out: number | null;
+    cost: number | null;
+    /** how many of these have no known price */
+    unpriced: number;
+    /** how many times */
+    n: number;
+  }[];
   cost: number;
   unpriced: number;
   as_of: string;
@@ -388,6 +402,8 @@ export interface Settings {
   lockdown: boolean;
   /** First-run setup was finished or skipped (Welcome.tsx) */
   setup_done: boolean;
+  /** Ask before one thing that would cost this many cents or more (0 = never ask) */
+  spend_warn_cents: number;
   /** the version whose "What's new" was last closed ("" = never) */
   whats_new_seen: string;
   /** Days a meeting's audio is kept: 0 = deleted once transcribed, -1 = forever */

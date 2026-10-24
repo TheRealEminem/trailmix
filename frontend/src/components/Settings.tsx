@@ -14,13 +14,14 @@ import type {
   TrialEstimate,
   TrialRow,
   Upgrades,
-  Usage,
   Workspace,
   ProviderId,
   RecordingLaws as RecordingLawsT,
   Settings as SettingsT,
 } from "../api";
 import { tildePath } from "../format";
+import { useBigSpend } from "../spend";
+import UsagePanel from "./Usage";
 import { TRANSCRIBERS } from "../transcribers";
 import type { ThemePref } from "../theme";
 import {
@@ -561,6 +562,7 @@ function BatchNotes({ up, onChanged }: { up: Upgrades; onChanged: () => void }) 
   const [jobs, setJobs] = useState<BatchJob[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [confirm, confirmDialog] = useConfirm();
+  const big = useBigSpend();
   const open = jobs.some((j) => j.state === "pending" || j.state === "running");
 
   const load = () =>
@@ -594,7 +596,7 @@ function BatchNotes({ up, onChanged }: { up: Upgrades; onChanged: () => void }) 
 
   const send = async () => {
     if (!estimate || !estimate.meetings) return;
-    const ok = await confirm({
+    const ok = !big(estimate.cost, estimate.meetings > 20) || await confirm({
       title: `Rewrite ${estimate.meetings} meeting${estimate.meetings === 1 ? "" : "s"}' notes at half price?`,
       body: `The transcripts go to Google as a batch job for ${estimate.model}: ${money(estimate.cost)}, instead of ${money(estimate.standard_cost)} done one at a time (prices as of ${estimate.as_of}). The answers usually come back within minutes and at most about a day; they replace the notes by themselves, and the notes they replace stay in each meeting's history. Meetings whose notes you change meanwhile are left alone.`,
       confirmLabel: "Send the batch",
@@ -681,41 +683,13 @@ function BatchNotes({ up, onChanged }: { up: Upgrades; onChanged: () => void }) 
   );
 }
 
-/** What the paid speech engines were asked to do lately, and about what it cost. */
-function SpendRow() {
-  const [usage, setUsage] = useState<Usage | null>(null);
-  useEffect(() => {
-    api
-      .usage(30)
-      .then(setUsage)
-      .catch(() => undefined);
-  }, []);
-  if (!usage || usage.rows.length === 0) return null;
-  const minutes = (s: number) => `${Math.round(s / 60)} min`;
-  return (
-    <Row
-      label="Spent on speech engines, last 30 days"
-      hint={`An estimate from Google's and OpenAI's published per-minute prices (as of ${usage.as_of}), not your bill.${usage.unpriced ? " Some work isn't counted: its price isn't known." : ""}`}
-    >
-      <div className="text-right text-hint">
-        <div className="text-label font-medium text-ink">{usage.cost < 0.005 ? "under $0.01" : `$${usage.cost.toFixed(2)}`}</div>
-        {usage.rows.map((r) => (
-          <div key={`${r.kind}-${r.engine}-${r.model}`} className="text-ink-soft">
-            {r.kind}, {r.model ?? r.engine}: {minutes(r.seconds)}
-            {r.cost != null ? ` · ${r.cost < 0.005 ? "<$0.01" : `$${r.cost.toFixed(2)}`}` : ""}
-          </div>
-        ))}
-      </div>
-    </Row>
-  );
-}
-
 const money = (c: number | null) => (c == null ? "an unknown price" : c === 0 ? "free" : `about $${c < 0.1 ? c.toFixed(3) : c.toFixed(2)}`);
 
 /** How the audio goes: one mixed recording of the mic and the call, or each track on its own (so each counts). */
 const sentAs = (e: { mixed?: boolean }) => (e.mixed ? "your mic and the call mixed into one recording" : "each track counts");
 
 function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => void }) {
+  const big = useBigSpend();
   const [engine, setEngine] = useState<TranscribeEngine>(up.transcripts.best?.engine ?? "gemini");
   const [model, setModel] = useState("");
   const [apply, setApply] = useState(false);
@@ -769,7 +743,7 @@ function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => 
   const start = async (scope: "better" | "all") => {
     const e = estimates[scope];
     if (e && e.meetings.length === 0) return setMessage("Nothing to redo: no meeting with its audio kept needs it.");
-    if (e && (e.cost ?? 1) > 0) {
+    if (e && big(e.cost, e.minutes > 120)) {
       const ok = await confirm({
         title: `Transcribe ${e.meetings.length} meeting${e.meetings.length === 1 ? "" : "s"} again?`,
         body: `This sends up to ${Math.round(e.minutes)} minutes of audio (${sentAs(e)}) to ${
@@ -2203,7 +2177,16 @@ export default function Settings({
           </button>
           <TestResult state={tResult} />
         </div>
-        <SpendRow />
+      </Section>
+
+      <Section
+        icon={<ChartIcon size={16} />}
+        id="usage"
+        title="Usage"
+        blurb="How much paid AI Trailmix has used. It only stops to ask before something that would cost a lot."
+        delay={210}
+      >
+        <UsagePanel warnCents={s.spend_warn_cents} onWarnCents={(c) => void save({ spend_warn_cents: c })} />
       </Section>
 
       <Section

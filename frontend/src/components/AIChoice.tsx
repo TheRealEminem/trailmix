@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { api } from "../api";
 import type { Health, Preflight, ProviderId, TranscribeEngine } from "../api";
 import { shortModel } from "../format";
+import { useBigSpend } from "../spend";
 import { AlertIcon, ChevronDownIcon, CloudIcon, LaptopIcon, LinesIcon, SparkleIcon } from "./icons";
 import { Segmented, Select, Spinner, Switch, TemplateSelect } from "./ui";
 
@@ -87,6 +88,7 @@ export function PreflightSheet({
   onClose: () => void;
   onStarted: (queued: number) => void;
 }) {
+  const big = useBigSpend();
   const [data, setData] = useState<Preflight | null>(null);
   const [engine, setEngine] = useState<TranscribeEngine | null>(null);
   const [transcribeModel, setTranscribeModel] = useState("");
@@ -268,10 +270,12 @@ export function PreflightSheet({
                       </PlanLine>
                     </>
                   ) : (
-                    <PlanLine>
-                      {tx.plan.minutes} min of audio sent to {txOption?.label ?? "the service"}:{" "}
-                      {money(tx.plan.cost) ?? "a price Trailmix doesn't know"}
-                      {tx.plan.cost ? ` (prices as of ${data.as_of})` : ""}.
+                    <PlanLine tone={big(tx.plan.cost, tx.plan.minutes > 120) ? "warn" : "plain"}>
+                      {tx.plan.minutes} min of audio sent to {txOption?.label ?? "the service"}
+                      {big(tx.plan.cost, tx.plan.minutes > 120)
+                        ? `: ${money(tx.plan.cost) ?? "a price Trailmix doesn't know"}${tx.plan.cost ? ` (prices as of ${data.as_of})` : ""}`
+                        : ""}
+                      .
                     </PlanLine>
                   )}
                 </ul>
@@ -344,11 +348,13 @@ export function PreflightSheet({
                       {data.recording && <PlanLine tone="warn">A recording is running: this waits until it ends.</PlanLine>}
                     </>
                   ) : (
-                    <PlanLine>
+                    <PlanLine tone={big(plan.cost, plan.tokens_in > 500_000) ? "warn" : "plain"}>
                       About {Math.round(plan.tokens_in / 1000)}k tokens sent to {plan.label}
-                      {plan.runs_here ? " on this computer" : ""}:{" "}
-                      {money(plan.cost) ?? `${plan.label} bills it; Trailmix doesn't know its price`}
-                      {plan.cost ? ` (prices as of ${data.as_of})` : ""}.
+                      {plan.runs_here ? " on this computer" : ""}
+                      {big(plan.cost, plan.tokens_in > 500_000)
+                        ? `: ${money(plan.cost) ?? `${plan.label} bills it; Trailmix doesn't know its price`}${plan.cost ? ` (prices as of ${data.as_of})` : ""}`
+                        : ""}
+                      .
                     </PlanLine>
                   )}
                 </ul>

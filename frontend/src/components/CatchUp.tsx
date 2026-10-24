@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import { api } from "../api";
 import type { CatchUpEntry, CatchUpKind, CatchUpPlan } from "../api";
 import { formatDuration } from "../format";
+import { useBigSpend } from "../spend";
 import { AlertIcon, ArrowUpIcon, CompassIcon, SparkleIcon } from "./icons";
 import { Spinner } from "./ui";
 
@@ -24,10 +25,11 @@ function money(c: number | null | undefined, local: boolean) {
   return c < 0.01 ? `${(c * 100).toFixed(c < 0.001 ? 2 : 1)}¢` : `$${c.toFixed(3)}`;
 }
 
-function priceNote(plan: CatchUpPlan) {
-  if (plan.local) return "on this Mac · free";
-  const each = money(plan.cost, false);
-  return each ? `about ${each} a question` : "paid per question (price not known to Trailmix)";
+/** "on this Mac", or what a question costs when that's worth saying (else nothing: Settings → Usage keeps the tally). */
+function priceNote(plan: CatchUpPlan, big: boolean) {
+  if (plan.local) return "on this Mac";
+  const each = big ? money(plan.cost, false) : null;
+  return each ? `about ${each} a question` : null;
 }
 
 function priceTip(plan: CatchUpPlan) {
@@ -97,13 +99,16 @@ export function useCatchUp(meetingId: number, onAsked?: () => void) {
 
 export type CatchUp = ReturnType<typeof useCatchUp>;
 
-/** Who answers and about what a question costs, e.g. "Gemini · gemini-3.6-flash · about 0.4¢ a question". */
+/** Who answers, e.g. "Gemini · gemini-3.6-flash"; with the price of a question once that's a lot. */
 export function CatchUpPrice({ c }: { c: CatchUp }) {
+  const big = useBigSpend();
   if (!c.plan?.ready) return null;
+  const note = priceNote(c.plan, big(c.plan.cost));
   return (
     <span className="text-meta text-ink-soft" data-tip={priceTip(c.plan)}>
       {c.plan.label}
-      {c.plan.model ? ` · ${c.plan.model}` : ""} · {priceNote(c.plan)}
+      {c.plan.model ? ` · ${c.plan.model}` : ""}
+      {note ? ` · ${note}` : ""}
     </span>
   );
 }
@@ -111,6 +116,7 @@ export function CatchUpPrice({ c }: { c: CatchUp }) {
 /** The quick questions and a box for your own, in one row that fits the recording bar. */
 export function CatchUpAsk({ c }: { c: CatchUp }) {
   const { plan, busy, ready } = c;
+  const big = useBigSpend();
   if (plan && !ready) return null;
   return (
     <form
@@ -132,7 +138,7 @@ export function CatchUpAsk({ c }: { c: CatchUp }) {
           disabled={busy || !ready}
           aria-label="Question about the meeting so far"
         />
-        {plan && !plan.local && money(plan.costs.question, false) && (
+        {plan && !plan.local && big(plan.costs.question) && money(plan.costs.question, false) && (
           <span className="hidden shrink-0 text-meta tabular-nums text-ink-soft sm:inline" data-tip="About what this question costs">
             ~{money(plan.costs.question, false)}
           </span>
@@ -150,7 +156,7 @@ export function CatchUpAsk({ c }: { c: CatchUp }) {
       <div className="flex max-w-full gap-1.5 overflow-x-auto">
         {QUICK.map((q) => {
           const off = plan?.off[q.kind];
-          const cost = plan && !plan.local ? money(plan.costs[q.kind], false) : null;
+          const cost = plan && !plan.local && big(plan.costs[q.kind]) ? money(plan.costs[q.kind], false) : null;
           return (
             <button
               key={q.kind}
