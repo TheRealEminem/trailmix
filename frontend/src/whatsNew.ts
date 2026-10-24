@@ -9,6 +9,25 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.18.0",
+    items: [
+      {
+        title: "Slides, PDFs and photos with your notes",
+        body: "Drop a deck, a PDF, a photo of the whiteboard or a Google Slides link onto a meeting's notes, even while you record, so everything from a meeting is in one place.",
+        where: "A meeting → Your notes → Attachments",
+      },
+      {
+        title: "Big files made small",
+        body: "Add a huge PDF, PowerPoint or iPhone photo and Trailmix offers to shrink it first, showing how small it will get: photos are resized, PDF pages flattened, and the pictures in slides recompressed. Or have it always shrink them.",
+        where: "Settings → Attachments",
+      },
+      {
+        title: "Attachments you can search",
+        body: "Tick \"Add to searchable notes\" on an attachment and its text becomes searchable and part of what Ask knows, with a short digest in its own part under the summary. It never adds tasks. It's off unless you tick it, and you choose whether it's read only on this computer or by your summary provider.",
+      },
+    ],
+  },
+  {
     version: "0.17.0",
     items: [
       {
