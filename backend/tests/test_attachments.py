@@ -144,6 +144,7 @@ def test_flattened_pdf_stays_searchable(fresh_db):
     assert attachments._text_layer(attachments.file_of(att)) is None  # pages are pictures now
     attachments.set_searchable(att_id, True)
     assert db.search("pricing roadmap")[0]["id"] == mid
+    assert db.get_attachment(att_id)["digest"] == "- What the deck covers"  # its kept text was digested
 
 
 def test_shrunk_pptx_keeps_every_part(fresh_db):
@@ -225,6 +226,17 @@ def test_no_digest_while_memory_is_short(fresh_db, monkeypatch):
     att = db.get_attachment(att_id)
     assert att["status"] == "error" and "Waiting for memory" in att["error"] and att["digest"] is None
     assert db.search("wombat")[0]["id"] == mid  # searchable all the same
+
+
+def test_small_model_writes_the_digest_when_the_usual_one_doesnt_fit(fresh_db, monkeypatch):
+    mid = meeting_with_tasks()
+    monkeypatch.setattr(llm_engine, "model_for", lambda pid, cfg: "qwen2.5:7b")
+    monkeypatch.setattr(llm_engine, "small_ollama_model", lambda cfg: {"name": "qwen2.5:3b", "size": 2 * 1024**3})
+    monkeypatch.setattr(resources, "check", lambda gb, what: None if "small" in what else "Waiting for memory")
+    used = []
+    monkeypatch.setattr(llm_engine, "generate", lambda pid, cfg, prompt, **kw: used.append(cfg["ollama_model"]) or "- Bullets")
+    att_id = attachments.store(mid, _text_file(fresh_db, "Numbat count"), "count.txt", True, False)
+    assert used == ["qwen2.5:3b"] and db.get_attachment(att_id)["digest"] == "- Bullets"
 
 
 def _text_file(folder: Path, text: str) -> Path:
