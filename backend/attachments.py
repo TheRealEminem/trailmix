@@ -45,7 +45,8 @@ VISION_PAGES = 8             # ... or sent to your provider (each one costs)
 
 DIGEST_PROMPT = """Below is the text of "{name}", material attached to a meeting's notes for reference.
 In 2 to 6 short bullet points ("- "), say what it covers: its subject, its main points, and any figures, names or dates
-that stand out. Don't list tasks, action items or next steps, and don't add a heading. Reply with the bullets only.
+that stand out. Only say what the text says: leave a point out rather than saying it isn't there. Don't list tasks,
+action items or next steps, and don't add a heading. Reply with the bullets only.
 
 TEXT:
 {text}
@@ -381,7 +382,7 @@ def set_searchable(att_id: int, on: bool) -> None:
     if not att:
         return
     db.update_attachment(att_id, searchable=int(on))
-    if on and (att["text"] is None or att["status"] == "error"):
+    if on and (att["digest"] is None or att["status"] == "error"):
         read_later(att_id)
 
 
@@ -634,12 +635,18 @@ def write_digest(name: str, text: str, cfg: dict) -> tuple[str | None, str | Non
         if llm_engine.runs_here(pid, cfg):
             while live.active_count():  # never a local model while a meeting is being recorded
                 time.sleep(3)
+        use = cfg
         if llm_engine.is_local(pid, cfg) and (short := resources.check(llm_engine.ollama_ram_needed_gb(cfg),
                                                                         "Your local model")):
-            errors.append(short)  # don't make the Mac swap for a digest: try again when there's room
-            continue
+            # A digest is a simple job: a small model does it well enough, where the usual one doesn't fit.
+            small = llm_engine.small_ollama_model(cfg)
+            if not small or small["name"] == llm_engine.model_for(pid, cfg) or resources.check(
+                    small["size"] / 1024**3 * 1.1 + 1.5, f"The small model {small['name']}"):
+                errors.append(short)  # don't make the Mac swap for a digest: try again when there's room
+                continue
+            use = {**cfg, "ollama_model": small["name"]}
         try:
-            return llm_engine.tidy(llm_engine.generate(pid, cfg, prompt)), None
+            return llm_engine.tidy(llm_engine.generate(pid, use, prompt)), None
         except llm_engine.LLMError as e:
             errors.append(f"{llm_engine.label(pid, cfg)}: {e}")
     raise AttachmentError(f"No digest yet ({'; '.join(errors)[:300]}). Its text is searchable already")
