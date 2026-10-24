@@ -66,6 +66,12 @@ DEFAULTS = {
     "live_notes": "auto",               # notes written during the meeting: auto | on | off (live_notes.py)
     "whats_new_seen": "",               # the version whose "What's new" you last closed
     "setup_done": False,                # the first-run setup was finished or skipped (Welcome.tsx)
+    # Attachments (attachments.py): what reads photos and writes the short digest of a file you add to the searchable
+    # notes. local: text recognition on this Mac and your local model, nothing leaves the computer | provider: your
+    # summary provider (a cloud company or your own endpoint) is sent the photo or the file's text.
+    "attachments_engine": "local",
+    "attachments_shrink_over_mb": 10,   # offer to shrink a file bigger than this (a HEIC photo is always offered)
+    "attachments_always_shrink": False, # shrink those without asking
     # Recordings: days to keep the audio after a meeting (0: delete once it's transcribed; -1: keep forever).
     # "Keep forever" on a meeting overrides it. (audio_store.py)
     "audio_retention_days": 30,
@@ -110,6 +116,7 @@ CHOICES = {
     "transcribe_engine": ("local", "remote", "gemini"),
     "live_notes": ("auto", "on", "off"),
     "duplicates": ("merge", "ask", "keep"),
+    "attachments_engine": ("local", "provider"),
 }
 
 

@@ -7,6 +7,7 @@ If frontend/dist exists, the UI is served from here too, so one process is the w
 import asyncio
 import json
 import logging
+import re
 import os
 import signal
 import shutil
@@ -25,6 +26,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import attachments
 import audio_store as store
 import auth
 import database as db
@@ -336,6 +338,7 @@ def _present(m: dict) -> dict:
     out["speaker_names"] = meeting_text.speaker_names(m, cfg)
     out["qa"] = json.loads(m["qa_json"]) if m.get("qa_json") else []
     out["tasks"] = db.tasks_for(m["id"])
+    out["attachments"] = [attachments.present(a) for a in db.attachments_for(m["id"])]
     out["summary_draft"] = None if m["summary"] else pipeline.draft(m["id"])  # the notes so far, while they're written
     out["title_auto"] = bool(m["title_auto"])
     out["audio_bytes"] = store.audio_bytes(m)
@@ -379,6 +382,8 @@ def _meeting_context(m: dict, cfg: dict, question: str) -> str:
     parts = [f"MEETING: {m['title']} ({when})"]
     if m.get("summary"):
         parts.append(f"NOTES:\n{m['summary']}")
+    if material := attachments.context_block(m["id"], llm_engine.chain_context_chars(cfg) // 5):
+        parts.append(material)
     room = llm_engine.chain_context_chars(cfg) - sum(len(p) for p in parts) - len(question) - 500
     transcript = meeting_text.excerpt(meeting_text.transcript_text(m, cfg), question, max(room, 2000))
     parts.append(f"TRANSCRIPT:\n{transcript}")
@@ -1991,6 +1996,8 @@ def ask_everything(body: Question):
     for m in meetings:
         when = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00")).astimezone().strftime("%b %-d, %Y")
         body_text = m["summary"] or meeting_text.transcript_text(m, cfg)
+        if material := attachments.context_block(m["id"], budget // 3):
+            body_text += "\n\n" + material
         blocks.append(f"[M{m['id']}] {m['title']} ({when})\n{meeting_text.excerpt(body_text, question, budget)}")
     context = "MEETINGS (each tagged like [M12]):\n\n" + "\n\n---\n\n".join(blocks)
     try:
@@ -2002,6 +2009,172 @@ def ask_everything(body: Question):
         "provider": used,
         "sources": [{"id": m["id"], "title": m["title"], "created_at": m["created_at"]} for m in meetings],
     }
+
+
+# ── Attachments ────────────────────────────────────────────────────────
+
+_PENDING = re.compile(r"[0-9a-f]{32}")
+
+
+def _attachment_or_404(attachment_id: int) -> dict:
+    att = db.get_attachment(attachment_id)
+    if not att:
+        raise HTTPException(404, "Attachment not found")
+    return att
+
+
+def _pending_path(pending_id: str) -> Path:
+    if not _PENDING.fullmatch(pending_id):
+        raise HTTPException(400, "Bad upload id")
+    found = next((p for p in (db.DATA_DIR / "incoming").glob(f"{pending_id}.*") if ".small." not in p.name), None)
+    if not found:
+        raise HTTPException(404, "That upload is gone; add the file again")
+    return found
+
+
+@app.post("/api/meetings/{meeting_id}/attachments")
+async def add_attachment(meeting_id: int, request: Request, name: str, searchable: bool = False):
+    """A file, sent as the request body (streamed to disk). A big one isn't kept yet: the reply is {pending} with
+    its size and about how small it could get, and /finish says whether to shrink it."""
+    _get_or_404(meeting_id)
+    temp = file_import.temp_path(name)
+    try:
+        with temp.open("wb") as out:
+            async for chunk in request.stream():
+                out.write(chunk)
+    except Exception:
+        temp.unlink(missing_ok=True)
+        raise
+    cfg = settings.get_all()
+    if attachments.needs_choice(temp, name, cfg):
+        try:
+            small, _ = await run_in_threadpool(attachments.estimate, temp, name)
+        except attachments.AttachmentError:
+            small = None  # can't be shrunk: keep it as it is
+        if small is not None and small > temp.stat().st_size * 0.9:
+            small = None  # shrinking would hardly help (a PDF that's mostly text): don't ask
+        if small is not None and cfg["attachments_always_shrink"]:
+            return {"attachment": attachments.present(db.get_attachment(await run_in_threadpool(
+                attachments.store, meeting_id, temp, name, searchable, True, attachments.made_earlier(temp))))}
+        if small is not None:
+            return {"pending": {"id": temp.stem, "name": name, "kind": attachments.kind_of(name),
+                                "size": temp.stat().st_size, "estimate": small, "searchable": searchable}}
+    att_id = await run_in_threadpool(attachments.store, meeting_id, temp, name, searchable, False,
+                                     attachments.made_earlier(temp))
+    return {"attachment": attachments.present(db.get_attachment(att_id))}
+
+
+class AttachmentFinish(BaseModel):
+    name: str
+    shrink: bool
+    searchable: bool = False
+
+
+@app.post("/api/meetings/{meeting_id}/attachments/pending/{pending_id}")
+def finish_attachment(meeting_id: int, pending_id: str, body: AttachmentFinish):
+    """Keeps a big upload, shrunk or as it is."""
+    _get_or_404(meeting_id)
+    temp = _pending_path(pending_id)
+    try:
+        att_id = attachments.store(meeting_id, temp, body.name, body.searchable, body.shrink,
+                                   attachments.made_earlier(temp))
+    except attachments.AttachmentError as e:
+        raise HTTPException(422, str(e))
+    return attachments.present(db.get_attachment(att_id))
+
+
+@app.delete("/api/meetings/{meeting_id}/attachments/pending/{pending_id}", status_code=204)
+def cancel_attachment(meeting_id: int, pending_id: str):
+    temp = _pending_path(pending_id)
+    for p in (temp, attachments.made_earlier(temp)):
+        if p:
+            p.unlink(missing_ok=True)
+
+
+class AttachmentLink(BaseModel):
+    url: str
+    name: str = ""
+    searchable: bool = False
+
+
+@app.post("/api/meetings/{meeting_id}/attachments/link")
+def add_attachment_link(meeting_id: int, body: AttachmentLink):
+    _get_or_404(meeting_id)
+    try:
+        att_id = attachments.add_link(meeting_id, body.url, body.name, body.searchable)
+    except attachments.AttachmentError as e:
+        raise HTTPException(422, str(e))
+    return attachments.present(db.get_attachment(att_id))
+
+
+class AttachmentPatch(BaseModel):
+    searchable: bool | None = None
+    name: str | None = None
+    caption: str | None = None
+
+
+@app.patch("/api/attachments/{attachment_id}")
+def update_attachment(attachment_id: int, body: AttachmentPatch):
+    _attachment_or_404(attachment_id)
+    fields = {k: v.strip() for k, v in (("name", body.name), ("caption", body.caption)) if v is not None}
+    if fields.get("name") == "":
+        raise HTTPException(422, "A name can't be empty")
+    db.update_attachment(attachment_id, **fields)
+    if body.searchable is not None:
+        attachments.set_searchable(attachment_id, body.searchable)
+    return attachments.present(db.get_attachment(attachment_id))
+
+
+@app.post("/api/attachments/{attachment_id}/shrink")
+def shrink_attachment(attachment_id: int):
+    _attachment_or_404(attachment_id)
+    try:
+        return attachments.present(attachments.shrink_existing(attachment_id))
+    except attachments.AttachmentError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.post("/api/attachments/{attachment_id}/read")
+def reread_attachment(attachment_id: int):
+    """Try reading it again (after sharing a Google deck, say, or switching who reads attachments)."""
+    att = _attachment_or_404(attachment_id)
+    if not att["searchable"]:
+        raise HTTPException(409, "Add it to the searchable notes first")
+    attachments.read_later(attachment_id)
+    return attachments.present(db.get_attachment(attachment_id))
+
+
+@app.delete("/api/attachments/{attachment_id}", status_code=204)
+def delete_attachment(attachment_id: int):
+    _attachment_or_404(attachment_id)
+    attachments.remove(attachment_id)
+
+
+@app.get("/api/attachments/{attachment_id}/file")
+def attachment_file(attachment_id: int, download: bool = False):
+    att = _attachment_or_404(attachment_id)
+    path = attachments.file_of(att)
+    if not path or not path.exists():
+        raise HTTPException(404, "No file for this attachment")
+    return FileResponse(path, media_type=att["mime"], filename=att["name"],
+                        content_disposition_type="attachment" if download else "inline")
+
+
+@app.get("/api/attachments/{attachment_id}/preview")
+def attachment_preview(attachment_id: int):
+    path = attachments.preview_of(_attachment_or_404(attachment_id))
+    if not path or not path.exists():
+        raise HTTPException(404, "No preview")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@app.post("/api/attachments/{attachment_id}/reveal")
+def reveal_attachment(attachment_id: int):
+    """Where it is on disk, for "Show in Finder" in the Mac app."""
+    path = attachments.file_of(_attachment_or_404(attachment_id))
+    if not path or not path.exists():
+        raise HTTPException(404, "No file for this attachment")
+    return {"path": str(path)}
 
 
 # ── Tasks ──────────────────────────────────────────────────────────────
@@ -2089,6 +2262,7 @@ def delete_meeting(meeting_id: int):
     if meeting["status"] in ("recording", "transcribing", "summarizing"):
         raise HTTPException(409, "Meeting is still being processed")
     store.delete_audio(meeting)
+    attachments.remove_all(meeting_id)
     db.delete_meeting(meeting_id)
 
 

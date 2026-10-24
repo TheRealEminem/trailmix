@@ -49,6 +49,8 @@ import {
   PlusIcon,
   TrashIcon,
   CompassIcon,
+  PaperclipIcon,
+  ShrinkIcon,
 } from "./icons";
 import {
   OrganizeProgress,
@@ -2202,6 +2204,76 @@ export default function Settings({
           <TestResult state={tResult} />
         </div>
         <SpendRow />
+      </Section>
+
+      <Section
+        icon={<PaperclipIcon size={16} />}
+        id="attachments"
+        title="Attachments"
+        blurb="Slides, PDFs and photos you add to a meeting. Nothing is read from one unless you tick “Add to searchable notes” on it."
+        delay={220}
+      >
+        <Row
+          label="Who reads them"
+          hint="For attachments in the searchable notes: pulling out their text (photos and scans need reading) and writing a short digest under the summary."
+        >
+          <Segmented
+            label="Who reads attachments"
+            value={s.attachments_engine}
+            onChange={(v) => save({ attachments_engine: v })}
+            options={[
+              { id: "local", label: "This computer only" },
+              { id: "provider", label: "Summary provider" },
+            ]}
+          />
+        </Row>
+        {s.attachments_engine === "local" ? (
+          <p className="flex items-start gap-2 py-3.5 text-hint leading-relaxed text-ink-soft">
+            <LaptopIcon size={16} className="mt-px shrink-0" />
+            <span>
+              Nothing leaves this computer. Text in PDFs, PowerPoints and Word files is read here;{" "}
+              {inApp
+                ? "photos and scanned pages are read with the Mac's own text recognition"
+                : "photos and scanned pages need the Trailmix Mac app to be read, so here only their name is searchable"}
+              . The digest is written by your local model (Ollama, or your own server on this computer); without one,
+              the text is still searchable but there's no digest. A Google Slides link is fetched from Google only if
+              you tick it, and only when it's shared publicly.
+            </span>
+          </p>
+        ) : (
+          <p
+            className={`flex items-start gap-2 py-3.5 text-hint leading-relaxed ${cloudInUse ? "text-sun-deep" : "text-ink-soft"}`}
+          >
+            <CloudIcon size={16} className="mt-px shrink-0" />
+            <span>
+              Your summary provider ({providerLabel(s.summary_provider)}
+              {s.summary_fallback !== "none" ? `, then ${providerLabel(s.summary_fallback)}` : ""}) reads them.
+              {cloudInUse
+                ? " The file's text, and photos and scanned pages themselves, are sent to that company, and each one costs a little. Photos need a model that can see pictures."
+                : " Photos need a model that can see pictures."}{" "}
+              Lockdown mode keeps everything on this computer either way.
+            </span>
+          </p>
+        )}
+        <Row
+          label="Offer to shrink files over"
+          hint="Photos are resized, PDF pages flattened to pictures, and the pictures in PowerPoints recompressed, so your meeting notes stay small. iPhone (HEIC) photos are always offered."
+        >
+          <Select
+            label="Offer to shrink files over"
+            value={String(s.attachments_shrink_over_mb)}
+            onChange={(v) => save({ attachments_shrink_over_mb: Number(v) })}
+            className="w-full sm:w-40"
+            options={[5, 10, 25, 50, 100].map((mb) => ({ value: String(mb), label: `${mb} MB` }))}
+          />
+        </Row>
+        <SwitchRow
+          icon={<ShrinkIcon size={16} />}
+          label="Shrink them without asking"
+          hint="Big files are shrunk as they're added (when that makes them smaller) and the original isn't kept."
+          checked={s.attachments_always_shrink}
+          onChange={(v) => save({ attachments_always_shrink: v })}
+        />
       </Section>
 
       <Section

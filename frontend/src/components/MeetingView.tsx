@@ -7,6 +7,7 @@ import {
   tildePath,
 } from "../format";
 import AskPanel from "./AskPanel";
+import Attachments from "./Attachments";
 import {
   ChatIcon,
   ExportIcon,
@@ -273,7 +274,10 @@ export default function MeetingView({
             },
             {
               id: "notes",
-              label: m.my_notes.length ? `Your notes · ${m.my_notes.length}` : "Your notes",
+              label:
+                m.my_notes.length + m.attachments.length
+                  ? `Your notes · ${m.my_notes.length + m.attachments.length}`
+                  : "Your notes",
               icon: <PencilIcon size={16} />,
             },
             { id: "ask", label: "Ask", icon: <ChatIcon size={16} /> },
@@ -302,6 +306,9 @@ export default function MeetingView({
                 keeps every link. Edits save as you type; press Regenerate under the summary to use them.
               </p>
               <NotesEditor key={m.id} meetingId={m.id} notes={m.my_notes} onSaved={on.onChanged} />
+              <div className="mt-8 border-t border-line pt-5">
+                <Attachments meetingId={m.id} items={m.attachments} onChanged={on.onChanged} />
+              </div>
             </div>
           )}
           {tab === "transcript" && m.transcript && (

@@ -15,7 +15,8 @@ DB_PATH = DATA_DIR / "trailmix.db"
 # status: recording -> queued -> [ready_transcribe] -> [waiting_confirm] -> transcribing
 #         -> [ready_summarize] -> [waiting_confirm] -> summarizing -> done | error
 # ready_*: waiting for you to start that step (auto mode off); waiting_confirm: not enough free RAM.
-FTS_TABLE = "CREATE VIRTUAL TABLE IF NOT EXISTS meetings_fts USING fts5(title, transcript, summary, tags, tokenize='porter unicode61');"
+FTS_TABLE = ("CREATE VIRTUAL TABLE IF NOT EXISTS meetings_fts USING fts5(title, transcript, summary, tags, attachments, "
+             "tokenize='porter unicode61');")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meetings (
@@ -57,8 +58,6 @@ CREATE TABLE IF NOT EXISTS workspaces (
     position  INTEGER NOT NULL DEFAULT 0
 );
 
--- Full-text index over what you'd search for; rowid = meetings.id. Kept in sync by update_meeting.
-CREATE VIRTUAL TABLE IF NOT EXISTS meetings_fts USING fts5(title, transcript, summary, tags, tokenize='porter unicode61');
 """
 
 # The receipt for every change to a meeting: what changed, when, from what, to what, and why. Only ever added to
@@ -136,6 +135,30 @@ CREATE TABLE IF NOT EXISTS source_sync (
     error         TEXT
 );
 
+-- Slides, PDFs, photos and links kept with a meeting (attachments.py). Their text is never part of the summary, so
+-- none of it becomes a task; with `searchable` on, it (and its digest) is in the search index and what Ask reads.
+CREATE TABLE IF NOT EXISTS attachments (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    meeting_id    INTEGER NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    position      INTEGER NOT NULL DEFAULT 0,
+    kind          TEXT NOT NULL,                   -- image | pdf | slides | document | other | link
+    name          TEXT NOT NULL,
+    mime          TEXT,
+    path          TEXT,                            -- relative to DATA_DIR/attachments; NULL for a link
+    preview_path  TEXT,                            -- a small JPEG to show (browsers can't show HEIC)
+    size          INTEGER NOT NULL DEFAULT 0,
+    original_size INTEGER,                         -- before it was shrunk
+    url           TEXT,                            -- for a link
+    caption       TEXT NOT NULL DEFAULT '',
+    searchable    INTEGER NOT NULL DEFAULT 0,
+    text          TEXT,                            -- what was read from it
+    digest        TEXT,                            -- a few bullets on what it covers
+    status        TEXT NOT NULL DEFAULT 'ready',   -- ready | reading | error
+    error         TEXT
+);
+CREATE INDEX IF NOT EXISTS attachments_meeting ON attachments (meeting_id, position);
+
 -- Files seen in watched folders (watched.py): each is looked at once, whatever became of it.
 CREATE TABLE IF NOT EXISTS watched_files (
     path          TEXT PRIMARY KEY,
@@ -191,7 +214,10 @@ _ADDED_COLUMNS = {
 }
 
 _FTS_FIELDS = ("title", "transcript", "summary", "tags_json")
-_FTS_ROW = ("SELECT id, title, coalesce(transcript, ''), coalesce(summary, ''), coalesce(tags_json, '') FROM meetings")
+_FTS_ROW = ("SELECT id, title, coalesce(transcript, ''), coalesce(summary, ''), coalesce(tags_json, ''), "
+            "coalesce((SELECT group_concat(a.name || ' ' || a.caption || ' ' || coalesce(a.digest, '') || ' ' || "
+            "coalesce(a.text, ''), ' ') FROM attachments a WHERE a.meeting_id = meetings.id AND a.searchable = 1), '') "
+            "FROM meetings")
 
 
 def init_db() -> None:
@@ -200,6 +226,7 @@ def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
         conn.executescript(HISTORY_SCHEMA)
+        conn.execute(FTS_TABLE)
         if "template" not in {r["name"] for r in conn.execute("PRAGMA table_info(workspaces)")}:
             conn.execute("ALTER TABLE workspaces ADD COLUMN template TEXT NOT NULL DEFAULT ''")  # its note style
         have = {r["name"] for r in conn.execute("PRAGMA table_info(meetings)")}
@@ -210,14 +237,14 @@ def init_db() -> None:
                     conn.execute("UPDATE meetings SET transcribed = 1 WHERE transcript IS NOT NULL")
         for (row_id,) in conn.execute("SELECT id FROM meetings WHERE uid IS NULL").fetchall():
             conn.execute("UPDATE meetings SET uid = ? WHERE id = ?", (uuid.uuid4().hex, row_id))
-        if "tags" not in {r[1] for r in conn.execute("PRAGMA table_info(meetings_fts)")}:  # from before tags
+        if "attachments" not in {r[1] for r in conn.execute("PRAGMA table_info(meetings_fts)")}:  # an older index
             conn.execute("DROP TABLE meetings_fts")
             conn.execute(FTS_TABLE)
         indexed = conn.execute("SELECT count(*) FROM meetings_fts").fetchone()[0]
         total = conn.execute("SELECT count(*) FROM meetings").fetchone()[0]
         if indexed != total:  # first run with search, or an index that drifted: rebuild it
             conn.execute("DELETE FROM meetings_fts")
-            conn.execute(f"INSERT INTO meetings_fts (rowid, title, transcript, summary, tags) {_FTS_ROW}")
+            conn.execute(f"INSERT INTO meetings_fts (rowid, title, transcript, summary, tags, attachments) {_FTS_ROW}")
 
 
 BACKUP_DIR = DATA_DIR / "backups"
@@ -270,7 +297,7 @@ def connect():
 
 def _reindex(conn, meeting_id: int) -> None:
     conn.execute("DELETE FROM meetings_fts WHERE rowid = ?", (meeting_id,))
-    conn.execute(f"INSERT INTO meetings_fts (rowid, title, transcript, summary, tags) {_FTS_ROW} WHERE id = ?",
+    conn.execute(f"INSERT INTO meetings_fts (rowid, title, transcript, summary, tags, attachments) {_FTS_ROW} WHERE id = ?",
                  (meeting_id,))
 
 
@@ -590,6 +617,7 @@ def delete_meeting(meeting_id: int) -> None:
         conn.execute("DELETE FROM history WHERE meeting_id = ?", (meeting_id,))
         conn.execute("DELETE FROM transcript_versions WHERE meeting_id = ?", (meeting_id,))
         conn.execute("DELETE FROM action_items WHERE meeting_id = ?", (meeting_id,))
+        conn.execute("DELETE FROM attachments WHERE meeting_id = ?", (meeting_id,))
         conn.execute("DELETE FROM meetings WHERE id = ?", (meeting_id,))
         conn.execute("DELETE FROM meetings_fts WHERE rowid = ?", (meeting_id,))
 
@@ -628,10 +656,68 @@ def search(text: str, limit: int = 30, any_term: bool = False, workspace_id: int
             f"""SELECT m.id, m.title, m.created_at, m.duration_sec, m.status, m.workspace_id,
                        snippet(meetings_fts, -1, '{HIT_START}', '{HIT_END}', '…', 14) AS snippet
                 FROM meetings_fts JOIN meetings m ON m.id = meetings_fts.rowid
-                WHERE meetings_fts MATCH ? {within} ORDER BY bm25(meetings_fts, 5.0, 1.0, 2.0, 3.0) LIMIT ?""",
+                WHERE meetings_fts MATCH ? {within} ORDER BY bm25(meetings_fts, 5.0, 1.0, 2.0, 3.0, 1.0) LIMIT ?""",
             (q, *([workspace_id] if workspace_id else []), limit),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── Attachments ─────────────────────────────────────────────────────────
+
+_ATTACHMENT_FIELDS = {"position", "kind", "name", "mime", "path", "preview_path", "size", "original_size", "url",
+                      "caption", "searchable", "text", "digest", "status", "error"}
+_ATTACHMENT_FTS = {"name", "caption", "searchable", "text", "digest"}
+
+
+def add_attachment(meeting_id: int, **fields) -> int:
+    bad = set(fields) - _ATTACHMENT_FIELDS
+    if bad:
+        raise ValueError(f"Cannot set attachment columns: {bad}")
+    with connect() as conn:
+        if "position" not in fields:
+            fields["position"] = conn.execute("SELECT coalesce(max(position), -1) + 1 FROM attachments WHERE meeting_id = ?",
+                                              (meeting_id,)).fetchone()[0]
+        cols = ", ".join(fields)
+        cur = conn.execute(f"INSERT INTO attachments (meeting_id, {cols}) VALUES (?, {', '.join('?' * len(fields))})",
+                           (meeting_id, *fields.values()))
+        if fields.get("searchable"):
+            _reindex(conn, meeting_id)
+        return cur.lastrowid
+
+
+def get_attachment(attachment_id: int) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def attachments_for(meeting_id: int) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute("SELECT * FROM attachments WHERE meeting_id = ? ORDER BY position, id", (meeting_id,))
+        return [dict(r) for r in rows]
+
+
+def update_attachment(attachment_id: int, **fields) -> None:
+    bad = set(fields) - _ATTACHMENT_FIELDS
+    if bad:
+        raise ValueError(f"Cannot update attachment columns: {bad}")
+    if not fields:
+        return
+    with connect() as conn:
+        conn.execute(f"UPDATE attachments SET {', '.join(f'{k} = ?' for k in fields)} WHERE id = ?",
+                     (*fields.values(), attachment_id))
+        if set(fields) & _ATTACHMENT_FTS:
+            row = conn.execute("SELECT meeting_id FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+            if row:
+                _reindex(conn, row["meeting_id"])
+
+
+def delete_attachment(attachment_id: int) -> None:
+    with connect() as conn:
+        row = conn.execute("SELECT meeting_id FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+        conn.execute("DELETE FROM attachments WHERE id = ?", (attachment_id,))
+        if row:
+            _reindex(conn, row["meeting_id"])
 
 
 # ── Action items ────────────────────────────────────────────────────────
