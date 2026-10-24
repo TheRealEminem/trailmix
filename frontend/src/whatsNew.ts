@@ -9,6 +9,15 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.18.1",
+    items: [
+      {
+        title: "A better app icon",
+        body: "Trailmix's icon now fills its whole tile like other Mac apps, instead of sitting small on a gray plate.",
+      },
+    ],
+  },
+  {
     version: "0.18.0",
     items: [
       {
