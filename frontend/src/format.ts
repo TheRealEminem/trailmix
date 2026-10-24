@@ -17,7 +17,7 @@ export function formatBytes(n: number): string {
 /** "mlx-community/whisper-large-v3-turbo" -> "whisper-large-v3-turbo" */
 export const shortModel = (m: string) => m.split("/").pop() ?? m;
 
-/** "/Users/mark/Documents/x.md" -> "~/Documents/x.md" */
+/** "/Users/you/Documents/x.md" -> "~/Documents/x.md" */
 export const tildePath = (p: string) => p.replace(/^\/Users\/[^/]+/, "~");
 
 export function formatTime(iso: string): string {
