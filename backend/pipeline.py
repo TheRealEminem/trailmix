@@ -446,7 +446,7 @@ def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
                 on_progress=lambda i, n: _progress(m["id"], f"Transcribing: {i}/{n}" if n > 1 else "Transcribing"))
         except transcribe_gemini.GeminiError as e:
             raise RuntimeError(str(e)) from e
-        seconds = len(audio) / store.SAMPLE_RATE
+        seconds = len(audio) / store.SAMPLE_RATE + used.get("redo_seconds", 0)  # skipped stretches sent again
         db.log_usage(m["id"], "transcript", "gemini", model, seconds, pricing.transcript_cost(model, seconds, used))
         segs = mixdown.name_you(cleanup.drop_hallucinations(segs), tracks["mic"], tracks["system"])
         return cleanup.strip_metrics(sorted(segs, key=lambda s: s["start"])), True, duration
@@ -461,7 +461,7 @@ def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
                     m["id"], f"Transcribing {name} track: {i}/{n}" if n > 1 else f"Transcribing {name} track"))
         except transcribe_gemini.GeminiError as e:
             raise RuntimeError(str(e)) from e
-        seconds = len(audio) / store.SAMPLE_RATE
+        seconds = len(audio) / store.SAMPLE_RATE + used.get("redo_seconds", 0)  # skipped stretches sent again
         db.log_usage(m["id"], "transcript", "gemini", model, seconds, pricing.transcript_cost(model, seconds, used))
     return _label(per_track, list(tracks), diarized=True), both, duration
 

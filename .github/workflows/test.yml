@@ -16,6 +16,7 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: backend/requirements-server.txt
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg  # audio is encoded with it, as in the Docker image
       - run: pip install -r backend/requirements-server.txt pytest
       - run: python -m pytest -q backend/tests
 
