@@ -8,10 +8,13 @@ The account (plan, level, hours) is cached in settings.cloud_account, refreshed 
 the level changed. The level is what decides features: "pro" has live captions and catch-up, "basic" doesn't. A Pro
 plan drops to the Basic level for the rest of the month once its live hours are used, and the server says so.
 """
+import hashlib
 import logging
 import os
 import socket
+import subprocess
 import time
+import uuid
 
 import httpx
 
@@ -40,7 +43,7 @@ def _call(method: str, path: str, token: str | None = None, **kw) -> httpx.Respo
         raise CloudError(f"Couldn't reach Trailmix Cloud: {e or type(e).__name__}") from e
     if r.status_code == 401:
         raise CloudError("This Mac is signed out of Trailmix Cloud; sign in again")
-    if r.status_code >= 400 and r.status_code != 410:
+    if r.status_code >= 400 and r.status_code not in (404, 410):
         raise CloudError(error_text(r))
     return r
 
@@ -58,20 +61,46 @@ def error_text(r: httpx.Response) -> str:
 
 # ── Signing in ──────────────────────────────────────────────────────────
 
+# The code on screen is also in the sign-in page's address, so anyone who saw it could ask for the token first. The
+# server also hands out a secret device code for asking; it stays here, never in the UI.
+_device_codes: dict[str, str] = {}
+
+
+def device_id() -> str:
+    """The same for this Mac every time, and not the Mac's own serial: a hash of its hardware UUID (or, failing that, of
+    its network address). The server keeps only a hash of this, to give each Mac one free trial."""
+    raw = ""
+    try:
+        out = subprocess.run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True, text=True,
+                             timeout=5).stdout
+        raw = next((line.split('"')[-2] for line in out.splitlines() if "IOPlatformUUID" in line), "")
+    except (OSError, subprocess.SubprocessError, IndexError):
+        pass
+    return hashlib.sha256(f"trailmix-device:{raw or uuid.getnode()}".encode()).hexdigest()
+
+
 def link() -> dict:
     """Starts signing in: {code, link_url, expires_in, interval}. The UI opens link_url and polls with the code."""
     if settings.locked():
         raise CloudError(f"{settings.LOCKDOWN}, so Trailmix Cloud can't be used")
-    return _call("POST", "/v1/link", json={"device_name": socket.gethostname().removesuffix(".local")}).json()
+    got = _call("POST", "/v1/link", json={"device_name": socket.gethostname().removesuffix(".local"),
+                                         "device_id": device_id()}).json()
+    secret = got.pop("device_code", None)
+    if secret:
+        _device_codes[got["code"]] = secret
+    return got
 
 
 def poll(code: str) -> dict:
     """{status: pending|expired|done}. Once done, the token is saved and the account fetched."""
-    r = _call("POST", "/v1/link/poll", json={"code": code})
+    secret = _device_codes.get(code)
+    r = _call("POST", "/v1/link/poll", json={"device_code": secret} if secret else {"code": code})
     if r.status_code == 202:
         return {"status": "pending"}
-    if r.status_code == 410:
+    if r.status_code in (404, 410):  # ran out, already used, or not known (the server restarted, say)
+        _device_codes.pop(code, None)
         return {"status": "expired"}
+    _device_codes.pop(code, None)
     token = r.json().get("token", "")
     if not gemini_client.is_cloud(token):
         raise CloudError("Trailmix Cloud sent something that isn't a sign-in token")

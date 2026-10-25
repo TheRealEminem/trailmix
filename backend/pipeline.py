@@ -382,8 +382,10 @@ def _finish_live(m: dict, cfg: dict) -> tuple[list[dict], bool, float] | None:
                 if local:
                     found = mlx_engine.transcribe_final(tail[a:b], questions.vocabulary_prompt()[:300] or None)
                 elif cfg["transcribe_engine"] == "trailmix":
-                    found = transcribe_gemini.transcribe_clip(tail[a:b], gemini_client.credential(cfg, "trailmix"),
-                                                              mlx_engine.LANGUAGE, "transcribe_chunk")
+                    cred = gemini_client.credential(cfg, "trailmix")
+                    found = transcribe_gemini.transcribe_clip(
+                        tail[a:b], cred, mlx_engine.LANGUAGE, "transcribe_chunk",
+                        tags=gemini_client.meeting_headers(cred, m["id"], _side(name)))
                 else:
                     found = transcribe_remote.transcribe(tail[a:b], cfg["transcribe_url"], cfg["transcribe_api_key"],
                                                          cfg["transcribe_model"], mlx_engine.LANGUAGE)
@@ -431,6 +433,11 @@ def _transcribe_remote(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
     return _label(per_track, list(tracks)), "system" in tracks and "mic" in tracks, duration
 
 
+def _side(track: str) -> str:
+    """A track's name as Trailmix Cloud counts it: your microphone, or the call."""
+    return "mic" if track == "mic" else "call"
+
+
 def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
     """Google's transcription model, which labels who is speaking. With both sides of a call recorded your
     microphone is simply you, and only the other side's track needs its speakers told apart."""
@@ -454,6 +461,7 @@ def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
         try:
             segs = transcribe_gemini.transcribe(
                 audio, cred, mlx_engine.LANGUAGE, diarize=True, model=model, usage=used,
+                tags=gemini_client.meeting_headers(cred, m["id"]),
                 on_progress=lambda i, n: _progress(m["id"], f"Transcribing: {i}/{n}" if n > 1 else "Transcribing"))
         except transcribe_gemini.GeminiError as e:
             raise RuntimeError(str(e)) from e
@@ -467,7 +475,7 @@ def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
         try:
             per_track[name] = transcribe_gemini.transcribe(
                 audio, cred, mlx_engine.LANGUAGE, diarize=not (both and name == "mic"),
-                model=model, usage=used,
+                model=model, usage=used, tags=gemini_client.meeting_headers(cred, m["id"], _side(name)),
                 on_progress=lambda i, n, name=name: _progress(
                     m["id"], f"Transcribing {name} track: {i}/{n}" if n > 1 else f"Transcribing {name} track"))
         except transcribe_gemini.GeminiError as e:

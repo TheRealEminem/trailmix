@@ -9,6 +9,7 @@ import audio_store as store
 import catch_up
 import cloud
 import database as db
+import gemini_client
 import live
 import live_notes
 import llm_engine
@@ -172,8 +173,8 @@ def session_for(fresh_db, monkeypatch):
 def test_at_the_pro_level_clips_cut_at_pauses_are_the_captions_and_the_transcript(session_for, monkeypatch):
     clips = []
 
-    def transcribe_clip(audio, cred, language, model, context="", usage=None):
-        clips.append((len(audio) / SR, cred, model))
+    def transcribe_clip(audio, cred, language, model, context="", usage=None, tags=None):
+        clips.append((len(audio) / SR, cred, model, tags))
         return [{"start": 0.0, "end": 1.0, "text": "hello there"}]
 
     monkeypatch.setattr(live.transcribe_gemini, "transcribe_clip", transcribe_clip)
@@ -183,7 +184,9 @@ def test_at_the_pro_level_clips_cut_at_pauses_are_the_captions_and_the_transcrip
     assert session.draft_step() == []  # too short to send: clips are at least 8 s
     session.write(bytes([0]) + speech(7, pause_at=4).tobytes())
     lines = session.draft_step()
-    assert clips == [(9.5, "tmc_device", "transcribe_chunk")]  # cut at the pause, 9.5 s in
+    # cut at the pause, 9.5 s in, and counted as this meeting's microphone
+    assert clips == [(9.5, "tmc_device", "transcribe_chunk",
+                      {"X-Trailmix-Meeting": str(session.meeting_id), "X-Trailmix-Track": "mic"})]
     assert lines[0]["text"] == "hello there"
     session.finish()
     saved = json.loads(db.get_meeting(session.meeting_id)["live_json"])
@@ -242,3 +245,26 @@ def test_trailmix_cloud_is_only_offered_once_this_copy_knows_where_it_is(monkeyp
 def test_the_plan_is_shown_where_a_model_name_would_be():
     assert llm_engine.model_name("trailmix", cfg()) == "Pro"
     assert llm_engine.model_name("trailmix", cfg(account={})) == "Trailmix Cloud"
+
+
+def test_signing_in_sends_a_hashed_mac_id_and_asks_with_the_secret_code(fresh_db, monkeypatch):
+    sent = []
+
+    def request(method, url, headers=None, json=None, **kw):
+        sent.append((url, json))
+        if url.endswith("/v1/link"):
+            return reply(200, {"code": "WXYZ-9876", "device_code": "secret", "link_url": "https://x", "expires_in": 600,
+                               "interval": 3})
+        return reply(202, {"status": "pending"})
+
+    monkeypatch.setattr(cloud.httpx, "request", request)
+    shown = cloud.link()
+    assert "device_code" not in shown  # the secret never reaches the page
+    assert len(sent[0][1]["device_id"]) == 64 and sent[0][1]["device_id"] == cloud.device_id()
+    assert cloud.poll("WXYZ-9876")["status"] == "pending"
+    assert sent[1][1] == {"device_code": "secret"}
+
+
+def test_google_is_never_told_which_meeting_audio_is_from():
+    assert gemini_client.meeting_headers("AIza-key", 4, "mic") == {}
+    assert gemini_client.meeting_headers("tmc_x", 4) == {"X-Trailmix-Meeting": "4"}
