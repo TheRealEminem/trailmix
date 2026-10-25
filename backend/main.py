@@ -31,6 +31,7 @@ import audio_store as store
 import auth
 import database as db
 import duplicates
+import gemini_client
 import archive
 import batch_jobs
 import catch_up
@@ -846,7 +847,7 @@ def health():
             "url": cfg["transcribe_url"] if remote else None,
             "local_available": mlx_engine.available(),
             "live_final": cfg["live_final"] and not gemini,  # the transcript made while recording is the final one
-            "gemini_ready": bool(cfg["gemini_api_key"]) and not settings.locked(cfg),  # Google can be used for speaker labels
+            "gemini_ready": gemini_client.ready(cfg) and not settings.locked(cfg),  # Google can be used for speaker labels
             "remote_ready": preflight.engine_problem("remote", cfg) is None,
         },
         "version": archive.APP_VERSION,
@@ -913,7 +914,7 @@ def transcription_test():
     cfg = settings.get_all()
     if cfg["transcribe_engine"] == "gemini":
         try:
-            return {"ok": True, "message": transcribe_gemini.check(cfg["gemini_api_key"])}
+            return {"ok": True, "message": transcribe_gemini.check(gemini_client.credential(cfg))}
         except transcribe_gemini.GeminiError as e:
             raise HTTPException(502, str(e))
     if cfg["transcribe_engine"] != "remote":
@@ -1262,7 +1263,7 @@ def retranscribe(meeting_id: int, body: RetranscribeRequest | None = None):
     if (engine or cfg["transcribe_engine"]) == "gemini":  # fail now, not after the old notes have been cleared
         if settings.locked(cfg):
             raise HTTPException(409, f"{settings.LOCKDOWN}, so recordings can't be sent to Google")
-        if not cfg["gemini_api_key"]:
+        if not gemini_client.ready(cfg):
             raise HTTPException(409, "Add a Google API key first (Settings → Transcription)")
     if meeting["status"] not in ("done", "error", "ready_summarize"):
         raise HTTPException(409, "This meeting is still being processed")
@@ -1735,7 +1736,7 @@ def _upgradable(cfg: dict, current: str | None = None) -> dict:
 def _speech_engines(cfg: dict) -> list[dict]:
     """The speech engines you could use right now, each with how it's rated: [{engine, model, score}]."""
     out = []
-    if cfg["gemini_api_key"] and not settings.locked(cfg):
+    if gemini_client.ready(cfg) and not settings.locked(cfg):
         out.append({"engine": "gemini", "model": cfg["gemini_transcribe_model"]})
     if cfg["transcribe_url"] and (not settings.locked(cfg) or settings.on_this_computer(cfg["transcribe_url"])):
         out.append({"engine": "remote", "model": cfg["transcribe_model"]})
@@ -1773,7 +1774,7 @@ def upgrades():
     data["notes"].pop("ids")
     # The same notes, rewritten by Gemini as a half-price batch job (when there's a key and Lockdown is off).
     gemini = _upgradable(cfg, cfg["gemini_model"])["notes"]
-    data["notes_batch"] = {"ready": bool(cfg["gemini_api_key"]) and not settings.locked(cfg), "model": cfg["gemini_model"],
+    data["notes_batch"] = {"ready": gemini_client.ready(cfg) and not settings.locked(cfg), "model": cfg["gemini_model"],
                            "score": model_ranks.score(cfg["gemini_model"]), "count": gemini["count"], "from": gemini["from"]}
     transcripts = _transcripts_upgradable(cfg)
     transcripts.pop("ids")
@@ -1830,7 +1831,7 @@ def upgrade_notes_batch(body: NotesBatchRequest):
     cfg = settings.get_all()
     if settings.locked(cfg):
         raise HTTPException(409, f"{settings.LOCKDOWN}, so nothing can be sent to Google")
-    if not cfg["gemini_api_key"]:
+    if not gemini_client.ready(cfg):
         raise HTTPException(409, "Add a Google API key first (Settings → AI providers)")
     ids = body.meeting_ids if body.meeting_ids is not None else _upgradable(cfg, cfg["gemini_model"])["notes"]["ids"]
     newest = sorted((m for m in db.get_meetings(ids) if m), key=lambda m: m["created_at"], reverse=True)[:max(1, body.limit)]

@@ -9,6 +9,7 @@ import math
 
 import psutil
 
+import gemini_client
 import llm_engine
 import mlx_engine
 import pricing
@@ -32,7 +33,7 @@ def engine_problem(engine: str, cfg: dict) -> str | None:
     if engine == "gemini":
         if settings.locked(cfg):
             return f"{settings.LOCKDOWN}, so recordings can't be sent to Google"
-        if not cfg["gemini_api_key"]:
+        if not gemini_client.ready(cfg):
             return "Add a Google API key first (Settings → Transcription)"
     elif engine == "remote":
         if not cfg["transcribe_url"]:

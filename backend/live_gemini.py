@@ -21,11 +21,12 @@ import time
 import numpy as np
 import websockets
 
+import gemini_client
+
 log = logging.getLogger("trailmix.live_gemini")
 
 SR = 16000
 MODEL = "models/gemini-3.5-transcribe-live"
-URL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 FRAME_S = 0.1            # Google suggests about 100 ms per message
 SILENCE_RMS = 0.006      # below this a frame is quiet
 HANG_S = 2.0             # keep sending this long after the last sound, so Google sees the speaker has paused
@@ -63,10 +64,10 @@ class Channel:
     """Live captions for one audio channel (the microphone, or the meeting's audio)."""
 
     def __init__(self, api_key: str, language: str | None, on_interim, on_final, on_status=None,
-                 url: str = URL, session_s: float = SESSION_S, force_s: float = SESSION_FORCE_S):
+                 url: str | None = None, session_s: float = SESSION_S, force_s: float = SESSION_FORCE_S):
         self.api_key, self.language = api_key, language
         self.on_interim, self.on_final, self.on_status = on_interim, on_final, on_status or (lambda msg: None)
-        self.url, self.session_s, self.force_s = url, session_s, force_s
+        self.url, self.session_s, self.force_s = url or gemini_client.live_url(api_key), session_s, force_s
         self._queue: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._task: asyncio.Task | None = None
         self._closing: list[_Stream] = []   # streams that were told the audio ended and are still sending words back
@@ -94,7 +95,7 @@ class Channel:
     # -- internals ----------------------------------------------------------
 
     async def _connect(self, meeting_pos: int) -> _Stream:
-        ws = await websockets.connect(self.url, additional_headers={"x-goog-api-key": self.api_key}, max_size=None,
+        ws = await websockets.connect(self.url, additional_headers=gemini_client.headers(self.api_key), max_size=None,
                                       open_timeout=15)  # the key goes in a header: addresses end up in logs and errors
         config = {"languageCodes": [self.language] if self.language else []}
         await ws.send(json.dumps({"setup": {"model": MODEL, "generationConfig": {"responseModalities": ["TEXT"]},

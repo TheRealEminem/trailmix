@@ -20,8 +20,9 @@ from urllib.parse import urlparse
 import httpx
 import numpy as np
 
+import gemini_client
+
 SR = 16000
-API = "https://generativelanguage.googleapis.com"
 MODEL = "gemini-3.5-transcribe"
 MAX_CHUNK_S = 25 * 60       # the model's limit with diarization is 30 minutes; leave headroom
 OVERLAP_S = 60              # chunks share this much audio, to match their speaker labels
@@ -33,10 +34,6 @@ MIN_MATCH_S = 2.0           # seconds of shared speech needed to call two labels
 
 class GeminiError(Exception):
     pass
-
-
-def _headers(api_key: str) -> dict:
-    return {"x-goog-api-key": api_key}
 
 
 RATE_LIMIT_RETRIES = 8      # Google's free tier allows few audio tokens a minute; waiting its turn is normal
@@ -53,7 +50,7 @@ def _wait_for(r: httpx.Response, attempt: int) -> float:
 def _request(method: str, url: str, api_key: str, retries: int = 3, **kw) -> httpx.Response:
     """One call, retried on rate limits (patiently) and server errors; failures become GeminiError."""
     kw.setdefault("timeout", 600)
-    kw["headers"] = {**_headers(api_key), **kw.get("headers", {})}
+    kw["headers"] = {**gemini_client.headers(api_key), **kw.get("headers", {})}
     attempt = 0
     while True:
         try:
@@ -83,7 +80,7 @@ def _request(method: str, url: str, api_key: str, retries: int = 3, **kw) -> htt
 def upload(data: bytes, mime: str, api_key: str, name: str = "audio") -> dict:
     """Uploads audio and waits until it's ready. Returns the file ({uri, name, ...})."""
     start = _request(
-        "POST", f"{API}/upload/v1beta/files", api_key, json={"file": {"display_name": name}},
+        "POST", f"{gemini_client.base(api_key)}/upload/v1beta/files", api_key, json={"file": {"display_name": name}},
         headers={"X-Goog-Upload-Protocol": "resumable", "X-Goog-Upload-Command": "start",
                  "X-Goog-Upload-Header-Content-Length": str(len(data)), "X-Goog-Upload-Header-Content-Type": mime},
     )
@@ -100,14 +97,14 @@ def upload(data: bytes, mime: str, api_key: str, name: str = "audio") -> dict:
         if file.get("state") == "FAILED":
             raise GeminiError("Google couldn't process the uploaded audio")
         time.sleep(2)
-        file = _request("GET", f"{API}/v1beta/{file['name']}", api_key).json()
+        file = _request("GET", f"{gemini_client.base(api_key)}/v1beta/{file['name']}", api_key).json()
     raise GeminiError("Google took too long to process the uploaded audio")
 
 
 def delete_file(file: dict, api_key: str) -> None:
     """The audio shouldn't sit on Google's servers any longer than it takes to transcribe it."""
     try:
-        _request("DELETE", f"{API}/v1beta/{file['name']}", api_key, retries=0, timeout=30)
+        _request("DELETE", f"{gemini_client.base(api_key)}/v1beta/{file['name']}", api_key, retries=0, timeout=30)
     except GeminiError:
         pass  # Google removes uploads itself after 48 hours
 
@@ -200,7 +197,8 @@ def parse_turns(text: str) -> list[dict]:
 def call_llm(file: dict, mime: str, api_key: str, language: str | None, model: str, usage: dict | None = None) -> list[dict]:
     """A transcript from a general Gemini model: the audio and a prompt, answered in JSON turns."""
     for attempt in range(2):  # an answer that isn't valid JSON is worth one more try
-        r = _request("POST", f"{API}/v1beta/models/{model}:generateContent", api_key, json=llm_request_body(file, mime, language))
+        r = _request("POST", f"{gemini_client.base(api_key)}/v1beta/models/{model}:generateContent", api_key,
+                     json=llm_request_body(file, mime, language))
         j = r.json()
         if usage is not None:
             meta = j.get("usageMetadata") or {}
@@ -227,7 +225,7 @@ def call(file: dict, mime: str, api_key: str, language: str | None, diarize: boo
         return call_llm(file, mime, api_key, language, model, usage)
     body = {"model": model, "input": [{"type": "audio", "uri": file["uri"], "mime_type": mime}],
             "generation_config": _config(language, diarize)}
-    r = _request("POST", f"{API}/v1beta/interactions", api_key, json=body)
+    r = _request("POST", f"{gemini_client.base(api_key)}/v1beta/interactions", api_key, json=body)
     return parse_words(r.json())
 
 

@@ -29,6 +29,7 @@ import compare
 import database as db
 import duplicates
 import exporter
+import gemini_client
 import live
 import live_notes
 import questions
@@ -442,7 +443,7 @@ def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
         audio, used = mixdown.mix(tracks["mic"], tracks["system"]), {}
         try:
             segs = transcribe_gemini.transcribe(
-                audio, cfg["gemini_api_key"], mlx_engine.LANGUAGE, diarize=True, model=model, usage=used,
+                audio, gemini_client.credential(cfg), mlx_engine.LANGUAGE, diarize=True, model=model, usage=used,
                 on_progress=lambda i, n: _progress(m["id"], f"Transcribing: {i}/{n}" if n > 1 else "Transcribing"))
         except transcribe_gemini.GeminiError as e:
             raise RuntimeError(str(e)) from e
@@ -455,7 +456,7 @@ def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
         used = {}
         try:
             per_track[name] = transcribe_gemini.transcribe(
-                audio, cfg["gemini_api_key"], mlx_engine.LANGUAGE, diarize=not (both and name == "mic"),
+                audio, gemini_client.credential(cfg), mlx_engine.LANGUAGE, diarize=not (both and name == "mic"),
                 model=cfg["gemini_transcribe_model"], usage=used,
                 on_progress=lambda i, n, name=name: _progress(
                     m["id"], f"Transcribing {name} track: {i}/{n}" if n > 1 else f"Transcribing {name} track"))
