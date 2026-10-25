@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 import httpx
 
 import database as db
+import gemini_client
 import meeting_text
 import pricing
 import templates
@@ -403,10 +404,12 @@ def _gemini(cfg: dict, prompt: str, system: str | None, on_text: OnText = None, 
     body: dict = {"contents": [{"role": "user", "parts": [*pictures, {"text": prompt}]}]}
     if system:
         body["systemInstruction"] = {"parts": [{"text": system}]}
-    headers = {"x-goog-api-key": cfg["gemini_api_key"]}
+    cred = gemini_client.credential(cfg)
+    headers = gemini_client.headers(cred)
+    url = f"{gemini_client.base(cred)}/v1beta/models/{cfg['gemini_model']}"
     if on_text:
         text, meta = "", None
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{cfg['gemini_model']}:streamGenerateContent?alt=sse"
+        url += ":streamGenerateContent?alt=sse"
         for event in _sse(url, json=body, headers=headers):
             if event.get("error"):
                 raise LLMError(f"Gemini: {_error_text_of(event)}")
@@ -419,7 +422,7 @@ def _gemini(cfg: dict, prompt: str, system: str | None, on_text: OnText = None, 
         _count(usage, meta)
         return text
     r = _post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{cfg['gemini_model']}:generateContent",
+        f"{url}:generateContent",
         json=body,
         headers=headers,
     )
@@ -494,10 +497,11 @@ def list_models(pid: str, cfg: dict) -> list[str]:
         except anthropic.APIError as e:
             raise LLMError(f"Claude: {e}") from e
     if pid == "gemini":
-        if not cfg["gemini_api_key"]:
+        cred = gemini_client.credential(cfg)
+        if not cred:
             raise LLMError("Add an API key first")
-        r = httpx.get("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
-                      headers={"x-goog-api-key": cfg["gemini_api_key"]}, timeout=20)
+        r = httpx.get(f"{gemini_client.base(cred)}/v1beta/models?pageSize=200", headers=gemini_client.headers(cred),
+                      timeout=20)
         if r.status_code >= 400:
             raise LLMError(f"Gemini returned {r.status_code}: {_error_text(r)}")
         return [m["name"].removeprefix("models/") for m in r.json().get("models", [])

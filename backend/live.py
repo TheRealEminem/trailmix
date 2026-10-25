@@ -19,6 +19,7 @@ import numpy as np
 
 import audio_store as store
 import database as db
+import gemini_client
 import live_gemini
 import mlx_engine
 import models
@@ -122,7 +123,7 @@ class LiveSession:
         self.cfg = cfg  # settings snapshot: which engine drafts the live transcript
         # With Gemini the live captions stream from Google as you talk (live_gemini.py); the transcript you keep
         # is made after the recording, with the speakers told apart. Nothing is polled here.
-        self.gemini_live = (draft and cfg["transcribe_engine"] == "gemini" and bool(cfg.get("gemini_api_key"))
+        self.gemini_live = (draft and cfg["transcribe_engine"] == "gemini" and gemini_client.ready(cfg)
                             and not cfg.get("lockdown"))
         self._channels: dict[int, live_gemini.Channel] = {}
         self.interim: dict[int, dict] = {}  # the words being said right now, per channel
@@ -242,7 +243,7 @@ class LiveSession:
                 self._push({"type": "status", "message": message})
 
             channel = self._channels[ch] = live_gemini.Channel(
-                self.cfg["gemini_api_key"], mlx_engine.LANGUAGE, interim, final, status)
+                gemini_client.credential(self.cfg), mlx_engine.LANGUAGE, interim, final, status)
             channel.start()
         return channel
 

@@ -18,6 +18,7 @@ import audio_store as store
 import cleanup
 import database as db
 import gemini_batch
+import gemini_client
 import llm_engine
 import meeting_text
 import mixdown
@@ -72,14 +73,14 @@ def submit_notes(meeting_ids: list[int], cfg: dict) -> dict:
     """Sends these meetings' notes to be rewritten at half price. {jobs, submitted, skipped, cost}."""
     if settings.locked(cfg):
         raise NotReady(f"{settings.LOCKDOWN}, so nothing can be sent to Google")
-    if not cfg["gemini_api_key"]:
+    if not gemini_client.ready(cfg):
         raise NotReady("Add a Google API key first (Settings → AI providers)")
     model = cfg["gemini_model"]
     requests, items, skipped = prepare(meeting_ids, cfg)
     jobs = []
     for group in gemini_batch.split(requests):
         est = estimate(group, model)["cost"]
-        name = gemini_batch.create(model, group, cfg["gemini_api_key"], name="trailmix notes")
+        name = gemini_batch.create(model, group, gemini_client.credential(cfg), name="trailmix notes")
         jobs.append(db.add_batch_job(name, "notes", model, {r["key"]: items[r["key"]] for r in group}, est))
     return {"jobs": jobs, "submitted": len(requests), "skipped": skipped,
             "cost": estimate(requests, model)["cost"] if requests else 0}
@@ -139,12 +140,12 @@ def check(cfg: dict | None = None) -> int:
 
 def _check(cfg: dict) -> int:
     open_jobs = db.batch_jobs(open_only=True)
-    if not open_jobs or settings.locked(cfg) or not cfg["gemini_api_key"]:
+    if not open_jobs or settings.locked(cfg) or not gemini_client.ready(cfg):
         return 0
     changed = 0
     for job in open_jobs:
         try:
-            now = gemini_batch.status(job["name"], cfg["gemini_api_key"])
+            now = gemini_batch.status(job["name"], gemini_client.credential(cfg))
         except gemini_batch.BatchError as e:
             log.warning("Batch job %s: %s", job["name"], e)
             continue
@@ -155,7 +156,7 @@ def _check(cfg: dict) -> int:
             db.update_batch_job(job["id"], state="succeeded", applied=1, result_json=json.dumps(outcome),
                                 finished_at=datetime.now(timezone.utc).isoformat())
         elif now["state"] in ("failed", "cancelled", "expired"):
-            _delete_files(json.loads(job["items_json"]).values(), cfg["gemini_api_key"])
+            _delete_files(json.loads(job["items_json"]).values(), gemini_client.credential(cfg))
             db.update_batch_job(job["id"], state=now["state"], error=now.get("error"),
                                 finished_at=datetime.now(timezone.utc).isoformat())
         elif now["state"] != job["state"]:
@@ -168,10 +169,10 @@ def cancel(job_id: int, cfg: dict) -> None:
     if not job or job["state"] not in ("pending", "running"):
         raise NotReady("That job isn't waiting any more")
     try:
-        gemini_batch.cancel(job["name"], cfg["gemini_api_key"])
+        gemini_batch.cancel(job["name"], gemini_client.credential(cfg))
     except gemini_batch.BatchError as e:
         raise NotReady(str(e))
-    _delete_files(json.loads(job["items_json"]).values(), cfg["gemini_api_key"])
+    _delete_files(json.loads(job["items_json"]).values(), gemini_client.credential(cfg))
     db.update_batch_job(job_id, state="cancelled", finished_at=datetime.now(timezone.utc).isoformat())
 
 
@@ -183,11 +184,11 @@ def submit_transcripts(meeting_ids: list[int], cfg: dict, model: str, apply: boo
     deleted when the answers are in. {jobs, submitted, skipped, cost}."""
     if settings.locked(cfg):
         raise NotReady(f"{settings.LOCKDOWN}, so recordings can't be sent to Google")
-    if not cfg["gemini_api_key"]:
+    if not gemini_client.ready(cfg):
         raise NotReady("Add a Google API key first (Settings → Transcription)")
     if tg.uses_transcribe_api(model):
         raise NotReady(f"{model} can't run as a batch job; the economy models (like gemini-3.5-flash-lite) can")
-    key = cfg["gemini_api_key"]
+    key = gemini_client.credential(cfg)
     requests, items, skipped, minutes = [], {}, [], 0.0
     try:
         for mid in meeting_ids:
@@ -294,6 +295,6 @@ def _apply_transcripts(job: dict, results: dict, cfg: dict) -> dict:
                 outcome["skipped"]["you changed it meanwhile (the new transcript is kept as a version)"] = 1 + outcome["skipped"].get(
                     "you changed it meanwhile (the new transcript is kept as a version)", 0)
         outcome["applied"] += 1
-    _delete_files(json.loads(job["items_json"]).values(), cfg["gemini_api_key"])
+    _delete_files(json.loads(job["items_json"]).values(), gemini_client.credential(cfg))
     outcome["cost"] = round(outcome["cost"], 4)
     return outcome
