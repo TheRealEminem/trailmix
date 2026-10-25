@@ -208,11 +208,12 @@ def parse_turns(text: str) -> list[dict]:
     return sorted(out, key=lambda w: w["start"])
 
 
-def call_llm(file: dict, mime: str, api_key: str, language: str | None, model: str, usage: dict | None = None) -> list[dict]:
+def call_llm(file: dict, mime: str, api_key: str, language: str | None, model: str, usage: dict | None = None,
+             tags: dict | None = None) -> list[dict]:
     """A transcript from a general Gemini model: the audio and a prompt, answered in JSON turns."""
     for attempt in range(2):  # an answer that isn't valid JSON is worth one more try
         r = _request("POST", f"{gemini_client.base(api_key)}/v1beta/models/{model}:generateContent", api_key,
-                     json=llm_request_body(file, mime, language))
+                     json=llm_request_body(file, mime, language), headers=tags or {})
         j = r.json()
         if usage is not None:
             meta = j.get("usageMetadata") or {}
@@ -239,9 +240,10 @@ CLIP_PROMPT = ("Transcribe this short stretch of a meeting verbatim{language}. I
 
 
 def transcribe_clip(audio: np.ndarray, api_key: str, language: str | None, model: str, context: str = "",
-                    usage: dict | None = None) -> list[dict]:
+                    usage: dict | None = None, tags: dict | None = None) -> list[dict]:
     """[{start, end, text}] for a few seconds of one track, sent with the request instead of uploaded: the near-live
-    captions of Trailmix Cloud, where each clip is cut at a pause (live.py) and the captions are the transcript."""
+    captions of Trailmix Cloud, where each clip is cut at a pause (live.py) and the captions are the transcript.
+    `tags`: which meeting and track it's from (gemini_client.meeting_headers)."""
     said = f" (the language is {language})" if language else ""
     hint = f"Names and terms that may come up, and what was just said before: {context.strip()}. " if context.strip() else ""
     body = {"contents": [{"parts": [
@@ -250,7 +252,7 @@ def transcribe_clip(audio: np.ndarray, api_key: str, language: str | None, model
             "generationConfig": {"responseMimeType": "application/json", "responseSchema": LLM_SCHEMA,
                                  "temperature": 0.0, "maxOutputTokens": 4096}}
     r = _request("POST", f"{gemini_client.base(api_key)}/v1beta/models/{model}:generateContent", api_key,
-                 retries=1, timeout=30, json=body)
+                 retries=1, timeout=30, json=body, headers=tags or {})
     j = r.json()
     if usage is not None:
         meta = j.get("usageMetadata") or {}
@@ -266,12 +268,12 @@ def transcribe_clip(audio: np.ndarray, api_key: str, language: str | None, model
 
 
 def call(file: dict, mime: str, api_key: str, language: str | None, diarize: bool, model: str = MODEL,
-         usage: dict | None = None) -> list[dict]:
+         usage: dict | None = None, tags: dict | None = None) -> list[dict]:
     if not uses_transcribe_api(model):
-        return call_llm(file, mime, api_key, language, model, usage)
+        return call_llm(file, mime, api_key, language, model, usage, tags)
     body = {"model": model, "input": [{"type": "audio", "uri": file["uri"], "mime_type": mime}],
             "generation_config": _config(language, diarize)}
-    r = _request("POST", f"{gemini_client.base(api_key)}/v1beta/interactions", api_key, json=body)
+    r = _request("POST", f"{gemini_client.base(api_key)}/v1beta/interactions", api_key, json=body, headers=tags or {})
     return parse_words(r.json())
 
 
@@ -379,7 +381,7 @@ def encode(audio: np.ndarray) -> bytes:
 
 
 def transcribe(audio: np.ndarray, api_key: str, language: str | None = None, diarize: bool = True,
-               on_progress=None, model: str = MODEL, usage: dict | None = None) -> list[dict]:
+               on_progress=None, model: str = MODEL, usage: dict | None = None, tags: dict | None = None) -> list[dict]:
     """[{start, end, speaker, text}] for the whole of `audio` (16 kHz mono float). `diarize` False still
     gives timestamps but no speaker labels (every word is one speaker). `on_progress(i, n)` after each chunk."""
     import settings
@@ -393,7 +395,7 @@ def transcribe(audio: np.ndarray, api_key: str, language: str | None = None, dia
     for i, (a, b) in enumerate(chunks):
         file = upload(encode(audio[int(a * SR):int(b * SR)]), "audio/ogg", api_key, name=f"chunk-{i + 1}")
         try:
-            per_chunk.append(((a, b), call(file, "audio/ogg", api_key, language, diarize, model, usage)))
+            per_chunk.append(((a, b), call(file, "audio/ogg", api_key, language, diarize, model, usage, tags)))
         finally:
             delete_file(file, api_key)
         if on_progress:

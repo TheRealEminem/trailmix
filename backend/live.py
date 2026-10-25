@@ -299,15 +299,17 @@ class LiveSession:
         db.update_meeting(self.meeting_id, bookmarks_json=self.bookmarks)
         return b
 
-    def _final_text(self, chunk: np.ndarray, prompt: str = "") -> list[dict]:
+    def _final_text(self, chunk: np.ndarray, prompt: str = "", ch: int = 0) -> list[dict]:
         """The accurate transcript of a chunk: speech regions first, like the after-the-meeting job."""
         cfg, out = self.cfg, []
         if cfg["transcribe_engine"] == "trailmix":  # the clip was cut at a pause: one request for all of it
             if not vad.speech_regions(chunk):
                 return []
             self.cloud_seconds += len(chunk) / SR
-            return transcribe_gemini.transcribe_clip(chunk, gemini_client.credential(cfg, "trailmix"),
-                                                     mlx_engine.LANGUAGE, "transcribe_chunk", prompt)
+            cred = gemini_client.credential(cfg, "trailmix")
+            return transcribe_gemini.transcribe_clip(
+                chunk, cred, mlx_engine.LANGUAGE, "transcribe_chunk", prompt,
+                tags=gemini_client.meeting_headers(cred, self.meeting_id, "mic" if ch == 0 else "call"))
         for a, b in vad.speech_regions(chunk):
             if cfg["transcribe_engine"] == "remote":
                 segs = transcribe_remote.transcribe(chunk[a:b], cfg["transcribe_url"], cfg["transcribe_api_key"],
@@ -377,7 +379,7 @@ class LiveSession:
                 continue
             try:
                 if self.final:
-                    found = self._final_text(chunk, f"{self._vocab} {self._context[ch]}".strip())
+                    found = self._final_text(chunk, f"{self._vocab} {self._context[ch]}".strip(), ch)
                     off = start / SR
                     self.final_segments[ch] += [{**s, "start": s["start"] + off, "end": s["end"] + off} for s in found]
                     segs = mlx_engine.filter_hallucinations([{**s} for s in found])

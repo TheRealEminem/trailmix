@@ -51,6 +51,14 @@ def headers(cred: str) -> dict:
     return {"Authorization": f"Bearer {cred}"} if is_cloud(cred) else {"x-goog-api-key": cred}
 
 
+def meeting_headers(cred: str, meeting_id: int | None, track: str | None = None) -> dict:
+    """Which meeting (and which side: "mic" or "call") some audio is from, so Trailmix Cloud counts a meeting's hours
+    once, not once per track or per pass. Only Trailmix Cloud is told; Google never is."""
+    if not is_cloud(cred) or meeting_id is None:
+        return {}
+    return {"X-Trailmix-Meeting": str(meeting_id), **({"X-Trailmix-Track": track} if track else {})}
+
+
 def live_url(cred: str) -> str:
     """The WebSocket address for live captions."""
     return base(cred).replace("https://", "wss://", 1).replace("http://", "ws://", 1) + LIVE_PATH
