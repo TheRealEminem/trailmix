@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 
 import transcribe_gemini as g
@@ -124,3 +126,86 @@ def test_rate_limit_that_never_clears_gives_a_plain_message(monkeypatch):
         assert "limiting how much audio" in str(e)
     else:
         raise AssertionError("expected GeminiError")
+
+
+# ── stretches the model skipped ──
+
+def test_find_gaps_is_a_long_wordless_stretch_with_speech_in_it(monkeypatch):
+    monkeypatch.setattr(g.vad, "speech_regions", lambda audio: [(0, 300 * g.SR)])  # someone talks all the way through
+    audio = np.zeros(300 * g.SR, dtype=np.float32)
+    words = [word("a", "spk_1", t, t + 1) for t in range(0, 100, 2)] + [word("b", "spk_1", 200, 201)]
+    assert g.find_gaps(audio, words) == [(99, 200), (201, 300)]
+    pauses = [word("a", "spk_1", t, t + 1) for t in range(0, 300, 20)]  # 19 s pauses: normal
+    assert g.find_gaps(audio, pauses) == []
+
+
+def test_find_gaps_ignores_a_long_silence(monkeypatch):
+    monkeypatch.setattr(g.vad, "speech_regions", lambda audio: [(0, 100 * g.SR), (290 * g.SR, 300 * g.SR)])
+    words = [word("a", "spk_1", t, t + 1) for t in range(0, 100, 2)]
+    assert g.find_gaps(np.zeros(300 * g.SR, dtype=np.float32), words) == []  # 10 s of speech in 200 s
+
+
+def _fake_google(monkeypatch, answered_until=None):
+    """Google faked: the audio's samples hold their own time (seconds / 1000), so the fake knows which stretch it was
+    sent. It answers with a word every 2 s, the speaker changing every 10 s; the first answer stops at
+    `answered_until`, and later ones (redos) number the speakers the other way round."""
+    import settings
+
+    sent = []
+
+    def call(file, mime, key, language, diarize, model, usage):
+        piece = file["audio"]
+        offset = float(piece[0]) * 1000
+        end = offset + len(piece) / g.SR
+        sent.append((round(offset), round(end)))
+        redo = len(sent) > 1
+        out = []
+        for at in range(2 * math.ceil(offset / 2), math.ceil(end), 2):  # a word just after every even second
+            t = at + 0.1 - offset
+            if not 0 <= t < end - offset:
+                continue
+            if not redo and answered_until is not None and at >= answered_until:
+                break
+            first = (at // 10) % 2 == 0
+            out.append(word(str(at), "spk_1" if first != redo else "spk_2", t, t + 1))
+        return out
+
+    monkeypatch.setattr(settings, "locked", lambda: False)
+    monkeypatch.setattr(g, "encode", lambda audio: audio)
+    monkeypatch.setattr(g, "upload", lambda data, mime, key, name="": {"name": name, "audio": data})
+    monkeypatch.setattr(g, "delete_file", lambda file, key: None)
+    monkeypatch.setattr(g, "call", call)
+    monkeypatch.setattr(g.vad, "speech_regions", lambda audio: [(0, len(audio))])
+    return sent
+
+
+def _clock_audio(seconds):
+    return (np.arange(seconds * g.SR, dtype=np.float64) / g.SR / 1000).astype(np.float32)
+
+
+def test_a_stretch_the_model_skipped_is_transcribed_again_and_put_in_place(monkeypatch):
+    sent = _fake_google(monkeypatch, answered_until=150)
+    usage = {}
+    segs = g.transcribe(_clock_audio(400), "key", usage=usage)
+    assert sent == [(0, 400), (129, 400)]                       # once, then the skipped part with 20 s before it
+    said = [int(w) for s in segs for w in s["text"].split()]
+    assert said == list(range(0, 400, 2))                       # every word once, in order
+    for s in segs:                                              # the redo's speakers matched to the first answer's
+        assert s["speaker"] == ("Speaker 1" if (int(s["text"].split()[0]) // 10) % 2 == 0 else "Speaker 2")
+    assert abs(usage["redo_seconds"] - (400 - 129.1)) < 0.01   # the last word ended at 149.1 s
+
+
+def test_a_complete_answer_is_not_sent_again(monkeypatch):
+    sent = _fake_google(monkeypatch)
+    usage = {}
+    g.transcribe(_clock_audio(400), "key", usage=usage)
+    assert sent == [(0, 400)] and "redo_seconds" not in usage
+
+
+def test_a_long_skipped_stretch_is_redone_in_smaller_requests(monkeypatch):
+    sent = _fake_google(monkeypatch, answered_until=100)
+    segs = g.transcribe(_clock_audio(g.MAX_CHUNK_S - 60), "key")
+    assert sent[0] == (0, g.MAX_CHUNK_S - 60)
+    assert len(sent) > 2 and all(b - a <= g.REDO_MAX_S + 1 for a, b in sent[1:])
+    said = [int(w) for s in segs for w in s["text"].split()]
+    assert said == list(range(0, g.MAX_CHUNK_S - 60, 2))

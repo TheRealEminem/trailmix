@@ -7,6 +7,10 @@ diarization. The model takes at most 30 minutes per request when diarizing, so l
 overlapping chunks and the speaker labels of each chunk are matched to the previous one by what was said in
 the overlap (a chunk's "spk_1" isn't necessarily the last chunk's "spk_1").
 
+The model sometimes stops partway through a request without saying so (on one 54-minute meeting it returned nothing
+for 12 minutes of conversation). So each answer is checked against where the voice detector hears speech, and a
+stretch it skipped is transcribed again as a smaller request and put in its place.
+
 Returns the same [{start, end, speaker, text}] segments as the other engines, with speakers named
 "Speaker 1", "Speaker 2"... in order of first appearance.
 """
@@ -20,6 +24,8 @@ from urllib.parse import urlparse
 import httpx
 import numpy as np
 
+import vad
+
 SR = 16000
 API = "https://generativelanguage.googleapis.com"
 MODEL = "gemini-3.5-transcribe"
@@ -29,6 +35,10 @@ CUT_SEARCH_S = 120          # a chunk ends at the quietest moment in the last tw
 SEGMENT_GAP_S = 1.0         # a longer pause starts a new line
 SEGMENT_MAX_S = 25.0        # ...and so does a line this long
 MIN_MATCH_S = 2.0           # seconds of shared speech needed to call two labels the same person
+GAP_S = 30.0                # a stretch this long with no words...
+GAP_SPEECH_S = 15.0         # ...in which the voice detector hears this much speech was skipped by the model
+REDO_CONTEXT_S = 20.0       # a skipped stretch is sent again with this much audio either side, to match speakers by
+REDO_MAX_S = 5 * 60         # ...in requests this long at most (a long request is what tends to stop early)
 
 
 class GeminiError(Exception):
@@ -334,27 +344,78 @@ def encode(audio: np.ndarray) -> bytes:
     return proc.stdout
 
 
+# ── Stretches the model skipped ─────────────────────────────────────────
+
+def find_gaps(audio: np.ndarray, words: list[dict]) -> list[tuple[float, float]]:
+    """[(start, end)] seconds of `audio` with no words for GAP_S or more although someone is speaking for at least
+    GAP_SPEECH_S of it (a long silence isn't a gap)."""
+    regions = [(a / SR, b / SR) for a, b in vad.speech_regions(audio)]
+    total = len(audio) / SR
+    gaps, reach = [], 0.0
+    for start, end in sorted((w["start"], w["end"]) for w in words) + [(total, total)]:
+        if start - reach >= GAP_S:
+            speech = sum(max(0.0, min(b, start) - max(a, reach)) for a, b in regions)
+            if speech >= GAP_SPEECH_S:
+                gaps.append((reach, start))
+        reach = max(reach, end)
+    return gaps
+
+
+def fill_gaps(audio: np.ndarray, words: list[dict], send, usage: dict | None = None) -> list[dict]:
+    """`words` with each stretch the model skipped transcribed again (by `send`, in smaller requests) and put in its
+    place. The new words' speakers are matched to the words either side of the stretch; anyone who can't be
+    matched gets a label of their own. A redo that skips again is left as it is."""
+    total = len(audio) / SR
+    for n, (gap_start, gap_end) in enumerate(find_gaps(audio, words)):
+        lo, hi = max(0.0, gap_start - REDO_CONTEXT_S), min(total, gap_end + REDO_CONTEXT_S)
+        piece = audio[int(lo * SR):int(hi * SR)]
+        if usage is not None:
+            usage["redo_seconds"] = usage.get("redo_seconds", 0.0) + len(piece) / SR
+        redo = [{**w, "start": w["start"] + lo, "end": w["end"] + lo}
+                for w in _transcribe_chunks(piece, send, REDO_MAX_S, repair=False)]
+        matched = match_speakers(words, redo, lo, hi)
+        redo = [{**w, "speaker": matched.get(w["speaker"], f"{w['speaker']}~redo{n + 1}")} for w in redo]
+        words = sorted([w for w in words if not gap_start < w["start"] < gap_end]
+                       + [w for w in redo if gap_start <= w["start"] <= gap_end], key=lambda w: w["start"])
+    return words
+
+
+def _transcribe_chunks(audio: np.ndarray, send, max_s: float, repair: bool = True, usage: dict | None = None,
+                       on_progress=None) -> list[dict]:
+    """Words for the whole of `audio`, sent by `send(audio, name)` in chunks of at most `max_s` seconds."""
+    chunks = plan_chunks(audio, max_s)
+    per_chunk = []
+    for i, (a, b) in enumerate(chunks):
+        piece = audio[int(a * SR):int(b * SR)]
+        words = send(piece, f"chunk-{i + 1}")
+        if repair:
+            words = fill_gaps(piece, words, send, usage)
+        per_chunk.append(((a, b), words))
+        if on_progress:
+            on_progress(i + 1, len(chunks))
+    return stitch(per_chunk)
+
+
 def transcribe(audio: np.ndarray, api_key: str, language: str | None = None, diarize: bool = True,
                on_progress=None, model: str = MODEL, usage: dict | None = None) -> list[dict]:
     """[{start, end, speaker, text}] for the whole of `audio` (16 kHz mono float). `diarize` False still
-    gives timestamps but no speaker labels (every word is one speaker). `on_progress(i, n)` after each chunk."""
+    gives timestamps but no speaker labels (every word is one speaker). `on_progress(i, n)` after each chunk.
+    `usage` gets the tokens a general model reported and, as "redo_seconds", the audio sent again to fill gaps."""
     import settings
 
     if settings.locked():
         raise GeminiError("Lockdown mode is on, so recordings can't be sent to Google (Settings → Privacy)")
     if not api_key:
         raise GeminiError("No Google API key is set (Settings → Transcription)")
-    chunks = plan_chunks(audio)
-    per_chunk = []
-    for i, (a, b) in enumerate(chunks):
-        file = upload(encode(audio[int(a * SR):int(b * SR)]), "audio/ogg", api_key, name=f"chunk-{i + 1}")
+
+    def send(piece: np.ndarray, name: str) -> list[dict]:
+        file = upload(encode(piece), "audio/ogg", api_key, name=name)
         try:
-            per_chunk.append(((a, b), call(file, "audio/ogg", api_key, language, diarize, model, usage)))
+            return call(file, "audio/ogg", api_key, language, diarize, model, usage)
         finally:
             delete_file(file, api_key)
-        if on_progress:
-            on_progress(i + 1, len(chunks))
-    words = stitch(per_chunk)
+
+    words = _transcribe_chunks(audio, send, MAX_CHUNK_S, usage=usage, on_progress=on_progress)
     return name_speakers(group_words(words))
 
 
