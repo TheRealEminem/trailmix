@@ -1,0 +1,4 @@
+# Copy to .dev.vars for `wrangler dev`. Never commit .dev.vars.
+GEMINI_API_KEY=your-gemini-key
+LEMONSQUEEZY_SIGNING_SECRET=any-string-for-local-testing
+# RESEND_API_KEY=re_...   (leave unset locally: DEV_MODE prints sign-in links instead)
