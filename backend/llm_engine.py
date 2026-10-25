@@ -118,6 +118,14 @@ def model_for(pid: str, cfg: dict) -> str:
     return cfg[f"{pid}_model"]
 
 
+def model_name(pid: str, cfg: dict) -> str:
+    """The model as people see it. Trailmix Cloud picks its own for each job, so its plan is shown instead."""
+    if pid == "trailmix":
+        plan = (cfg.get("cloud_account") or {}).get("plan")
+        return {"trial": "Free trial", "basic": "Basic", "pro": "Pro", "max": "Max"}.get(plan, "Trailmix Cloud")
+    return model_for(pid, cfg)
+
+
 # Families that follow a fixed note format well, best first. Used when no Ollama model is picked in Settings.
 _PREFERRED_FAMILIES = ("qwen3", "qwen2.5", "gemma3", "llama3.1", "llama3.2", "mistral", "phi4", "llama3")
 
@@ -554,7 +562,7 @@ def list_models(pid: str, cfg: dict) -> list[str]:
 
 def test(pid: str, cfg: dict) -> str:
     reply = generate(pid, cfg, "Reply with exactly: OK", keep_alive=OLLAMA_KEEP_ALIVE)
-    return f"{label(pid, cfg)} · {model_for(pid, cfg)} replied “{reply[:40]}”"
+    return f"{label(pid, cfg)} · {model_name(pid, cfg)} replied “{reply[:40]}”"
 
 
 # ── Meeting tasks ───────────────────────────────────────────────────────

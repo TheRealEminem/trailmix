@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Usage } from "../api";
+import type { CloudAccount, Usage } from "../api";
+import { periodDate, planLine } from "./Cloud";
 import { setSpendWarn } from "../spend";
 import { ChevronDownIcon } from "./icons";
 import { Collapse, ControlRow, Segmented, Select } from "./ui";
@@ -81,7 +82,16 @@ const amount = (l: Line) =>
  * the breakdown is one click further. Prices are estimates; tokens and minutes are what the provider reported or what
  * was sent.
  */
-export default function UsagePanel({ warnCents, onWarnCents }: { warnCents: number; onWarnCents: (cents: number) => void }) {
+export default function UsagePanel({
+  warnCents,
+  onWarnCents,
+  cloud,
+}: {
+  warnCents: number;
+  onWarnCents: (cents: number) => void;
+  /** Trailmix Cloud's account when signed in: its work is part of the plan, so it's shown in hours, not dollars */
+  cloud?: CloudAccount | null;
+}) {
   const [days, setDays] = useState("30");
   const [usage, setUsage] = useState<Usage | null>(null);
   const [open, setOpen] = useState(false);
@@ -101,8 +111,26 @@ export default function UsagePanel({ warnCents, onWarnCents }: { warnCents: numb
   const total = usage ? (usage.rows.length === 0 ? "Nothing yet" : usage.cost > 0 ? `About ${dollars(usage.cost)}` : "No cost counted") : "…";
   const period = PERIODS.find((p) => p.id === days)?.label.toLowerCase();
 
+  const limit = cloud?.pro_hours_limit;
+  const used = cloud?.pro_hours_used ?? 0;
+
   return (
     <>
+      {cloud?.plan && (
+        <div className="py-3.5">
+          <div className="text-label font-medium text-ink">Trailmix Cloud</div>
+          <div className="mt-0.5 text-ui text-ink">{planLine(cloud)}</div>
+          {limit ? (
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-surface-subtle" role="presentation">
+              <div className="h-full rounded-full bg-forest" style={{ width: `${Math.min(100, (used / limit) * 100)}%` }} />
+            </div>
+          ) : null}
+          <p className="mt-1.5 text-hint leading-[1.45] text-ink-soft">
+            Part of your plan: nothing more to pay.
+            {limit ? ` Live hours come back on ${cloud.period_end ? periodDate(cloud.period_end) : "the 1st"}.` : ""}
+          </p>
+        </div>
+      )}
       <div className="py-3.5">
         <div className="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
           <div>

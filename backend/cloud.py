@@ -9,6 +9,7 @@ the level changed. The level is what decides features: "pro" has live captions a
 plan drops to the Basic level for the rest of the month once its live hours are used, and the server says so.
 """
 import logging
+import os
 import socket
 import time
 
@@ -108,6 +109,12 @@ def account(refresh: bool = False, cfg: dict | None = None) -> dict:
         settings.update({"cloud_account": got}, internal=True)
         return got
     return cfg["cloud_account"] or {}
+
+
+def offered(cfg: dict) -> bool:
+    """Whether to list Trailmix Cloud as a choice: this copy knows where it is, or it's in use already."""
+    return bool(os.getenv("TRAILMIX_CLOUD_URL")) or "trailmix" in (
+        cfg.get("transcribe_engine"), cfg.get("summary_provider"), cfg.get("summary_fallback"))
 
 
 def level(cfg: dict) -> str:
