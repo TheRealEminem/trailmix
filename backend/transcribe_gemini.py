@@ -10,6 +10,7 @@ the overlap (a chunk's "spk_1" isn't necessarily the last chunk's "spk_1").
 Returns the same [{start, end, speaker, text}] segments as the other engines, with speakers named
 "Speaker 1", "Speaker 2"... in order of first appearance.
 """
+import base64
 import json
 import re
 import subprocess
@@ -34,6 +35,10 @@ MIN_MATCH_S = 2.0           # seconds of shared speech needed to call two labels
 
 class GeminiError(Exception):
     pass
+
+
+class BasicLevel(GeminiError):
+    """Trailmix Cloud won't do this at the account's current level (near-live captions after the month's live hours)."""
 
 
 RATE_LIMIT_RETRIES = 8      # Google's free tier allows few audio tokens a minute; waiting its turn is normal
@@ -66,6 +71,15 @@ def _request(method: str, url: str, api_key: str, retries: int = 3, **kw) -> htt
             time.sleep(_wait_for(r, attempt))
             attempt += 1
             continue
+        if gemini_client.is_cloud(api_key):
+            import cloud
+
+            cloud.note_level(r.headers.get(cloud.LEVEL_HEADER))
+            if r.status_code == 409 and '"level"' in r.text:
+                raise BasicLevel(cloud.error_text(r))
+            if r.status_code in (401, 402, 403):
+                raise GeminiError("This Mac is signed out of Trailmix Cloud; sign in again (Settings → AI providers)"
+                                  if r.status_code == 401 else cloud.error_text(r))
         if r.status_code in (401, 403) or (r.status_code == 400 and "API_KEY_INVALID" in r.text):
             raise GeminiError("Google didn't accept the API key (Settings → Transcription)")
         if r.status_code >= 400:
@@ -217,6 +231,38 @@ def call_llm(file: dict, mime: str, api_key: str, language: str | None, model: s
             if attempt:
                 raise
     raise GeminiError("unreachable")
+
+
+CLIP_PROMPT = ("Transcribe this short stretch of a meeting verbatim{language}. It may start or end mid-sentence: write "
+               "only what is said, without finishing or guessing words. {context}Return JSON: a list of turns, each "
+               '{{"start": "MM:SS", "speaker": "Speaker N", "text": "what they said"}}; an empty list if nobody speaks.')
+
+
+def transcribe_clip(audio: np.ndarray, api_key: str, language: str | None, model: str, context: str = "",
+                    usage: dict | None = None) -> list[dict]:
+    """[{start, end, text}] for a few seconds of one track, sent with the request instead of uploaded: the near-live
+    captions of Trailmix Cloud, where each clip is cut at a pause (live.py) and the captions are the transcript."""
+    said = f" (the language is {language})" if language else ""
+    hint = f"Names and terms that may come up, and what was just said before: {context.strip()}. " if context.strip() else ""
+    body = {"contents": [{"parts": [
+                {"inlineData": {"mimeType": "audio/ogg", "data": base64.b64encode(encode(audio)).decode()}},
+                {"text": CLIP_PROMPT.format(language=said, context=hint)}]}],
+            "generationConfig": {"responseMimeType": "application/json", "responseSchema": LLM_SCHEMA,
+                                 "temperature": 0.0, "maxOutputTokens": 4096}}
+    r = _request("POST", f"{gemini_client.base(api_key)}/v1beta/models/{model}:generateContent", api_key,
+                 retries=1, timeout=30, json=body)
+    j = r.json()
+    if usage is not None:
+        meta = j.get("usageMetadata") or {}
+        usage["in"] = usage.get("in", 0) + meta.get("promptTokenCount", 0)
+        usage["out"] = usage.get("out", 0) + meta.get("candidatesTokenCount", 0) + meta.get("thoughtsTokenCount", 0)
+    try:
+        text = "".join(p.get("text", "") for p in j["candidates"][0]["content"]["parts"] if not p.get("thought"))
+    except (KeyError, IndexError):
+        return []  # blocked, or nothing said
+    length = len(audio) / SR
+    return [{"start": min(t["start"], length), "end": min(t["end"], length), "text": t["text"]}
+            for t in parse_turns(text or "[]")]
 
 
 def call(file: dict, mime: str, api_key: str, language: str | None, diarize: bool, model: str = MODEL,

@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 
 import psutil
 
+import cloud
 import database as db
 import live
 import live_notes
@@ -87,6 +88,8 @@ def providers(cfg: dict) -> list[str]:
     """Who may answer, in order: your notes AI and its fallback, cloud ones first. In Lockdown mode only AI on this
     computer (Ollama here, if neither of yours runs here)."""
     order = llm_engine.chain("auto", cfg)
+    if "catch_up" in cloud.features_off(cfg):  # Trailmix Cloud at the Basic level: catch-up is part of Pro
+        order = [p for p in order if p != "trailmix"]
     if settings.locked(cfg):
         here = [p for p in order if llm_engine.runs_here(p, cfg)]
         return here or (["ollama"] if llm_engine.is_local("ollama", cfg) else [])
@@ -223,6 +226,9 @@ def plan(session: "live.LiveSession", m: dict, cfg: dict) -> dict:
     behind it, {"in", "out"}, and `measured` says it follows Google's counts for earlier answers."""
     out = {"ready": False, "reason": None, "provider": None, "label": None, "model": None, "local": False,
            "cost": None, "costs": {}, "tokens": None, "measured": False, "note": None, "warning": None, "off": {}, "kinds": KINDS, "history": history(m), "as_of": pricing.AS_OF}
+    off = cloud.features_off(cfg).get("catch_up")
+    if off and not providers(cfg):
+        return {**out, "reason": f"{off}."}
     if not (session.draft or session.final):
         return {**out, "reason": ("Catch me up reads the live transcript, and this recording doesn't have one. Turn on "
                                   "the live draft or captions before you start recording.")}
@@ -247,7 +253,7 @@ def plan(session: "live.LiveSession", m: dict, cfg: dict) -> dict:
         base = len(material(session, m, cfg, _material_chars(pid, cfg), _since(pid, cfg, session))) + len(SYSTEM) + 12
         for kind in costs:
             sized = estimate(model, base + len(question_for(kind, session, TYPICAL_QUESTION)))
-            costs[kind] = sized["cost"] if pid == "gemini" else None
+            costs[kind] = sized["cost"] if pid == "gemini" else 0.0 if pid == "trailmix" else None
             tokens = tokens or {"in": sized["in"], "out": sized["out"]}
     return {**out, "ready": True, "provider": pid, "label": llm_engine.label(pid, cfg), "model": model, "local": local,
             "cost": costs["missed"], "costs": costs, "tokens": tokens, "measured": model in _measured,
