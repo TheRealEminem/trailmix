@@ -141,9 +141,9 @@ def preflight(meetings: list[dict], cfg: dict, engine: str | None = None, transc
                      "transcribe_model": transcribe_models(cfg["transcribe_engine"], cfg)[0]["id"]},
         "notes": {
             "options": [{"provider": pid, "label": llm_engine.label(pid, cfg), "kind": info["kind"],
-                         "local": llm_engine.runs_here(pid, cfg), "model": llm_engine.model_for(pid, cfg),
+                         "local": llm_engine.runs_here(pid, cfg), "model": llm_engine.model_name(pid, cfg),
                          **dict(zip(("ready", "reason"), llm_engine.configured(pid, cfg)))}
-                        for pid, info in llm_engine.PROVIDERS.items()],
+                        for pid, info in llm_engine.PROVIDERS.items() if pid != "trailmix" or cloud.offered(cfg)],
             "plan": notes_plan(meetings, provider, plan_cfg),
         },
         "transcribe": None,
@@ -155,7 +155,7 @@ def preflight(meetings: list[dict], cfg: dict, engine: str | None = None, transc
         out["transcribe"] = {
             "options": [{"engine": e, "label": ENGINE_LABELS[e], "local": e == "local", "ready": not engine_problem(e, cfg),
                          "reason": engine_problem(e, cfg) or "", "models": transcribe_models(e, cfg)}
-                        for e in settings.CHOICES["transcribe_engine"]],
+                        for e in settings.CHOICES["transcribe_engine"] if e != "trailmix" or cloud.offered(cfg)],
             "plan": transcribe_plan(needs_transcript, engine, transcribe_model or models[0]["id"], cfg),
         }
     return out

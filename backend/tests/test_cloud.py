@@ -229,3 +229,16 @@ def test_a_clip_comes_back_as_timed_lines(fresh_db, monkeypatch):
     monkeypatch.setattr(transcribe_gemini, "encode", lambda audio: b"ogg")
     lines = transcribe_gemini.transcribe_clip(np.zeros(6 * SR, dtype=np.float32), "tmc_x", None, "transcribe_chunk")
     assert [(round(l["start"]), l["text"]) for l in lines] == [(1, "Morning all"), (4, "shall we start")]
+
+
+def test_trailmix_cloud_is_only_offered_once_this_copy_knows_where_it_is(monkeypatch):
+    monkeypatch.delenv("TRAILMIX_CLOUD_URL", raising=False)
+    assert not cloud.offered({**settings.DEFAULTS})
+    assert cloud.offered({**settings.DEFAULTS, "summary_provider": "trailmix"})  # in use already: still listed
+    monkeypatch.setenv("TRAILMIX_CLOUD_URL", "https://cloud.example")
+    assert cloud.offered({**settings.DEFAULTS})
+
+
+def test_the_plan_is_shown_where_a_model_name_would_be():
+    assert llm_engine.model_name("trailmix", cfg()) == "Pro"
+    assert llm_engine.model_name("trailmix", cfg(account={})) == "Trailmix Cloud"

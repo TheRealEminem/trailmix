@@ -832,7 +832,7 @@ def health():
 
     def provider_info(pid: str) -> dict:
         ready, why = llm_engine.configured(pid, cfg)
-        return {"id": pid, "label": llm_engine.label(pid, cfg), "model": llm_engine.model_for(pid, cfg),
+        return {"id": pid, "label": llm_engine.label(pid, cfg), "model": llm_engine.model_name(pid, cfg),
                 "ready": ready, "reason": why, "local": llm_engine.is_local(pid, cfg)}
 
     remote = cfg["transcribe_engine"] == "remote"
@@ -856,12 +856,13 @@ def health():
             "remote_ready": preflight.engine_problem("remote", cfg) is None,
             "cloud_ready": preflight.engine_problem("trailmix", cfg) is None,
         },
-        "cloud": {"signed_in": bool(cfg["cloud_token"]), "available": bool(os.getenv("TRAILMIX_CLOUD_URL")),
+        "cloud": {"signed_in": bool(cfg["cloud_token"]), "available": cloud.offered(cfg),
                   "account": cloud.account(cfg=cfg), "level": cloud.level(cfg), "off": off},
         "version": archive.APP_VERSION,
         "build": "app" if "/Contents/Resources/" in sys.executable else "source",  # the installed app, or from source
         "templates": templates.listing(),
-        "providers": [{**provider_info(p), "kind": v["kind"]} for p, v in llm_engine.PROVIDERS.items()],
+        "providers": [{**provider_info(p), "kind": v["kind"]} for p, v in llm_engine.PROVIDERS.items()
+                      if p != "trailmix" or cloud.offered(cfg)],
         "ask_before_ai": cfg["ask_before_ai"],
         "audio_retention_days": store.retention_days(),
         "auth": auth.required(),
