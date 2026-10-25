@@ -25,6 +25,7 @@ import time
 
 import psutil
 
+import cloud
 import database as db
 import live
 import llm_engine
@@ -90,6 +91,9 @@ def decide(cfg: dict) -> dict:
     name = llm_engine.label(pid, cfg)
     if choice == "off":
         return {**out, "on": False, "reason": "Off: the notes are written after the meeting ends."}
+    off = cloud.features_off(cfg).get("live_notes")
+    if off:
+        return {**out, "on": False, "reason": f"Off: {off[0].lower()}{off[1:]}."}
     if not local:
         return {**out, "on": True, "reason": f"On: {name} writes them, so nothing extra runs on this Mac."}
     size = f"about {model_gb:.0f} GB" if model_gb else "several GB"

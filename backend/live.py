@@ -18,6 +18,7 @@ from difflib import SequenceMatcher
 import numpy as np
 
 import audio_store as store
+import cloud
 import database as db
 import gemini_client
 import live_gemini
@@ -25,12 +26,17 @@ import mlx_engine
 import models
 import pricing
 import questions
+import transcribe_gemini
 import transcribe_remote
 import vad
 
 SR = store.SAMPLE_RATE
 MIN_CHUNK_S = 2.0      # don't transcribe less than this
 MAX_CHUNK_S = 5.0      # force a cut if nobody pauses: text appears within about 5 s of being said
+# Trailmix Cloud's near-live captions send longer clips: each request carries instructions as well as audio, so fewer,
+# longer ones cost less, and a model hears whole sentences better. Captions then trail speech by about 10-15 s.
+CLOUD_MIN_CHUNK_S = 8.0
+CLOUD_MAX_CHUNK_S = 15.0
 QUIET_SEARCH_S = 1.5   # a forced cut goes at the quietest moment of the last 1.5 s (between words, not in one)
 CONTEXT_CHARS = 200    # what was just said on a track, given to the model with the next chunk
 FRAME_S = 0.25
@@ -61,14 +67,14 @@ def rms(x: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.square(x)))) if len(x) else 0.0
 
 
-def find_cut(audio: np.ndarray, max_s: float = MAX_CHUNK_S) -> int | None:
-    """Sample index to cut at: the end of the latest pause (>= MIN_CHUNK_S in); if nobody has paused by
+def find_cut(audio: np.ndarray, max_s: float = MAX_CHUNK_S, min_s: float = MIN_CHUNK_S) -> int | None:
+    """Sample index to cut at: the end of the latest pause (>= `min_s` in); if nobody has paused by
     `max_s`, the quietest moment just before it, so the cut falls between words rather than in one."""
     frame = int(FRAME_S * SR)
     n_frames = len(audio) // frame
     for i in range(n_frames - 1, -1, -1):
         end = (i + 1) * frame
-        if end < MIN_CHUNK_S * SR:
+        if end < min_s * SR:
             break
         if rms(audio[i * frame:end]) < SILENCE_RMS:
             return end
@@ -125,11 +131,17 @@ class LiveSession:
         # is made after the recording, with the speakers told apart. Nothing is polled here.
         self.gemini_live = (draft and cfg["transcribe_engine"] == "gemini" and gemini_client.ready(cfg)
                             and not cfg.get("lockdown"))
+        # With Trailmix Cloud at the Pro level, clips cut at pauses go to the cloud as you talk, and what comes back is
+        # both the captions and the transcript you keep: one pass, like the final transcript on this Mac. At the Basic
+        # level there are no live captions; the transcript is made right after you stop.
+        self.cloud_live = (draft and cfg["transcribe_engine"] == "trailmix" and gemini_client.ready(cfg, "trailmix")
+                           and not cfg.get("lockdown") and "live_captions" not in cloud.features_off(cfg))
+        self.cloud_seconds = 0.0  # audio sent for near-live captions
         self._channels: dict[int, live_gemini.Channel] = {}
         self.interim: dict[int, dict] = {}  # the words being said right now, per channel
         self._drafts_saved = 0.0
         # The accurate model, transcribing for keeps while the meeting runs (see the module docstring).
-        self.final = bool(cfg.get("live_final")) and (
+        self.final = self.cloud_live or bool(cfg.get("live_final")) and (
             cfg["transcribe_engine"] == "remote" or (cfg["transcribe_engine"] == "local" and mlx_engine.available()))
         self.final_segments: dict[int, list[dict]] = {0: [], 1: []}
         self.final_complete = True  # False once any chunk was skipped: then the pipeline redoes it all
@@ -190,17 +202,23 @@ class LiveSession:
         samples = np.frombuffer(pcm, dtype=np.int16)
         with self._lock:
             self._written[ch] += len(samples)
-            if (self.draft and not self.gemini_live) or self.final:
+            if self.polls_drafts:
                 self._pending[ch].append(samples)
 
     @property
     def polls_drafts(self) -> bool:
         """Whether draft_step() has chunks to transcribe here (not with Gemini, whose captions stream in)."""
-        return (self.draft and self.cfg["transcribe_engine"] != "gemini") or self.final
+        return (self.draft and self.cfg["transcribe_engine"] not in ("gemini", "trailmix")) or self.final
 
     @property
     def captions_off_reason(self) -> str | None:
-        """Why live captions aren't running although the engine is Gemini and captions were asked for."""
+        """Why live captions aren't running although the engine is Gemini or Trailmix Cloud and captions were asked for."""
+        if self.draft and self.cfg["transcribe_engine"] == "trailmix" and not self.cloud_live:
+            if self.cfg.get("lockdown"):
+                return "Live captions are off: Lockdown mode keeps your audio on this computer."
+            off = cloud.features_off(self.cfg).get("live_captions")
+            return (f"Live captions are off: {off[0].lower()}{off[1:]}." if off
+                    else "Live captions are off: sign in to Trailmix Cloud in Settings → AI providers.")
         if not self.draft or self.cfg["transcribe_engine"] != "gemini" or self.gemini_live:
             return None
         if self.cfg.get("lockdown"):
@@ -284,6 +302,12 @@ class LiveSession:
     def _final_text(self, chunk: np.ndarray, prompt: str = "") -> list[dict]:
         """The accurate transcript of a chunk: speech regions first, like the after-the-meeting job."""
         cfg, out = self.cfg, []
+        if cfg["transcribe_engine"] == "trailmix":  # the clip was cut at a pause: one request for all of it
+            if not vad.speech_regions(chunk):
+                return []
+            self.cloud_seconds += len(chunk) / SR
+            return transcribe_gemini.transcribe_clip(chunk, gemini_client.credential(cfg, "trailmix"),
+                                                     mlx_engine.LANGUAGE, "transcribe_chunk", prompt)
         for a, b in vad.speech_regions(chunk):
             if cfg["transcribe_engine"] == "remote":
                 segs = transcribe_remote.transcribe(chunk[a:b], cfg["transcribe_url"], cfg["transcribe_api_key"],
@@ -314,9 +338,12 @@ class LiveSession:
     def finish(self) -> None:
         """After the recording stops: waits for the chunk being transcribed, then saves the final-mode
         transcript so far (the pipeline picks it up and does the rest)."""
-        if not self.final:
-            return
         with self._step_lock:
+            if self.cloud_seconds:  # Trailmix Cloud's near-live captions: part of the plan, nothing to pay per use
+                db.log_usage(self.meeting_id, "live captions", "trailmix", "transcribe_chunk", self.cloud_seconds, 0.0)
+                self.cloud_seconds = 0.0
+            if not self.final:
+                return
             covered = {store.TRACKS[ch]: self._pending_start[ch] for ch in (0, 1)}
             db.update_meeting(self.meeting_id, live_json=json.dumps({
                 "tracks": {store.TRACKS[ch]: segs for ch, segs in self.final_segments.items()},
@@ -337,7 +364,8 @@ class LiveSession:
                     continue
                 buf = np.concatenate(self._pending[ch])
                 audio = buf.astype(np.float32) / 32768.0
-                cut = find_cut(audio)
+                cut = (find_cut(audio, CLOUD_MAX_CHUNK_S, CLOUD_MIN_CHUNK_S) if self.cloud_live
+                       else find_cut(audio))
                 if cut is None:
                     self._pending[ch] = [buf]
                     continue
@@ -358,6 +386,17 @@ class LiveSession:
             except transcribe_remote.RemoteError as e:
                 self.final_complete = False
                 out.append({"type": "status", "message": f"Live draft paused: {e}"})
+                continue
+            except transcribe_gemini.BasicLevel as e:  # the month's live hours ran out during this meeting
+                self.final = self.cloud_live = self.final_complete = False
+                with self._lock:
+                    self._pending = {0: [], 1: []}
+                out.append({"type": "status", "message": f"{str(e).rstrip('.')}. Live captions stop here; the transcript is made "
+                                                          "right after you stop."})
+                break
+            except transcribe_gemini.GeminiError as e:
+                self.final_complete = False  # the whole recording is transcribed afterwards instead
+                out.append({"type": "status", "message": f"Live captions paused: {e}"})
                 continue
             except models.NotReady as e:
                 self.final_complete = False

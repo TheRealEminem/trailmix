@@ -50,7 +50,7 @@ def text_cost(model: str, tokens_in: int, tokens_out: int, batch: bool = False) 
 
 def per_minute(engine: str, model: str | None) -> float | None:
     """Dollars per minute of audio, or None if the price isn't known (a self-hosted endpoint, a new model)."""
-    if engine == "local":
+    if engine in ("local", "trailmix"):  # on this Mac, or part of a Trailmix Cloud plan
         return 0.0
     name = (model or "").lower().rsplit("/", 1)[-1]
     for pattern, price in PER_MINUTE:

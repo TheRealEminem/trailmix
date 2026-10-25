@@ -16,14 +16,19 @@ class NotConfigured(Exception):
     pass
 
 
-def credential(cfg: dict) -> str:
-    """The Google key, or "" when there's nothing to call Gemini with."""
-    return cfg.get("gemini_api_key") or ""
+# What the app asks Trailmix Cloud for. The server picks the model for each, by plan and level, so models and prices
+# can change without an app update.
+ROLES = ("transcribe", "transcribe_chunk", "notes", "quick")
 
 
-def ready(cfg: dict) -> bool:
+def credential(cfg: dict, provider: str = "gemini") -> str:
+    """The Google key for "gemini", this Mac's Trailmix Cloud token for "trailmix"; "" when it isn't set."""
+    return (cfg.get("cloud_token") if provider == "trailmix" else cfg.get("gemini_api_key")) or ""
+
+
+def ready(cfg: dict, provider: str = "gemini") -> bool:
     """Something to call Gemini with is set (lockdown is checked separately, where it applies)."""
-    return bool(credential(cfg))
+    return bool(credential(cfg, provider))
 
 
 def is_cloud(cred: str) -> bool:
