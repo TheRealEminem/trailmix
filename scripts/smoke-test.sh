@@ -45,6 +45,9 @@ ENV=(HOME="$HOME_DIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin HF_HOME="$HF_CACHE"
      TRAILMIX_DATA_DIR="$DATA" TRAILMIX_SERVER_URL="$URL" TRAILMIX_NO_OPEN=1
      TRAILMIX_WHISPER_MODEL=mlx-community/whisper-tiny-mlx TRAILMIX_LIVE_MODEL=mlx-community/whisper-tiny-mlx
      TRAILMIX_WHISPER_RAM_GB=0.5
+     # Not under test: on a Mac with under 10% of its disk free, the first recording's notes would wait for
+     # "memory" and hold every recording queued behind them, so no transcript would arrive.
+     TRAILMIX_SWAP_DISK_FREE=0
      # No notes AI, as on GitHub's runners: this Mac's own Ollama could park the notes waiting for memory (with a
      # nearly full disk) and hold up every recording queued behind them.
      OLLAMA_URL=http://127.0.0.1:9)
