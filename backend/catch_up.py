@@ -145,19 +145,14 @@ def _material_chars(pid: str, cfg: dict) -> int:
 # ── What it reads ───────────────────────────────────────────────────────
 
 def _lines(session: "live.LiveSession") -> list[dict]:
-    """The live transcript so far, oldest first, with the words being said right now at the end."""
-    lines = sorted(list(session.drafts), key=lambda d: d["start"])
-    lines += [{**d, "interim": True} for d in sorted(session.interim.values(), key=lambda d: d["start"]) if d.get("text")]
-    return lines
+    """The live transcript so far, oldest first."""
+    return sorted(list(session.drafts), key=lambda d: d["start"])
 
 
 def _transcript(lines: list[dict], names: dict) -> list[str]:
-    turns = meeting_text.turns([{**d, "end": d["start"] + 5} for d in lines if not d.get("interim")])
-    out = [f"[{meeting_text.fmt(t['start'])}] {names.get(t['speaker'], t['speaker']) + ': ' if t.get('speaker') else ''}{t['text']}"
-           for t in turns]
-    out += [f"[{meeting_text.fmt(d['start'])}] {names.get(d['speaker'], d['speaker']) + ': ' if d.get('speaker') else ''}"
-            f"{d['text']} (still talking)" for d in lines if d.get("interim")]
-    return out
+    turns = meeting_text.turns([{**d, "end": d["start"] + 5} for d in lines])
+    return [f"[{meeting_text.fmt(t['start'])}] {names.get(t['speaker'], t['speaker']) + ': ' if t.get('speaker') else ''}{t['text']}"
+            for t in turns]
 
 
 def material(session: "live.LiveSession", m: dict, cfg: dict, limit: int, since: float = 0.0) -> str:

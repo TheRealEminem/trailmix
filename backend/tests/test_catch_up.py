@@ -52,7 +52,6 @@ def world(tmp_path, monkeypatch):
     session._written = {0: 720 * SR, 1: 720 * SR}
     session.drafts = [{"start": t, "speaker": "Them" if i % 2 else "You", "text": f"line {i} at {t} seconds"}
                       for i, t in enumerate(range(0, 720, 20))]
-    session.interim = {1: {"start": 715.0, "speaker": "Them", "text": "so the real question is"}}
     state.session, state.mid = session, mid
     live_notes._state.clear()
     catch_up._measured.clear()
@@ -69,7 +68,6 @@ def test_a_cloud_notes_ai_answers_with_the_whole_meeting_and_a_price(world):
     assert call["pid"] == "gemini"
     assert "[07:00] to now ([12:00])" in call["prompt"]
     assert "line 0 at 0 seconds" in call["prompt"]                      # from the top
-    assert "so the real question is (still talking)" in call["prompt"]  # the words being said right now
     assert entry["q"] == "What did I miss?" and "[11:40]" in entry["a"] and entry["live"] and entry["t"] == 720
 
 
@@ -151,14 +149,14 @@ def test_notes_so_far_and_your_notes_are_read_too(world):
 
 
 def test_a_long_transcript_keeps_its_latest_part():
-    session = SimpleNamespace(duration=100.0, has_system=False, meeting_id=0, interim={},
+    session = SimpleNamespace(duration=100.0, has_system=False, meeting_id=0,
                               drafts=[{"start": t, "speaker": None, "text": "x" * 90 + str(t)} for t in range(100)])
     text = catch_up.material(session, {"title": "T"}, settings.DEFAULTS, 2000)
     assert "x99" in text and "x0\n" not in text and "the start is left out" in text and len(text) <= 2000
 
 
 def test_nothing_to_read_yet(world):
-    world.session.drafts, world.session.interim = [], {}
+    world.session.drafts = []
     with pytest.raises(catch_up.NotReady, match="Nothing has been transcribed"):
         catch_up.ask(world.session, db.get_meeting(world.mid), world.cfg, "missed")
     world.session.draft = False

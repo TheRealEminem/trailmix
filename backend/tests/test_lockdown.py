@@ -69,9 +69,7 @@ def test_no_live_captions_from_google(tmp_path, monkeypatch):
     cfg = {**settings.DEFAULTS, "transcribe_engine": "gemini", "gemini_api_key": "k", "lockdown": True, "live_final": False}
     session = live.LiveSession(1, tmp_path / "a", draft=True, cfg=cfg)
     try:
-        assert not session.gemini_live            # so write() never opens a connection
-        session.write(b"\x00" + b"\x01\x00" * 1600)
-        assert session._channels == {}
+        assert not session.near_live and not session.polls_drafts  # so no clip is ever sent
     finally:
         session.close()
 
