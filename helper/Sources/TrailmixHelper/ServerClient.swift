@@ -76,6 +76,12 @@ final class ServerClient {
         config.timeoutIntervalForRequest = 90
         return URLSession(configuration: config)
     }()
+    /// For the recorder's socket, which can be quiet for hours: the usual timeout would close it as idle.
+    private lazy var quietSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 24 * 3600
+        return URLSession(configuration: config)
+    }()
 
     init(base: URL, token: String) {
         self.base = base
@@ -160,15 +166,29 @@ final class ServerClient {
         return ((try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["commands"] as? [String]) ?? []
     }
 
-    /// The audio WebSocket for a meeting, already connecting.
-    func openStream(id: Int, draft: Bool) -> URLSessionWebSocketTask {
+    private func socketRequest(_ path: String, query: [URLQueryItem] = []) -> URLRequest {
         var components = URLComponents(url: base, resolvingAgainstBaseURL: false)!
         components.scheme = base.scheme == "https" ? "wss" : "ws"
-        components.path = (components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path) + "/api/meetings/\(id)/stream"
-        components.queryItems = [URLQueryItem(name: "draft", value: draft ? "1" : "0"), URLQueryItem(name: "client", value: "helper")]
+        components.path = (components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path) + path
+        components.queryItems = query.isEmpty ? nil : query
         var request = URLRequest(url: components.url!)
         if !token.isEmpty { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
-        let task = session.webSocketTask(with: request)
+        return request
+    }
+
+    /// The audio WebSocket for a meeting, already connecting.
+    func openStream(id: Int, draft: Bool) -> URLSessionWebSocketTask {
+        let task = session.webSocketTask(with: socketRequest("/api/meetings/\(id)/stream", query: [
+            URLQueryItem(name: "draft", value: draft ? "1" : "0"), URLQueryItem(name: "client", value: "helper")]))
+        task.resume()
+        return task
+    }
+
+    /// The recorder's own socket, already connecting: this app sends what it would record (as for checkIn) when
+    /// that changes, and gets {"commands": [...]} the moment the window asks for something and {"live": [...]}
+    /// whenever the recordings in progress change. A server from before it answers 404.
+    func openRecorderSocket() -> URLSessionWebSocketTask {
+        let task = quietSession.webSocketTask(with: socketRequest("/api/recorder/ws"))
         task.resume()
         return task
     }

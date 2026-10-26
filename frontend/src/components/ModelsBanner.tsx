@@ -1,32 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import type { SpeechModels } from "../api";
+import { EventsContext } from "../events";
 import { AlertIcon, CheckIcon, DownloadIcon } from "./icons";
 
 /**
  * First run: the speech models (about 1.7 GB in all) download in the background. Shows how far along they are,
  * says what still works meanwhile, and offers a retry if the download failed. Hidden once everything is installed.
+ * The progress comes with the event stream.
  */
 export default function ModelsBanner() {
-  const [info, setInfo] = useState<SpeechModels | null>(null);
+  const info = useContext(EventsContext).models;
   const [justFinished, setJustFinished] = useState(false);
   const wasDownloading = useRef(false);
-
-  useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api
-        .speechModels()
-        .then((m) => alive && setInfo(m))
-        .catch(() => undefined); // an older or unreachable server: just don't show anything
-    void load();
-    // Quick while something is downloading, lazy otherwise (a retry or a settings change can start one).
-    const t = setInterval(load, info?.models.some((m) => m.downloading) ? 1500 : 10000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [info?.models.some((m) => m.downloading)]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const missing = info?.local ? info.models.filter((m) => !m.installed) : [];
   const downloading = missing.some((m) => m.downloading);
@@ -63,7 +48,7 @@ export default function ModelsBanner() {
           <div className="font-semibold">The speech model didn't download</div>
           <div className="mt-0.5 leading-relaxed">{failed.error}</div>
         </div>
-        <button className="btn btn-sm shrink-0" onClick={() => void api.downloadSpeechModels().then(setInfo)}>
+        <button className="btn btn-sm shrink-0" onClick={() => void api.downloadSpeechModels()}>
           Try again
         </button>
       </div>
