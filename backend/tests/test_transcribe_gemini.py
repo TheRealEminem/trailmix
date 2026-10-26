@@ -153,7 +153,7 @@ def _fake_google(monkeypatch, answered_until=None):
 
     sent = []
 
-    def call(file, mime, key, language, diarize, model, usage):
+    def call(file, mime, key, language, diarize, model, usage, tags=None):
         piece = file["audio"]
         offset = float(piece[0]) * 1000
         end = offset + len(piece) / g.SR
