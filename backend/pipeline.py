@@ -36,7 +36,7 @@ import questions
 import llm_engine
 import meeting_text
 import mixdown
-import mlx_engine
+import local_engine
 import models
 import pricing
 import resources
@@ -210,10 +210,10 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
         engine = cfg["transcribe_engine"]
         local = engine == "local"
         if local:
-            if not mlx_engine.available():
-                raise RuntimeError("Local transcription needs a Mac with MLX; set a remote endpoint in Settings → Transcription")
+            if not local_engine.available():
+                raise RuntimeError("Local transcription needs MLX (Apple silicon) or whisper.cpp; set a remote endpoint in Settings → Transcription")
             _wait_for_recording_to_end(meeting_id)
-            _gate(meeting_id, "transcribe" in force, mlx_engine.FINAL_MODEL_RAM_GB, "The transcription model")
+            _gate(meeting_id, "transcribe" in force, local_engine.FINAL_MODEL_RAM_GB, "The transcription model")
         db.update_meeting(meeting_id, status="transcribing", wait_reason=None)
         began = time.monotonic()
         transcribe = (_transcribe_local if local else _transcribe_gemini if engine in ("gemini", "trailmix")
@@ -315,9 +315,9 @@ def _template(m: dict, cfg: dict) -> str:
 
 def _transcribe_local(m: dict) -> tuple[list[dict], bool, float]:
     """Runs the large model in a subprocess; when it exits all of its memory is back with macOS."""
-    mlx_engine.unload()  # drop the small live model from this process too
+    local_engine.unload()  # drop the small live model from this process too
     models.ensure(  # first run: the speech model may still be downloading
-        mlx_engine.FINAL_MODEL,
+        local_engine.FINAL_MODEL,
         lambda p: _progress(m["id"], "Downloading the speech model (first time only)"
                             + (f": {p:.0%}" if p is not None else "…")),
     )
@@ -380,15 +380,15 @@ def _finish_live(m: dict, cfg: dict) -> tuple[list[dict], bool, float] | None:
             off = covered / store.SAMPLE_RATE
             for a, b in vad.speech_regions(tail):
                 if local:
-                    found = mlx_engine.transcribe_final(tail[a:b], questions.vocabulary_prompt()[:300] or None)
+                    found = local_engine.transcribe_final(tail[a:b], questions.vocabulary_prompt()[:300] or None)
                 elif cfg["transcribe_engine"] == "trailmix":
                     cred = gemini_client.credential(cfg, "trailmix")
                     found = transcribe_gemini.transcribe_clip(
-                        tail[a:b], cred, mlx_engine.LANGUAGE, "transcribe_chunk",
+                        tail[a:b], cred, local_engine.LANGUAGE, "transcribe_chunk",
                         tags=gemini_client.meeting_headers(cred, m["id"], _side(name)))
                 else:
                     found = transcribe_remote.transcribe(tail[a:b], cfg["transcribe_url"], cfg["transcribe_api_key"],
-                                                         cfg["transcribe_model"], mlx_engine.LANGUAGE)
+                                                         cfg["transcribe_model"], local_engine.LANGUAGE)
                 start = off + a / store.SAMPLE_RATE
                 segs += [{**seg, "start": seg["start"] + start, "end": seg["end"] + start} for seg in found]
             per_track[name] = segs
@@ -398,7 +398,7 @@ def _finish_live(m: dict, cfg: dict) -> tuple[list[dict], bool, float] | None:
         return None
     finally:
         if local:
-            mlx_engine.unload()  # the accurate model's memory goes back before the summary model loads
+            local_engine.unload()  # the accurate model's memory goes back before the summary model loads
         db.update_meeting(m["id"], live_json=None)
 
 
@@ -419,7 +419,7 @@ def _transcribe_remote(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
             try:
                 found = transcribe_remote.transcribe(
                     audio[a:b], cfg["transcribe_url"], cfg["transcribe_api_key"], cfg["transcribe_model"],
-                    mlx_engine.LANGUAGE,
+                    local_engine.LANGUAGE,
                 )
             except transcribe_remote.RemoteError as e:
                 raise RuntimeError(str(e)) from e
@@ -460,7 +460,7 @@ def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
         audio, used = mixdown.mix(tracks["mic"], tracks["system"]), {}
         try:
             segs = transcribe_gemini.transcribe(
-                audio, cred, mlx_engine.LANGUAGE, diarize=True, model=model, usage=used,
+                audio, cred, local_engine.LANGUAGE, diarize=True, model=model, usage=used,
                 tags=gemini_client.meeting_headers(cred, m["id"]),
                 on_progress=lambda i, n: _progress(m["id"], f"Transcribing: {i}/{n}" if n > 1 else "Transcribing"))
         except transcribe_gemini.GeminiError as e:
@@ -474,7 +474,7 @@ def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
         used = {}
         try:
             per_track[name] = transcribe_gemini.transcribe(
-                audio, cred, mlx_engine.LANGUAGE, diarize=not (both and name == "mic"),
+                audio, cred, local_engine.LANGUAGE, diarize=not (both and name == "mic"),
                 model=model, usage=used, tags=gemini_client.meeting_headers(cred, m["id"], _side(name)),
                 on_progress=lambda i, n, name=name: _progress(
                     m["id"], f"Transcribing {name} track: {i}/{n}" if n > 1 else f"Transcribing {name} track"))
@@ -514,8 +514,8 @@ def _speech_model(cfg: dict) -> str:
         return cfg["gemini_transcribe_model"]
     if cfg["transcribe_engine"] == "trailmix":
         return "Trailmix Cloud"
-    model = mlx_engine.FINAL_MODEL if cfg["transcribe_engine"] == "local" else cfg["transcribe_model"]
-    return model.rsplit("/", 1)[-1].removesuffix("-mlx")
+    model = local_engine.FINAL_MODEL if cfg["transcribe_engine"] == "local" else cfg["transcribe_model"]
+    return local_engine.model_label(model)
 
 
 def _gemini_note(cfg: dict, labeled: bool) -> str | None:
@@ -604,12 +604,12 @@ def _run_trial(meeting_id: int, engine: str, model: str | None, apply: bool, sum
             cfg["transcribe_model"] = model
         db.transcript_versions(meeting_id)  # what's there now is recorded first, as the one to compare against
         if engine == "local":
-            if not mlx_engine.available():
-                raise RuntimeError("Local transcription needs a Mac with MLX")
+            if not local_engine.available():
+                raise RuntimeError("Local transcription needs MLX (Apple silicon) or whisper.cpp")
             while live.active_count():  # never run the heavy model during a recording
                 trial["detail"] = "Waiting for the current recording to finish"
                 time.sleep(3)
-            short = resources.check(mlx_engine.FINAL_MODEL_RAM_GB, "The transcription model")
+            short = resources.check(local_engine.FINAL_MODEL_RAM_GB, "The transcription model")
             if short:
                 raise RuntimeError(short)
         trial.update(state="running", detail=None)
@@ -633,7 +633,7 @@ def _run_trial(meeting_id: int, engine: str, model: str | None, apply: bool, sum
         trial.update(state="failed", error=str(e), detail=None)
     finally:
         if engine == "local":
-            mlx_engine.unload()
+            local_engine.unload()
 
 
 def apply_version(meeting_id: int, version_id: int, summarize: bool = False) -> None:

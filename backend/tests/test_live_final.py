@@ -32,9 +32,9 @@ def fake_model(monkeypatch):
 
     for module in (live, pipeline):
         monkeypatch.setattr(module.vad, "speech_regions", lambda a: [(0, len(a))] if len(a) else [])
-        monkeypatch.setattr(module.mlx_engine, "transcribe_final", transcribe_final)
-    monkeypatch.setattr(pipeline.mlx_engine, "unload", lambda: None)
-    monkeypatch.setattr(live.mlx_engine, "available", lambda: True)
+        monkeypatch.setattr(module.local_engine, "transcribe_final", transcribe_final)
+    monkeypatch.setattr(pipeline.local_engine, "unload", lambda: None)
+    monkeypatch.setattr(live.local_engine, "available", lambda: True)
     monkeypatch.setattr(live.models, "require", lambda repo: None)
     monkeypatch.setattr(live, "warm_up", lambda cfg, now=False: False)  # never the real model
     return calls
@@ -85,7 +85,7 @@ def test_a_missed_chunk_means_transcribing_it_all_afterwards(fresh_db, fake_mode
     def broken(audio, prompt=None):
         raise RuntimeError("out of memory")
 
-    monkeypatch.setattr(live.mlx_engine, "transcribe_final", broken)
+    monkeypatch.setattr(live.local_engine, "transcribe_final", broken)
     session.write(bytes([0]) + speech(8, pause_at=5).tobytes())
     session.draft_step()
     session.finish()
@@ -142,7 +142,7 @@ def test_each_chunk_gets_what_was_just_said_as_context(fresh_db, fake_model, mon
         prompts.append(prompt)
         return [{"start": 0.0, "end": 1.0, "text": f"part {len(prompts)}"}]
 
-    monkeypatch.setattr(live.mlx_engine, "transcribe_final", transcribe_final)
+    monkeypatch.setattr(live.local_engine, "transcribe_final", transcribe_final)
     mid = db.create_meeting("Standup", title_auto=False)
     folder = db.AUDIO_DIR / str(mid)
     session = live.LiveSession(mid, folder, draft=True, cfg={"live_final": True, "transcribe_engine": "local"})
