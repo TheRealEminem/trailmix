@@ -2,16 +2,17 @@
 # The release gate: tries a built Trailmix.app the way you use it, with its own bundled engine, and fails
 # loudly if anything a user would hit is broken. Nothing touches your real Trailmix data.
 #
-#   scripts/smoke-test.sh dist/Trailmix.app                                      # the new version on its own
-#   scripts/smoke-test.sh dist/Trailmix.app dist/Trailmix-0.7.0-arm64.dmg old.dmg  # ...after updating from old.dmg
+#   scripts/smoke-test.sh dist/Trailmix.app                                            # the new version on its own
+#   scripts/smoke-test.sh dist/Trailmix.app dist/Trailmix-0.7.0-macos-arm64.dmg old.dmg  # ...after updating from old.dmg
 #
 # With a previous version it first installs that one, opens its window (so its page is cached, as on your
-# Mac), lets its auto-updater install the new disk image from a stand-in for GitHub, and checks the update
-# landed. The rest then runs on the updated app and the old version's data:
+# Mac), lets its auto-updater install the new disk image from a stand-in for GitHub (naming it as release.yml
+# does), and checks the update landed. The rest then runs on the updated app and the old version's data:
 #   the menu bar recorder's checks (TrailmixHelper --self-test: hotkeys, marks, live draft, stop from the
 #   window), then Record clicked in the real window right after a restart, a transcript made while
 #   recording, and the window running the current web app rather than a cached one. Last, it goes back to the
-#   previous version (Settings → Updates → Go back) and checks that version opens the meetings the new one left.
+#   previous version (Settings → Updates → Go back) and checks that version opens the meetings the new one left,
+#   while a newer release with no disk image for this Mac is passed over rather than offered.
 # Speech comes from `say`; transcription uses the small whisper-tiny model so it's quick.
 set -euo pipefail
 
@@ -54,6 +55,26 @@ ENV=(HOME="$HOME_DIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin HF_HOME="$HF_CACHE"
 
 version_of() { /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$1/Contents/Info.plist"; }
 
+# The stand-in for GitHub's releases. publish DMG NAME... puts the disk image in it under each name, with its checksum;
+# release_json VERSION FILE... is GitHub's JSON for a release of those files.
+publish() {
+  local dmg=$1 name
+  shift
+  for name in "$@"; do
+    cp "$dmg" "$T/feed/$name"
+    (cd "$T/feed" && shasum -a 256 "$name" >"$name.sha256")
+  done
+}
+release_json() {
+  local version=$1 assets="" file
+  shift
+  for file in "$@"; do
+    assets+="${assets:+, }{\"name\": \"$file\", \"browser_download_url\": \"http://127.0.0.1:$FEED_PORT/$file\"}"
+  done
+  echo "{\"tag_name\": \"v$version\", \"prerelease\": false, \"draft\": false, \"html_url\": \"http://127.0.0.1:$FEED_PORT/\", \"assets\": [$assets]}"
+}
+with_checksums() { local name; for name in "$@"; do echo "$name" "$name.sha256"; done; }
+
 wait_for_server() {
   for _ in $(seq 1 120); do
     curl -sf "$URL/api/health" >/dev/null 2>&1 && return 0
@@ -90,6 +111,9 @@ UNDER_TEST="$APP"
 if [ -n "$OLD_DMG" ]; then
   [ -n "$NEW_DMG" ] || fail "give the new disk image too, to update to it"
   NEW_VERSION=$(version_of "$APP")
+  # The kind of Mac it's for, from the disk image's name (Trailmix-<version>-macos-<arch>.dmg)
+  ARCH=$(basename "$NEW_DMG" | sed -nE 's/.*-macos-([a-z0-9_]+)\.dmg$/\1/p')
+  ARCH=${ARCH:-$(uname -m)}
   log "Installing the previous version from $(basename "$OLD_DMG")"
   hdiutil attach -nobrowse -readonly -noverify -mountpoint "$T/old-mount" "$OLD_DMG" >/dev/null
   ditto "$T/old-mount/Trailmix.app" "$T/Applications/Trailmix.app"
@@ -97,15 +121,12 @@ if [ -n "$OLD_DMG" ]; then
   OLD_VERSION=$(version_of "$T/Applications/Trailmix.app")
   echo "previous version: $OLD_VERSION, new version: $NEW_VERSION"
 
-  # A stand-in for GitHub's "latest release", offering the new disk image.
-  cp "$NEW_DMG" "$T/feed/Trailmix-$NEW_VERSION-arm64.dmg"
-  (cd "$T/feed" && shasum -a 256 "Trailmix-$NEW_VERSION-arm64.dmg" >"Trailmix-$NEW_VERSION-arm64.dmg.sha256")
-  cat >"$T/feed/latest.json" <<EOF
-{"tag_name": "v$NEW_VERSION", "prerelease": false, "draft": false, "html_url": "http://127.0.0.1:$FEED_PORT/",
- "assets": [
-  {"name": "Trailmix-$NEW_VERSION-arm64.dmg", "browser_download_url": "http://127.0.0.1:$FEED_PORT/Trailmix-$NEW_VERSION-arm64.dmg"},
-  {"name": "Trailmix-$NEW_VERSION-arm64.dmg.sha256", "browser_download_url": "http://127.0.0.1:$FEED_PORT/Trailmix-$NEW_VERSION-arm64.dmg.sha256"}]}
-EOF
+  # A stand-in for GitHub's "latest release", offering the new disk image under the names release.yml gives it
+  # (on Apple silicon also the name from before there were other platforms, which older apps look for).
+  NEW_NAMES=("Trailmix-$NEW_VERSION-macos-$ARCH.dmg")
+  [ "$ARCH" = arm64 ] && NEW_NAMES+=("Trailmix-$NEW_VERSION-arm64.dmg")
+  publish "$NEW_DMG" "${NEW_NAMES[@]}"
+  release_json "$NEW_VERSION" $(with_checksums "${NEW_NAMES[@]}") >"$T/feed/latest.json"
   echo "[$(cat "$T/feed/latest.json")]" >"$T/feed/releases.json"
   (cd "$T/feed" && exec python3 -m http.server "$FEED_PORT" --bind 127.0.0.1 >/dev/null 2>&1) &
   PIDS+=($!)
@@ -167,32 +188,33 @@ if [ -n "$OLD_DMG" ]; then
   log "Going back to $OLD_VERSION the way you would: Settings → Updates → Go back"
   MEETINGS_BEFORE=$(count_meetings) || fail "couldn't count the meetings"
   stop_engine
-  # The stand-in for GitHub now lists both versions, as GitHub does.
-  cp "$OLD_DMG" "$T/feed/Trailmix-$OLD_VERSION-arm64.dmg"
-  (cd "$T/feed" && shasum -a 256 "Trailmix-$OLD_VERSION-arm64.dmg" >"Trailmix-$OLD_VERSION-arm64.dmg.sha256")
-  cat >"$T/feed/releases.json" <<EOF
-[$(cat "$T/feed/latest.json"),
- {"tag_name": "v$OLD_VERSION", "prerelease": false, "draft": false, "html_url": "http://127.0.0.1:$FEED_PORT/",
-  "assets": [
-   {"name": "Trailmix-$OLD_VERSION-arm64.dmg", "browser_download_url": "http://127.0.0.1:$FEED_PORT/Trailmix-$OLD_VERSION-arm64.dmg"},
-   {"name": "Trailmix-$OLD_VERSION-arm64.dmg.sha256", "browser_download_url": "http://127.0.0.1:$FEED_PORT/Trailmix-$OLD_VERSION-arm64.dmg.sha256"}]}]
-EOF
-  env -i "${ENV[@]}" TRAILMIX_UPDATE_URL="http://127.0.0.1:$FEED_PORT/latest.json" \
+  # The stand-in for GitHub now lists both versions, as GitHub does: on Apple silicon the previous one under the
+  # name releases had before there were other platforms (the updater falls back to it), plus a newer release built
+  # only for other computers, which the updater has to pass over rather than offer.
+  OLD_NAME="Trailmix-$OLD_VERSION-macos-$ARCH.dmg"
+  [ "$ARCH" = arm64 ] && OLD_NAME="Trailmix-$OLD_VERSION-arm64.dmg"
+  publish "$OLD_DMG" "$OLD_NAME"
+  echo "[$(release_json 999.0.0 Trailmix-999.0.0-windows-x86_64.exe Trailmix-999.0.0-linux-x86_64.AppImage),
+        $(cat "$T/feed/latest.json"),
+        $(release_json "$OLD_VERSION" $(with_checksums "$OLD_NAME"))]" >"$T/feed/releases.json"
+  env -i "${ENV[@]}" TRAILMIX_UPDATE_URL="http://127.0.0.1:$FEED_PORT/releases.json" \
     TRAILMIX_RELEASES_URL="http://127.0.0.1:$FEED_PORT/releases.json" TRAILMIX_UPDATE_DELAY=2 \
     TRAILMIX_UPDATE_NO_RELAUNCH=1 "$UNDER_TEST/Contents/MacOS/Trailmix" >>"$T/new-app.log" 2>&1 &
   NEW_APP=$!
   PIDS+=("$NEW_APP")
   wait_for_server
   for i in $(seq 1 60); do
-    curl -s "$URL/api/recorder" | grep -q "\"previous\":\"$OLD_VERSION\"" && break
+    REPORT=$(curl -s "$URL/api/recorder")
+    grep -q "\"previous\":\"$OLD_VERSION\"" <<<"$REPORT" && grep -Eq '"state":"(up-to-date|available)"' <<<"$REPORT" && break
     [ $((i % 10)) = 5 ] && curl -s -o /dev/null -X POST "$URL/api/recorder/check-update"
     sleep 1
   done
-  if ! curl -s "$URL/api/recorder" | grep -q "\"previous\":\"$OLD_VERSION\""; then
-    echo "It reports: $(curl -s "$URL/api/recorder")" >&2
+  if ! grep -q "\"previous\":\"$OLD_VERSION\"" <<<"$REPORT"; then
+    echo "It reports: $REPORT" >&2
     echo "--- its log" >&2; tail -20 "$T/new-app.log" >&2
     fail "it never offered to go back to $OLD_VERSION"
   fi
+  grep -q '"state":"available"' <<<"$REPORT" && fail "it offered an update with no disk image for this Mac: $REPORT"
   curl -sf -X POST "$URL/api/recorder/go-back" >/dev/null || fail "couldn't ask it to go back"
   for _ in $(seq 1 180); do kill -0 "$NEW_APP" 2>/dev/null || break; sleep 1; done
   kill -0 "$NEW_APP" 2>/dev/null && fail "going back didn't finish (still running after 3 minutes)"

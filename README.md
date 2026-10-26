@@ -8,7 +8,7 @@ unless you send them somewhere. The full specs are under [Features](#features).
 
 ## Install (Mac)
 
-1. Download **Trailmix-x.y.z-arm64.dmg** from the [latest release](https://github.com/TheRealEminem/trailmix/releases/latest). It needs an Apple silicon Mac
+1. Download **Trailmix-x.y.z-macos-arm64.dmg** from the [latest release](https://github.com/TheRealEminem/trailmix/releases/latest). It needs an Apple silicon Mac
    (M1 or newer) on macOS 14.2 or later.
 2. Open it and drag **Trailmix** to **Applications**, then open Trailmix.
 3. **First open only:** this build isn't signed by an Apple developer yet, so macOS blocks it. Go to
@@ -34,7 +34,7 @@ If a `./trailmix` server is already running on port 8765, the app uses that one 
 
 ```bash
 scripts/build-app.sh          # -> dist/Trailmix.app
-scripts/build-app.sh --dmg    # -> dist/Trailmix-<version>-arm64.dmg as well
+scripts/build-app.sh --dmg    # -> dist/Trailmix-<version>-macos-arm64.dmg as well
 ```
 
 Needs an Apple silicon Mac, the Xcode command line tools, Node 18+ and internet access (the Python runtime is

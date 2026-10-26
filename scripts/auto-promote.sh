@@ -64,10 +64,17 @@ if (( ${#blockers[@]} )); then
   echo "Not promoting $TAG: ${#blockers[@]} open \"blocks me\" report(s)."; exit 0
 fi
 
+# The computers it has an installer for, as scripts/promote.sh works them out. One whose build failed has none:
+# people on it stay on the last release that has one, while everyone else moves on.
+PLATFORMS=$(gh release view "$TAG" --repo "$REPO" --json assets -q '.assets[].name' \
+  | sed -nE -e "s/^Trailmix-$VERSION-arm64\.dmg$/macos-arm64/p" -e "s/^Trailmix-$VERSION-([a-z]+-[a-z0-9_]+)\.[a-zA-Z]+$/\1/p" \
+  | sort -u | paste -sd ' ' -)
+[[ -n "$PLATFORMS" ]] || { echo "Not promoting $TAG: it has no installers."; exit 0; }
+
 if [[ "$DRY_RUN" == 1 ]]; then
   echo "Would run: gh release edit $TAG --repo $REPO --prerelease=false --latest"
-  echo "Would promote $TAG (out $AGE days, no open \"blocks me\" reports; current release ${STABLE:-none}) - dry run, nothing changed."
+  echo "Would promote $TAG (out $AGE days, no open \"blocks me\" reports, installers for: $PLATFORMS; current release ${STABLE:-none}) - dry run, nothing changed."
   exit 0
 fi
 gh release edit "$TAG" --repo "$REPO" --prerelease=false --latest
-echo "Promoted $TAG (out $AGE days, no open \"blocks me\" reports): it's now the release everyone gets, replacing ${STABLE:-none}."
+echo "Promoted $TAG (out $AGE days, no open \"blocks me\" reports, installers for: $PLATFORMS): it's now the release everyone gets, replacing ${STABLE:-none}."
