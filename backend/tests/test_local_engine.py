@@ -24,8 +24,14 @@ def pick(monkeypatch):
 def test_whisper_cpp_is_used_where_asked_with_its_own_models(pick):
     engine = pick("whispercpp")
     assert engine.ENGINE is whispercpp_engine and engine.NAME == "whisper.cpp"
-    assert engine.FINAL_MODEL == "ggerganov/whisper.cpp:ggml-large-v3-turbo-q5_0.bin"
-    assert engine.FINAL_MODEL_RAM_GB == 1.5
+    assert (engine.FINAL_MODEL, engine.FINAL_MODEL_RAM_GB) in (whispercpp_engine.TURBO, whispercpp_engine.SMALL)
+
+
+def test_a_small_intel_cpu_gets_the_small_model():
+    assert whispercpp_engine.pick_final("x86_64", 2)[0].endswith("ggml-small-q5_1.bin")  # a dual-core Intel Mac
+    assert whispercpp_engine.pick_final("AMD64", 4) == whispercpp_engine.SMALL           # Windows reports it so
+    assert whispercpp_engine.pick_final("x86_64", 8) == whispercpp_engine.TURBO
+    assert whispercpp_engine.pick_final("arm64", 4) == whispercpp_engine.TURBO           # Windows ARM, Linux arm64
 
 
 def test_no_engine_means_not_available(pick):

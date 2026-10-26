@@ -7,6 +7,7 @@ Models are single ggml files from Hugging Face, named "<repo>:<file>" (see model
 import gc
 import math
 import os
+import platform
 import zlib
 
 import numpy as np
@@ -14,17 +15,31 @@ import numpy as np
 NAME = "whisper.cpp"
 REPO = "ggerganov/whisper.cpp"
 LIVE_MODEL = f"{REPO}:ggml-base.bin"
-FINAL_MODEL = f"{REPO}:ggml-large-v3-turbo-q5_0.bin"  # a third the size of the full one, nearly as accurate
-FINAL_MODEL_RAM_GB = 1.5
+TURBO = (f"{REPO}:ggml-large-v3-turbo-q5_0.bin", 1.5)  # a third the size of the full one, nearly as accurate
+SMALL = (f"{REPO}:ggml-small-q5_1.bin", 0.6)
+
+
+def pick_final(machine: str, cores: int) -> tuple[str, float]:
+    """(model, RAM GB) for the final transcript. An Intel CPU with only a few cores (a dual- or quad-core Intel Mac)
+    would take longer than the meeting with large-v3-turbo, so it gets the small model, several times faster; ARM
+    chips and bigger Intel ones get turbo."""
+    return SMALL if machine.lower() in ("x86_64", "amd64") and cores < 6 else TURBO
+
+
+def _cores() -> int:
+    import psutil
+
+    return psutil.cpu_count(logical=False) or os.cpu_count() or 4
+
+
+FINAL_MODEL, FINAL_MODEL_RAM_GB = pick_final(platform.machine(), _cores())
 
 _model = None
 _model_name: str | None = None
 
 
 def _threads() -> int:
-    import psutil
-
-    return max(1, min(8, psutil.cpu_count(logical=False) or os.cpu_count() or 4))
+    return max(1, min(8, _cores()))
 
 
 def _load(model: str):
