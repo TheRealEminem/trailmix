@@ -3,7 +3,7 @@
 # server (with its own Python, MLX and ffmpeg) and the web app, so nothing else needs installing.
 #
 #   scripts/build-app.sh          build dist/Trailmix.app
-#   scripts/build-app.sh --dmg    also make dist/Trailmix-<version>-arm64.dmg, the file you hand out
+#   scripts/build-app.sh --dmg    also make dist/Trailmix-<version>-macos-<arch>.dmg, the file you hand out
 #
 # Needs: Apple silicon, macOS 14.2+, the Xcode command line tools (swift), Node.js and internet access
 # (downloads the Python runtime once into build/cache, plus Python packages).
@@ -19,6 +19,9 @@ PORT="${TRAILMIX_PORT:-8765}"
 # Where the app looks for updates (GitHub owner/repo): TRAILMIX_UPDATE_REPO, else this checkout's origin.
 UPDATE_REPO="${TRAILMIX_UPDATE_REPO:-$(git -C "$ROOT" remote get-url origin 2>/dev/null | sed -E 's#(\.git)?$##; s#^.*github\.com[:/]##')}"
 OUT="${TRAILMIX_OUT:-$ROOT/dist}"  # where the app (and disk image) go
+# The Mac the disk image is for, in its name (Trailmix-<version>-macos-<arch>.dmg): the app's updater picks the one
+# for its own Mac by it. Only arm64 is built so far.
+ARCH="${TRAILMIX_ARCH:-arm64}"
 APP="$OUT/Trailmix.app"
 RES="$APP/Contents/Resources"
 CACHE="$ROOT/build/cache"
@@ -140,7 +143,7 @@ du -sh "$APP" | awk -v app="$APP" '{print "› Built " app " (" $1 ")"}'
 
 # ── Disk image ─────────────────────────────────────────────────────────
 if [ "${1:-}" = "--dmg" ]; then
-  DMG="$OUT/Trailmix-$VERSION-arm64.dmg"
+  DMG="$OUT/Trailmix-$VERSION-macos-$ARCH.dmg"
   STAGE="$(mktemp -d)"
   trap 'rm -rf "$FF_TMP" "$STAGE"' EXIT
   say "Making the disk image…"
