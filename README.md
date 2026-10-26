@@ -35,9 +35,10 @@ If a `./trailmix` server is already running on port 8765, the app uses that one 
 ```bash
 scripts/build-app.sh          # -> dist/Trailmix.app
 scripts/build-app.sh --dmg    # -> dist/Trailmix-<version>-macos-arm64.dmg as well
+TRAILMIX_ARCH=x86_64 scripts/build-app.sh --dmg   # for Intel Macs: whisper.cpp instead of MLX
 ```
 
-Needs an Apple silicon Mac, the Xcode command line tools, Node 18+ and internet access (the Python runtime is
+Needs an Apple silicon Mac (the Intel build also works on an Intel Mac, or under Rosetta), the Xcode command line tools, Node 18+ and internet access (the Python runtime is
 downloaded once into `build/cache`, checked against a pinned checksum). The version is in `VERSION`. To sign it
 with an Apple Developer ID, set `TRAILMIX_SIGN_IDENTITY="Developer ID Application: …"` (that also turns on the
 hardened runtime; notarizing is a separate `xcrun notarytool` step). The bundled ffmpeg is a static build from

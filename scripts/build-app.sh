@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Builds dist/Trailmix.app: one self-contained Mac app. It holds the menu bar recorder, the Trailmix
-# server (with its own Python, MLX and ffmpeg) and the web app, so nothing else needs installing.
+# server (with its own Python, speech engine and ffmpeg) and the web app, so nothing else needs installing.
 #
-#   scripts/build-app.sh          build dist/Trailmix.app
-#   scripts/build-app.sh --dmg    also make dist/Trailmix-<version>-macos-<arch>.dmg, the file you hand out
+#   scripts/build-app.sh                         build dist/Trailmix.app for Apple silicon (MLX)
+#   scripts/build-app.sh --dmg                   also make dist/Trailmix-<version>-macos-<arch>.dmg, the file you hand out
+#   TRAILMIX_ARCH=x86_64 scripts/build-app.sh    for an Intel Mac (whisper.cpp, built from source with AVX2)
 #
-# Needs: Apple silicon, macOS 14.2+, the Xcode command line tools (swift), Node.js and internet access
-# (downloads the Python runtime once into build/cache, plus Python packages).
+# Needs: a Mac on macOS 14.2+ (Apple silicon for arm64; an Intel Mac, or Apple silicon with Rosetta, for x86_64),
+# the Xcode command line tools (swift), Node.js and internet access (downloads the Python runtime once into
+# build/cache, plus Python packages).
 #
 # Signing: ad-hoc by default, which is fine on your own Mac and for people who accept the "unidentified
 # developer" prompt. To sign for real, set TRAILMIX_SIGN_IDENTITY="Developer ID Application: …" (this turns
@@ -20,7 +22,7 @@ PORT="${TRAILMIX_PORT:-8765}"
 UPDATE_REPO="${TRAILMIX_UPDATE_REPO:-$(git -C "$ROOT" remote get-url origin 2>/dev/null | sed -E 's#(\.git)?$##; s#^.*github\.com[:/]##')}"
 OUT="${TRAILMIX_OUT:-$ROOT/dist}"  # where the app (and disk image) go
 # The Mac the disk image is for, in its name (Trailmix-<version>-macos-<arch>.dmg): the app's updater picks the one
-# for its own Mac by it. Only arm64 is built so far.
+# for its own Mac by it.
 ARCH="${TRAILMIX_ARCH:-arm64}"
 APP="$OUT/Trailmix.app"
 RES="$APP/Contents/Resources"
@@ -29,13 +31,22 @@ CACHE="$ROOT/build/cache"
 # python-build-standalone (https://github.com/astral-sh/python-build-standalone): a relocatable CPython.
 PY_VERSION="3.14.7"
 PY_RELEASE="20260929"
-PY_FILE="cpython-$PY_VERSION+$PY_RELEASE-aarch64-apple-darwin-install_only_stripped.tar.gz"
-PY_SHA256="44b4716f4e63bc85e1c07ea2aca730d13a0ec3557d06526d84a13b1d111cf4f9"
+case "$ARCH" in
+  arm64) PY_ARCH=aarch64 PY_SHA256="44b4716f4e63bc85e1c07ea2aca730d13a0ec3557d06526d84a13b1d111cf4f9" ;;
+  x86_64) PY_ARCH=x86_64 PY_SHA256="419c8d110a393add7e20480f785a9cc2213978cdb10f8198ee7bb38b02cdb0fe" ;;
+  *) echo "TRAILMIX_ARCH is arm64 or x86_64, not $ARCH" >&2; exit 1 ;;
+esac
+PY_FILE="cpython-$PY_VERSION+$PY_RELEASE-$PY_ARCH-apple-darwin-install_only_stripped.tar.gz"
 
 say() { printf '\033[1;32m›\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 
-[ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || die "Trailmix.app is built on an Apple silicon Mac (MLX needs Apple silicon)."
+[ "$(uname -s)" = Darwin ] || die "Trailmix.app is built on a Mac."
+if [ "$ARCH" = arm64 ]; then
+  [ "$(uname -m)" = arm64 ] || die "The Apple silicon build is made on an Apple silicon Mac (MLX needs Apple silicon)."
+elif [ "$(uname -m)" = arm64 ]; then
+  arch -x86_64 /usr/bin/true 2>/dev/null || die "Building for an Intel Mac here needs Rosetta: softwareupdate --install-rosetta"
+fi
 command -v swift >/dev/null || die "Building needs the Xcode command line tools: xcode-select --install"
 command -v npm >/dev/null || die "Building needs Node.js (brew install node)."
 
@@ -45,9 +56,11 @@ say "Building the web app…"
 
 # ── Menu bar app ───────────────────────────────────────────────────────
 say "Building the menu bar app…"
-swift build -c release --package-path "$ROOT/helper" 2>&1 | grep -E "error|warning: unre|Compiling|Build complete" | tail -n 3 || true
-BIN="$(swift build -c release --package-path "$ROOT/helper" --show-bin-path)/TrailmixHelper"
-[ -x "$BIN" ] || die "The menu bar app didn't build. Run: swift build -c release --package-path helper"
+SWIFT=(swift build -c release --package-path "$ROOT/helper")
+[ "$ARCH" = arm64 ] || SWIFT+=(--arch "$ARCH")  # the arm64 build stays exactly as it was
+"${SWIFT[@]}" 2>&1 | grep -E "error|warning: unre|Compiling|Build complete" | tail -n 3 || true
+BIN="$("${SWIFT[@]}" --show-bin-path)/TrailmixHelper"
+[ -x "$BIN" ] || die "The menu bar app didn't build. Run: ${SWIFT[*]}"
 
 # ── Bundle ─────────────────────────────────────────────────────────────
 say "Assembling Trailmix.app…"
@@ -92,14 +105,37 @@ PY="$RES/python/bin/python3"
 
 say "Installing Python packages…"
 export PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_INPUT=1
-"$PY" -m pip install -q --no-compile -r "$ROOT/backend/requirements-app.txt"
-"$PY" -m pip install -q --no-compile --no-deps "mlx-whisper>=0.4"
+if [ "$ARCH" = arm64 ]; then
+  "$PY" -m pip install -q --no-compile -r "$ROOT/backend/requirements-app.txt"
+  "$PY" -m pip install -q --no-compile --no-deps "mlx-whisper>=0.4"
+else
+  # whisper.cpp has no Intel Mac wheel, so it's compiled here: for any Intel Mac that runs macOS 14.2 (all have
+  # AVX2) rather than tuned to this one, and on the CPU (Metal on Intel Macs' GPUs is slower or unsupported).
+  # Its build hands every environment variable to CMake, which prints them all: it gets only what it needs, never
+  # whatever keys and tokens are in this shell (or a CI runner's).
+  BUILD_ENV=(HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin TMPDIR="${TMPDIR:-/tmp}" PIP_DISABLE_PIP_VERSION_CHECK=1
+             PIP_NO_INPUT=1 ARCHFLAGS="-arch x86_64" MACOSX_DEPLOYMENT_TARGET=14.2
+             CMAKE_ARGS="-DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_METAL=OFF")
+  # Under Rosetta the command line tools' xcrun can't load (it has no Intel half), so CMake gets the compilers
+  # and SDK found here instead of looking them up itself.
+  [ "$(uname -m)" = arm64 ] && BUILD_ENV+=(CC="$(xcrun -f clang)" CXX="$(xcrun -f clang++)" SDKROOT="$(xcrun --show-sdk-path)")
+  env -i "${BUILD_ENV[@]}" "$PY" -m pip install -q --no-compile -r "$ROOT/backend/requirements-whispercpp.txt"
+  # Built this way, it still looks for its libraries in pip's build folder, which is gone; they're next to it.
+  WSITE="$RES/python/lib/python${PY_VERSION%.*}/site-packages"
+  for f in "$WSITE"/_pywhispercpp*.so "$WSITE"/libwhisper*.dylib "$WSITE"/libggml*.dylib; do
+    [ -f "$f" ] && [ ! -L "$f" ] || continue
+    for p in $(otool -l "$f" | awk '/cmd LC_RPATH/ {getline; getline; print $2}'); do
+      [ "$p" = @loader_path ] || install_name_tool -delete_rpath "$p" "$f"
+    done
+    otool -l "$f" | grep -q "path @loader_path " || install_name_tool -add_rpath @loader_path "$f"
+  done
+fi
 
 # ffmpeg: a static build from the imageio-ffmpeg wheel (only system frameworks, includes the Opus encoder).
 FF_TMP="$(mktemp -d)"
 trap 'rm -rf "$FF_TMP"' EXIT
 "$PY" -m pip install -q --no-compile --no-deps --target "$FF_TMP" imageio-ffmpeg
-cp "$FF_TMP"/imageio_ffmpeg/binaries/ffmpeg-macos-aarch64-* "$RES/bin/ffmpeg"
+cp "$FF_TMP"/imageio_ffmpeg/binaries/ffmpeg-macos-* "$RES/bin/ffmpeg"
 chmod +x "$RES/bin/ffmpeg"
 
 # ── Slim down ──────────────────────────────────────────────────────────
