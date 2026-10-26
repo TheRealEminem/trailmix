@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api } from "../api";
+import { api, hasCapability } from "../api";
 import type { NativeRecorder } from "../api";
 import { AlertIcon, DownloadIcon } from "./icons";
 import { Spinner } from "./ui";
@@ -14,6 +14,7 @@ export default function UpdateBanner({
   const update = native?.update;
   if (
     !update ||
+    !hasCapability(native, "auto_update") ||
     !["available", "downloading", "installing", "failed"].includes(update.state)
   )
     return null;

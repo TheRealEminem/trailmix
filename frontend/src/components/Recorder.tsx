@@ -7,6 +7,7 @@ import type {
   LiveRecording,
   NativeRecorder,
 } from "../api";
+import { hasCapability, missingCapabilityReason } from "../api";
 import type { ActiveRecording } from "../capture";
 import { formatDuration, formatLongDate, shortModel } from "../format";
 import {
@@ -304,10 +305,16 @@ export default function Recorder(p: Props) {
             <ControlRow
               icon={<MonitorIcon size={16} />}
               label="Meeting audio"
-              hint="Straight from your call apps: Zoom, Meet in your browser, Teams, FaceTime. No sharing picker."
+              hint={
+                !hasCapability(p.native, "system_audio")
+                  ? `${missingCapabilityReason(p.native, "system_audio")} Only your mic is recorded.`
+                  : !hasCapability(p.native, "per_app_audio")
+                    ? `Every app's audio together. ${missingCapabilityReason(p.native, "per_app_audio")}`
+                    : "Straight from your call apps: Zoom, Meet in your browser, Teams, FaceTime. No sharing picker."
+              }
             >
               <span className="min-w-0 truncate text-right text-label text-ink-soft">
-                {p.native.source}
+                {hasCapability(p.native, "system_audio") ? p.native.source : "Your mic only"}
               </span>
             </ControlRow>
             <EnginePicker health={p.health} onEngine={p.onEngine} />
@@ -317,17 +324,23 @@ export default function Recorder(p: Props) {
               {p.native.machine ? ` on ${p.native.machine}` : ""}. Change
               these in its menu.
             </p>
-            <details className="group py-3">
-              <summary className="cursor-pointer list-none text-label font-medium text-ink [&::-webkit-details-marker]:hidden">
-                Test your audio{" "}
-                <span className="font-normal text-ink-soft group-open:hidden">
-                  · plays a chime and checks both sides are heard
-                </span>
-              </summary>
-              <div className="mt-2">
-                <SoundCheck native={p.native} />
-              </div>
-            </details>
+            {hasCapability(p.native, "sound_check") ? (
+              <details className="group py-3">
+                <summary className="cursor-pointer list-none text-label font-medium text-ink [&::-webkit-details-marker]:hidden">
+                  Test your audio{" "}
+                  <span className="font-normal text-ink-soft group-open:hidden">
+                    · plays a chime and checks both sides are heard
+                  </span>
+                </summary>
+                <div className="mt-2">
+                  <SoundCheck native={p.native} />
+                </div>
+              </details>
+            ) : (
+              <p className="py-3 text-hint text-ink-soft">
+                {missingCapabilityReason(p.native, "sound_check")}
+              </p>
+            )}
           </div>
         ) : (
           <div className="divide-y divide-line px-5 sm:px-6">
