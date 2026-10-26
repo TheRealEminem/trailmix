@@ -13,7 +13,9 @@
 #   recording, and the window running the current web app rather than a cached one. Last, it goes back to the
 #   previous version (Settings → Updates → Go back) and checks that version opens the meetings the new one left,
 #   while a newer release with no disk image for this Mac is passed over rather than offered.
-# Speech comes from `say`; transcription uses the small whisper-tiny model so it's quick.
+# Speech comes from scripts/fixtures; transcription uses the small whisper-tiny model so it's quick. The checks that
+# are the same on every computer (is it this app's engine, are its models in, does a meeting get transcribed) are in
+# scripts/smoke_test.py, which the other platforms' smoke tests use too.
 set -euo pipefail
 
 APP=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
@@ -27,6 +29,15 @@ HOME_DIR="$T/home"
 DATA="$T/data"
 mkdir -p "$HOME_DIR" "$DATA" "$T/Applications" "$T/feed"
 HF_CACHE=${HF_HOME:-$HOME/.cache/huggingface}  # keep sharing downloaded models between runs
+SCRIPTS=$(cd "$(dirname "$0")" && pwd)
+ME_WAV="$SCRIPTS/fixtures/me.wav"
+THEM_WAV="$SCRIPTS/fixtures/them.wav"
+# The small model for the app's own engine: MLX on Apple silicon, whisper.cpp on an Intel Mac.
+if ls -d "$APP"/Contents/Resources/python/lib/python3*/site-packages/mlx_whisper >/dev/null 2>&1; then
+  TINY=mlx-community/whisper-tiny-mlx
+else
+  TINY=ggerganov/whisper.cpp:ggml-tiny.bin
+fi
 PIDS=()
 ENGINE=""
 cleanup() {
@@ -44,7 +55,7 @@ if curl -s -o /dev/null "$URL/api/health" 2>/dev/null; then fail "something is a
 # The environment the app gets: hermetic, small models, no browser windows.
 ENV=(HOME="$HOME_DIR" PATH=/usr/bin:/bin:/usr/sbin:/sbin HF_HOME="$HF_CACHE"
      TRAILMIX_DATA_DIR="$DATA" TRAILMIX_SERVER_URL="$URL" TRAILMIX_NO_OPEN=1
-     TRAILMIX_WHISPER_MODEL=mlx-community/whisper-tiny-mlx TRAILMIX_LIVE_MODEL=mlx-community/whisper-tiny-mlx
+     TRAILMIX_WHISPER_MODEL="$TINY" TRAILMIX_LIVE_MODEL="$TINY"
      TRAILMIX_WHISPER_RAM_GB=0.5
      # Not under test: on a Mac with under 10% of its disk free, the first recording's notes would wait for
      # "memory" and hold every recording queued behind them, so no transcript would arrive.
@@ -100,12 +111,6 @@ stop_engine() {
   for _ in $(seq 1 30); do curl -s -o /dev/null "$URL/api/health" 2>/dev/null || return 0; sleep 0.5; done
   fail "the engine at $URL didn't stop"
 }
-
-log "Speech for the test meeting"
-say -o "$T/me.wav" --file-format=WAVE --data-format=LEI16@16000 \
-  "Good morning everyone. Let's go over the launch plan. The beta goes out on Tuesday and we need the login fix before then."
-say -o "$T/them.wav" --file-format=WAVE --data-format=LEI16@16000 \
-  "Sounds good. I will fix the login bug by Wednesday and send the pricing page to marketing tomorrow."
 
 UNDER_TEST="$APP"
 if [ -n "$OLD_DMG" ]; then
@@ -167,22 +172,17 @@ fi
 NEW_VERSION_LABEL=$(version_of "$UNDER_TEST")
 log "Starting $NEW_VERSION_LABEL's engine"
 start_engine "$UNDER_TEST"
-SERVED=$(curl -s "$URL/" | grep -o 'assets/index-[A-Za-z0-9_-]*\.js' | head -1)
-[ -f "$UNDER_TEST/Contents/Resources/ui/$SERVED" ] || fail "the engine at $URL isn't this app's (it serves $SERVED)"
-
 log "Speech models (downloaded on first start, as during setup)"
-for _ in $(seq 1 300); do
-  curl -s "$URL/api/models" | grep -q '"installed":false' || break
-  sleep 1
-done
-curl -s "$URL/api/models" | grep -q '"installed":false' && fail "the speech models didn't download"
-echo "ready"
+python3 "$SCRIPTS/smoke_test.py" check-engine "$URL" "$UNDER_TEST/Contents/Resources/ui" || fail "(above)"
 
 log "The recorder and the window, end to end"
-env -i "${ENV[@]}" "$UNDER_TEST/Contents/MacOS/Trailmix" --self-test "$URL" "$T/me.wav" "$T/them.wav" \
+env -i "${ENV[@]}" "$UNDER_TEST/Contents/MacOS/Trailmix" --self-test "$URL" "$ME_WAV" "$THEM_WAV" \
   || fail "the app's own checks failed (above)"
 
-count_meetings() { curl -s "$URL/api/meetings" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d if isinstance(d, list) else d["meetings"]))'; }
+log "A recording imported from a file"
+python3 "$SCRIPTS/smoke_test.py" transcribe "$URL" "$THEM_WAV" login Wednesday pricing || fail "(above)"
+
+count_meetings() { python3 "$SCRIPTS/smoke_test.py" meetings "$URL"; }
 
 if [ -n "$OLD_DMG" ]; then
   log "Going back to $OLD_VERSION the way you would: Settings → Updates → Go back"
