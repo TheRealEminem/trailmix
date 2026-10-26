@@ -1,0 +1,6 @@
+# Local transcription with whisper.cpp, where MLX isn't: an Intel Mac, Windows, Linux (local_engine.py).
+# pywhispercpp has wheels for Apple silicon, Linux x64/arm64 and Windows x64; elsewhere pip builds it from source
+# (needs CMake and a C++ compiler).
+-r requirements-server.txt
+pywhispercpp>=1.5.1
+huggingface_hub

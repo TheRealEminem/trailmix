@@ -209,7 +209,7 @@ def submit_transcripts(meeting_ids: list[int], cfg: dict, model: str, apply: boo
             for i, (a, b) in enumerate(chunks):
                 file = tg.upload(tg.encode(audio[int(a * tg.SR):int(b * tg.SR)]), "audio/ogg", key, name=f"batch-m{mid}-c{i}")
                 k = f"t{mid}c{i}"
-                requests.append({"key": k, "body": tg.llm_request_body(file, "audio/ogg", mlx_language())})
+                requests.append({"key": k, "body": tg.llm_request_body(file, "audio/ogg", local_language())})
                 items[k] = {"meeting_id": mid, "chunk": i, "chunks": len(chunks), "start": a, "end": b, "file": file["name"],
                             "apply": apply, "both": both, "fingerprint": _fingerprint(m)}
     except BaseException:
@@ -236,10 +236,10 @@ def _delete_files(items, api_key: str) -> None:
             tg.delete_file({"name": item["file"]}, api_key)
 
 
-def mlx_language() -> str | None:
-    import mlx_engine
+def local_language() -> str | None:
+    import local_engine
 
-    return mlx_engine.LANGUAGE
+    return local_engine.LANGUAGE
 
 
 def _apply_transcripts(job: dict, results: dict, cfg: dict) -> dict:

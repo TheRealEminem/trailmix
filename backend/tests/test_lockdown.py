@@ -35,7 +35,7 @@ def test_no_usage_stats(monkeypatch):
 
 def test_no_model_downloads(monkeypatch):
     monkeypatch.setattr(models, "_locked", lambda: True)
-    monkeypatch.setattr(models.mlx_engine, "available", lambda: True)
+    monkeypatch.setattr(models.local_engine, "available", lambda: True)
     monkeypatch.setattr(models, "installed", lambda repo: False)
     started = []
     monkeypatch.setattr(models.threading, "Thread", lambda **kw: started.append(kw))

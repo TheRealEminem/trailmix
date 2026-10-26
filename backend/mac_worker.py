@@ -21,15 +21,15 @@ import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
 
-import mlx_engine
+import local_engine
 
 TOKEN = os.getenv("TRAILMIX_WORKER_TOKEN", "")
 IDLE_S = float(os.getenv("TRAILMIX_WORKER_IDLE_S", "120"))
 ALIASES = {
-    "large": mlx_engine.FINAL_MODEL,
-    "whisper-1": mlx_engine.FINAL_MODEL,
-    "live": mlx_engine.LIVE_MODEL,
-    "small": mlx_engine.LIVE_MODEL,
+    "large": local_engine.FINAL_MODEL,
+    "whisper-1": local_engine.FINAL_MODEL,
+    "live": local_engine.LIVE_MODEL,
+    "small": local_engine.LIVE_MODEL,
 }
 
 app = FastAPI(title="Trailmix Mac worker")
@@ -41,8 +41,8 @@ _last_used = time.monotonic()
 def _job(audio: np.ndarray, model: str, language: str | None) -> list[dict]:
     """Runs inside the child process; the model stays cached there until the child is retired."""
     if language:
-        mlx_engine.LANGUAGE = language
-    return mlx_engine.run(audio, model)
+        local_engine.LANGUAGE = language
+    return local_engine.run(audio, model)
 
 
 def _get_pool() -> ProcessPoolExecutor:

@@ -12,7 +12,7 @@ import psutil
 import cloud
 import gemini_client
 import llm_engine
-import mlx_engine
+import local_engine
 import pricing
 import settings
 import transcribe_gemini
@@ -46,8 +46,8 @@ def engine_problem(engine: str, cfg: dict) -> str | None:
             return "Set the transcription endpoint first (Settings → Transcription)"
         if settings.locked(cfg) and not settings.on_this_computer(cfg["transcribe_url"]):
             return f"{settings.LOCKDOWN}, so recordings can't go to a transcription server elsewhere"
-    elif not mlx_engine.available():
-        return "Transcribing on this Mac needs a Mac with MLX"
+    elif not local_engine.available():
+        return "Transcribing on this computer needs MLX (Apple silicon) or whisper.cpp"
     return None
 
 
@@ -63,7 +63,7 @@ def transcribe_models(engine: str, cfg: dict) -> list[dict]:
         return [{"id": cfg["transcribe_model"], "label": cfg["transcribe_model"]}]
     if engine == "trailmix":
         return [{"id": "transcribe", "label": "Picked by Trailmix Cloud for your plan"}]
-    return [{"id": mlx_engine.FINAL_MODEL.rsplit("/", 1)[-1].removesuffix("-mlx"), "label": "Whisper, on this Mac"}]
+    return [{"id": local_engine.model_label(local_engine.FINAL_MODEL), "label": "Whisper, on this Mac"}]
 
 
 def transcript_chars(m: dict) -> int:
@@ -116,7 +116,7 @@ def transcribe_plan(meetings: list[dict], engine: str, model: str, cfg: dict) ->
     return {
         "engine": engine, "model": model, "minutes": round(minutes, 1),
         "cost": pricing.cost(minutes, engine, model), "per_minute": pricing.per_minute(engine, model),
-        "ram_needed_gb": mlx_engine.FINAL_MODEL_RAM_GB if engine == "local" else None,
+        "ram_needed_gb": local_engine.FINAL_MODEL_RAM_GB if engine == "local" else None,
         "ram_free_gb": round(vm.available / GB, 1),
     }
 

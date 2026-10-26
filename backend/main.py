@@ -46,7 +46,7 @@ import llm_engine
 import logfile
 import meeting_date
 import meeting_text
-import mlx_engine
+import local_engine
 import models
 import ollama_setup
 import pipeline
@@ -125,8 +125,8 @@ async def _warm_loop():
         try:
             cfg = settings.get_all()
             model = live.live_model(cfg)
-            if model and mlx_engine.loaded() != model:
-                need = mlx_engine.FINAL_MODEL_RAM_GB if cfg["live_final"] else 0.5
+            if model and local_engine.loaded() != model:
+                need = local_engine.FINAL_MODEL_RAM_GB if cfg["live_final"] else 0.5
                 calling = bool(recorder.status().get("call_app"))
                 if resources.has_room(need) or (calling and resources.check(need, "The speech model") is None):
                     live.warm_up(cfg)
@@ -905,11 +905,11 @@ def health():
         "transcription": {
             "engine": cfg["transcribe_engine"],
             "model": ("Trailmix Cloud" if cloudy else transcribe_gemini.MODEL if gemini else cfg["transcribe_model"] if remote
-                      else mlx_engine.FINAL_MODEL),
+                      else local_engine.FINAL_MODEL),
             "live_model": None if gemini or cloudy else (cfg["transcribe_model"] if cfg["live_final"] else cfg["transcribe_live_model"] or cfg["transcribe_model"])
-            if remote else (mlx_engine.FINAL_MODEL if cfg["live_final"] else mlx_engine.LIVE_MODEL),
+            if remote else (local_engine.FINAL_MODEL if cfg["live_final"] else local_engine.LIVE_MODEL),
             "url": cfg["transcribe_url"] if remote else None,
-            "local_available": mlx_engine.available(),
+            "local_available": local_engine.available(),
             # the transcript made while recording is the final one (with Trailmix Cloud, at the Pro level)
             "live_final": (cfg["live_final"] and not gemini and not cloudy) or (cloudy and "live_captions" not in off),
             "gemini_ready": gemini_client.ready(cfg) and not settings.locked(cfg),  # Google can be used for speaker labels
@@ -1034,7 +1034,7 @@ def transcription_test():
         except transcribe_gemini.GeminiError as e:
             raise HTTPException(502, str(e))
     if cfg["transcribe_engine"] != "remote":
-        return {"ok": True, "message": f"Local MLX transcription ({'available' if mlx_engine.available() else 'not installed'})"}
+        return {"ok": True, "message": f"Local transcription ({local_engine.NAME + ' available' if local_engine.available() else 'not installed'})"}
     try:
         return {"ok": True, "message": transcribe_remote.check(cfg["transcribe_url"], cfg["transcribe_api_key"], cfg["transcribe_model"])}
     except transcribe_remote.RemoteError as e:
@@ -1864,8 +1864,8 @@ def _speech_engines(cfg: dict) -> list[dict]:
         out.append({"engine": "gemini", "model": cfg["gemini_transcribe_model"]})
     if cfg["transcribe_url"] and (not settings.locked(cfg) or settings.on_this_computer(cfg["transcribe_url"])):
         out.append({"engine": "remote", "model": cfg["transcribe_model"]})
-    if mlx_engine.available():
-        out.append({"engine": "local", "model": mlx_engine.FINAL_MODEL.rsplit("/", 1)[-1].removesuffix("-mlx")})
+    if local_engine.available():
+        out.append({"engine": "local", "model": local_engine.model_label(local_engine.FINAL_MODEL)})
     for e in out:
         e["score"] = model_ranks.score(e["model"])
     return out

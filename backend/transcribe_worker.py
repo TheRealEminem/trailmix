@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 
 import audio_store as store
-import mlx_engine
+import local_engine
 import vad
 
 SR = store.SAMPLE_RATE
@@ -33,7 +33,7 @@ def main(folder: Path, vocabulary: str = "") -> None:
         regions = vad.speech_regions(audio)
         segments = []
         for i, (a, b) in enumerate(regions):
-            for seg in mlx_engine.run(audio[a:b], mlx_engine.FINAL_MODEL, vocabulary or None):
+            for seg in local_engine.run(audio[a:b], local_engine.FINAL_MODEL, vocabulary or None):
                 segments.append({**seg, "start": seg["start"] + a / SR, "end": seg["end"] + a / SR})
             emit(progress=[name, i + 1, len(regions)])
         emit(track=name, segments=segments)

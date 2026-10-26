@@ -227,7 +227,7 @@ def test_upgrades_offer_transcripts_a_better_engine_you_have_would_redo(client, 
         db.update_meeting(mid, audio_dir=str(fresh_db / "audio"))
     db.update_meeting(gone, audio_deleted=1)  # no audio: it can't be redone
     monkeypatch.setattr(main.settings, "get_all", lambda: {**main.settings.DEFAULTS, "gemini_api_key": "k", "lockdown": False})
-    monkeypatch.setattr(main.mlx_engine, "available", lambda: False)
+    monkeypatch.setattr(main.local_engine, "available", lambda: False)
     ups = client.get("/api/upgrades").json()["transcripts"]
     assert ups["best"]["engine"] == "gemini" and ups["count"] == 1
     assert ups["from"] == {"whisper-large-v3-turbo": 1}
@@ -237,7 +237,7 @@ def test_a_key_in_lockdown_does_not_count_as_a_better_engine(client, fresh_db, m
     mid = meeting_with_transcript()
     db.update_meeting(mid, audio_dir=str(fresh_db / "audio"))
     monkeypatch.setattr(main.settings, "get_all", lambda: {**main.settings.DEFAULTS, "gemini_api_key": "k", "lockdown": True})
-    monkeypatch.setattr(main.mlx_engine, "available", lambda: False)
+    monkeypatch.setattr(main.local_engine, "available", lambda: False)
     assert client.get("/api/upgrades").json()["transcripts"]["best"] is None
 
 

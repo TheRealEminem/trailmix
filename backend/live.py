@@ -23,7 +23,7 @@ import database as db
 import events
 import gemini_client
 import live_gemini
-import mlx_engine
+import local_engine
 import models
 import pricing
 import questions
@@ -94,9 +94,9 @@ _warming = threading.Lock()
 
 def live_model(cfg: dict) -> str | None:
     """The model that transcribes while recording on this Mac (None with a remote engine)."""
-    if cfg["transcribe_engine"] != "local" or not mlx_engine.available():
+    if cfg["transcribe_engine"] != "local" or not local_engine.available():
         return None
-    return mlx_engine.FINAL_MODEL if cfg.get("live_final") else mlx_engine.LIVE_MODEL
+    return local_engine.FINAL_MODEL if cfg.get("live_final") else local_engine.LIVE_MODEL
 
 
 def warm_up(cfg: dict, now: bool = False) -> bool:
@@ -104,7 +104,7 @@ def warm_up(cfg: dict, now: bool = False) -> bool:
     within seconds. Not while a recording or the pipeline is using the transcriber, unless `now` (Record
     was just pressed). True if it started loading."""
     model = live_model(cfg)
-    if not model or mlx_engine.loaded() == model or not models.installed(model):
+    if not model or local_engine.loaded() == model or not models.installed(model):
         return False
     if not now and (active_count() or db.meetings_with_status("queued", "transcribing", "summarizing")):
         return False
@@ -113,7 +113,7 @@ def warm_up(cfg: dict, now: bool = False) -> bool:
 
     def go():
         try:
-            mlx_engine.warm(model)
+            local_engine.warm(model)
         finally:
             _warming.release()
 
@@ -143,7 +143,7 @@ class LiveSession:
         self._drafts_saved = 0.0
         # The accurate model, transcribing for keeps while the meeting runs (see the module docstring).
         self.final = self.cloud_live or bool(cfg.get("live_final")) and (
-            cfg["transcribe_engine"] == "remote" or (cfg["transcribe_engine"] == "local" and mlx_engine.available()))
+            cfg["transcribe_engine"] == "remote" or (cfg["transcribe_engine"] == "local" and local_engine.available()))
         self.final_segments: dict[int, list[dict]] = {0: [], 1: []}
         self.final_complete = True  # False once any chunk was skipped: then the pipeline redoes it all
         self._step_lock = threading.Lock()  # one draft_step at a time; finish() waits for the running one
@@ -263,7 +263,7 @@ class LiveSession:
                 self._push({"type": "status", "message": message})
 
             channel = self._channels[ch] = live_gemini.Channel(
-                gemini_client.credential(self.cfg), mlx_engine.LANGUAGE, interim, final, status)
+                gemini_client.credential(self.cfg), local_engine.LANGUAGE, interim, final, status)
             channel.start()
         return channel
 
@@ -310,15 +310,15 @@ class LiveSession:
             self.cloud_seconds += len(chunk) / SR
             cred = gemini_client.credential(cfg, "trailmix")
             return transcribe_gemini.transcribe_clip(
-                chunk, cred, mlx_engine.LANGUAGE, "transcribe_chunk", prompt,
+                chunk, cred, local_engine.LANGUAGE, "transcribe_chunk", prompt,
                 tags=gemini_client.meeting_headers(cred, self.meeting_id, "mic" if ch == 0 else "call"))
         for a, b in vad.speech_regions(chunk):
             if cfg["transcribe_engine"] == "remote":
                 segs = transcribe_remote.transcribe(chunk[a:b], cfg["transcribe_url"], cfg["transcribe_api_key"],
-                                                    cfg["transcribe_model"], mlx_engine.LANGUAGE, timeout=60)
+                                                    cfg["transcribe_model"], local_engine.LANGUAGE, timeout=60)
             else:
-                models.require(mlx_engine.FINAL_MODEL)
-                segs = mlx_engine.transcribe_final(chunk[a:b], prompt)
+                models.require(local_engine.FINAL_MODEL)
+                segs = local_engine.transcribe_final(chunk[a:b], prompt)
             out += [{**seg, "start": seg["start"] + a / SR, "end": seg["end"] + a / SR} for seg in segs]
         return out
 
@@ -327,11 +327,11 @@ class LiveSession:
             cfg = self.cfg
             segs = transcribe_remote.transcribe(
                 chunk, cfg["transcribe_url"], cfg["transcribe_api_key"],
-                cfg["transcribe_live_model"] or cfg["transcribe_model"], mlx_engine.LANGUAGE, timeout=30,
+                cfg["transcribe_live_model"] or cfg["transcribe_model"], local_engine.LANGUAGE, timeout=30,
             )
-            return mlx_engine.filter_hallucinations(segs)
-        models.require(mlx_engine.LIVE_MODEL)  # first run: the model may still be downloading
-        return mlx_engine.transcribe_live(chunk, prompt)
+            return local_engine.filter_hallucinations(segs)
+        models.require(local_engine.LIVE_MODEL)  # first run: the model may still be downloading
+        return local_engine.transcribe_live(chunk, prompt)
 
     def close(self) -> None:
         for f in self._files.values():
@@ -385,7 +385,7 @@ class LiveSession:
                     found = self._final_text(chunk, f"{self._vocab} {self._context[ch]}".strip(), ch)
                     off = start / SR
                     self.final_segments[ch] += [{**s, "start": s["start"] + off, "end": s["end"] + off} for s in found]
-                    segs = mlx_engine.filter_hallucinations([{**s} for s in found])
+                    segs = local_engine.filter_hallucinations([{**s} for s in found])
                 else:
                     segs = self._draft_text(chunk, f"{self._vocab} {self._context[ch]}".strip())
             except transcribe_remote.RemoteError as e:

@@ -14,7 +14,7 @@ from pathlib import Path
 # same speed. (Must be set before huggingface_hub is first imported.)
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
-import mlx_engine  # noqa: E402
+import local_engine  # noqa: E402
 import settings  # noqa: E402
 
 log = logging.getLogger("trailmix")
@@ -31,6 +31,7 @@ class _Job:
     def __init__(self, repo: str):
         self.repo = repo
         self.total = 0.0
+        self.before = 0.0
         self.error: str | None = None
         self.done = threading.Event()
 
@@ -45,13 +46,34 @@ def _hub_cache() -> Path:
     return Path(HF_HUB_CACHE)
 
 
+def _split(model: str) -> tuple[str, str | None]:
+    """(repo, file): a model is a whole Hugging Face repo (MLX models), or one file in one, "<repo>:<file>"
+    (whisper.cpp's ggml models, which all share a repo)."""
+    repo, _, file = model.rpartition(":")
+    return (repo, file) if repo and "/" in repo and "/" not in file else (model, None)
+
+
+def path(model: str) -> str:
+    """Where `model` is on disk (downloading it if need be): its folder, or for a single-file model the file."""
+    if Path(model).exists():
+        return model
+    from huggingface_hub import hf_hub_download, snapshot_download
+
+    repo, file = _split(model)
+    return hf_hub_download(repo, file) if file else snapshot_download(repo)
+
+
 def installed(repo: str) -> bool:
-    if Path(repo).exists():  # a model folder on disk
+    if Path(repo).exists():  # a model folder or file on disk
         return True
     try:
-        from huggingface_hub import snapshot_download
+        from huggingface_hub import hf_hub_download, snapshot_download
 
-        snapshot_download(repo, local_files_only=True)
+        name, file = _split(repo)
+        if file:
+            hf_hub_download(name, file, local_files_only=True)
+        else:
+            snapshot_download(name, local_files_only=True)
         return True
     except Exception:
         return False
@@ -63,7 +85,7 @@ def _size_guess(repo: str) -> float:
 
 
 def _downloaded_bytes(repo: str) -> float:
-    blobs = _hub_cache() / ("models--" + repo.replace("/", "--")) / "blobs"
+    blobs = _hub_cache() / ("models--" + _split(repo)[0].replace("/", "--")) / "blobs"
     total = 0
     for f in blobs.glob("*"):
         try:
@@ -75,15 +97,17 @@ def _downloaded_bytes(repo: str) -> float:
 
 def _run(job: _Job) -> None:
     try:
-        from huggingface_hub import HfApi, snapshot_download
+        from huggingface_hub import HfApi
 
+        repo, file = _split(job.repo)
+        job.before = _downloaded_bytes(job.repo)  # other models' files from the same repo, already here
         try:
-            info = HfApi().model_info(job.repo, files_metadata=True)
-            job.total = float(sum(s.size or 0 for s in info.siblings))
+            info = HfApi().model_info(repo, files_metadata=True)
+            job.total = float(sum(s.size or 0 for s in info.siblings if file in (None, s.rfilename)))
         except Exception:
             job.total = _size_guess(job.repo)
         log.info("Downloading speech model %s", job.repo)
-        snapshot_download(job.repo)
+        path(job.repo)
         log.info("Speech model %s is ready", job.repo)
     except Exception as e:
         log.warning("Couldn't download %s: %s", job.repo, e)
@@ -121,12 +145,12 @@ def progress(repo: str) -> float | None:
     job = _jobs.get(repo)
     if not job or job.done.is_set() or not job.total:
         return None
-    return min(0.99, _downloaded_bytes(repo) / job.total)
+    return min(0.99, max(0.0, _downloaded_bytes(repo) - job.before) / job.total)
 
 
 def ensure(repo: str, on_progress=None) -> None:
     """Blocks until the model is installed, downloading it if need be. Raises RuntimeError if that fails."""
-    if not mlx_engine.available() or installed(repo):
+    if not local_engine.available() or installed(repo):
         return
     if _locked():
         raise RuntimeError(LOCKED)
@@ -141,7 +165,7 @@ def ensure(repo: str, on_progress=None) -> None:
 
 def require(repo: str) -> None:
     """For work that can't wait (a live draft): start the download and say so, without blocking."""
-    if not mlx_engine.available() or installed(repo):
+    if not local_engine.available() or installed(repo):
         return
     if _locked():
         raise NotReady(LOCKED + ".")
@@ -152,8 +176,8 @@ def require(repo: str) -> None:
 
 def wanted() -> list[tuple[str, str, str]]:
     return [
-        ("live", mlx_engine.LIVE_MODEL, "Live draft model"),
-        ("final", mlx_engine.FINAL_MODEL, "Transcription model"),
+        ("live", local_engine.LIVE_MODEL, "Live draft model"),
+        ("final", local_engine.FINAL_MODEL, "Transcription model"),
     ]
 
 
@@ -168,12 +192,12 @@ def status() -> dict:
             "progress": progress(repo), "error": job.error if job and job.done.is_set() and not have else None,
             "size_gb": round((job.total if job and job.total else _size_guess(repo)) / 1e9, 2),
         })
-    return {"local": mlx_engine.available() and settings.get_all()["transcribe_engine"] == "local", "models": items}
+    return {"local": local_engine.available() and settings.get_all()["transcribe_engine"] == "local", "models": items}
 
 
 def prefetch() -> None:
     """Downloads whichever local models are missing, the small live one first."""
-    if not mlx_engine.available() or settings.get_all()["transcribe_engine"] != "local":
+    if not local_engine.available() or settings.get_all()["transcribe_engine"] != "local":
         return
     if os.getenv("TRAILMIX_PREFETCH") == "0":
         return
