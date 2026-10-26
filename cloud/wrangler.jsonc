@@ -1,0 +1,30 @@
+// Trailmix Cloud: the Worker the app's "Trailmix Cloud" mode talks to. See README.md.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "trailmix-cloud",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "vars": {
+    // Where people reach this Worker. Sign-in links, passkeys and the rewritten upload URL use it.
+    "BASE_URL": "http://localhost:8787",
+    // Lemon Squeezy variant id → plan, and the checkout link for each plan. Fill these in from the store.
+    "LEMONSQUEEZY_VARIANTS": "{}",
+    "CHECKOUT_URLS": "{}",
+    "EMAIL_FROM": "Trailmix <signin@example.com>",
+    // "1" prints sign-in links to the console instead of emailing them. Local development only.
+    "DEV_MODE": "1"
+    // Optional: CLOUD_CONFIG, a JSON object merged over src/config.ts (models, prices, hours, rate limit).
+  },
+  // Secrets (wrangler secret put …, or .dev.vars locally): GEMINI_API_KEY, LEMONSQUEEZY_SIGNING_SECRET, RESEND_API_KEY
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "trailmix",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": { "crons": ["17 4 * * *"] }
+}
