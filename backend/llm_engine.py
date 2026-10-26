@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 import httpx
 
 import database as db
+import gemini_client
 import meeting_text
 import pricing
 import templates
@@ -40,6 +41,7 @@ PROVIDERS = {
     "gemini": {"label": "Google Gemini", "kind": "cloud"},
     "deepseek": {"label": "DeepSeek", "kind": "cloud", "base": "https://api.deepseek.com"},
     "custom": {"label": "OpenAI-compatible", "kind": "custom"},
+    "trailmix": {"label": "Trailmix Cloud", "kind": "cloud"},
 }
 # Claude models that accept server-side refusal fallback ("default" routing picks the substitute).
 _CLAUDE_FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5"}
@@ -94,6 +96,8 @@ def configured(pid: str, cfg: dict) -> tuple[bool, str]:
         if not cfg["custom_model"]:
             return False, "Pick a model for the OpenAI-compatible provider"
         return True, ""
+    if pid == "trailmix":
+        return (True, "") if cfg["cloud_token"] else (False, "Sign in to Trailmix Cloud first (Settings → AI providers)")
     if not cfg[f"{pid}_api_key"]:
         return False, f"Add an API key for {PROVIDERS[pid]['label']} in Settings"
     return True, ""
@@ -105,11 +109,21 @@ def model_key(pid: str) -> str:
 
 
 def model_for(pid: str, cfg: dict) -> str:
+    if pid == "trailmix":
+        return cloud_role()
     if pid == "ollama":
         if cfg["ollama_model"]:
             return cfg["ollama_model"]
         return preferred_ollama_model(_ollama_tags(cfg))
     return cfg[f"{pid}_model"]
+
+
+def model_name(pid: str, cfg: dict) -> str:
+    """The model as people see it. Trailmix Cloud picks its own for each job, so its plan is shown instead."""
+    if pid == "trailmix":
+        plan = (cfg.get("cloud_account") or {}).get("plan")
+        return {"trial": "Free trial", "basic": "Basic", "pro": "Pro", "max": "Max"}.get(plan, "Trailmix Cloud")
+    return model_for(pid, cfg)
 
 
 # Families that follow a fixed note format well, best first. Used when no Ollama model is picked in Settings.
@@ -229,8 +243,9 @@ def _post(url: str, **kw) -> httpx.Response:
         r = httpx.post(url, timeout=TIMEOUT, **kw)
     except httpx.HTTPError as e:
         raise LLMError(f"Couldn't reach {urlparse(url).netloc}: {e}") from e
+    _from_cloud(r)
     if r.status_code >= 400:
-        raise LLMError(f"{urlparse(url).netloc} returned {r.status_code}: {_error_text(r)}")
+        raise _failed(url, r)
     return r
 
 
@@ -238,9 +253,10 @@ def _stream_lines(url: str, **kw) -> Iterator[str]:
     """The non-empty lines of a streamed reply, failing the same way _post does."""
     try:
         with httpx.stream("POST", url, timeout=TIMEOUT, **kw) as r:
+            _from_cloud(r)
             if r.status_code >= 400:
                 r.read()
-                raise LLMError(f"{urlparse(url).netloc} returned {r.status_code}: {_error_text(r)}")
+                raise _failed(url, r)
             for line in r.iter_lines():
                 if line.strip():
                     yield line
@@ -260,6 +276,22 @@ def _sse(url: str, **kw) -> Iterator[dict]:
             yield json.loads(data)
         except ValueError:
             continue
+
+
+def _from_cloud(r: httpx.Response) -> None:
+    """Trailmix Cloud says on every reply which level the account is at; keep the cached account in step."""
+    level = r.headers.get("x-trailmix-level")
+    if level:
+        import cloud
+
+        cloud.note_level(level)
+
+
+def _failed(url: str, r: httpx.Response) -> LLMError:
+    if r.headers.get("x-trailmix-level"):  # Trailmix Cloud writes its refusals for people: show them as they are
+        return LLMError("This Mac is signed out of Trailmix Cloud; sign in again (Settings → AI providers)"
+                        if r.status_code == 401 else _error_text(r))
+    return LLMError(f"{urlparse(url).netloc} returned {r.status_code}: {_error_text(r)}")
 
 
 def _error_text(r: httpx.Response) -> str:
@@ -384,6 +416,11 @@ def purpose(kind: str, meeting_id: int | None = None):
         _purpose.reset(token)
 
 
+def cloud_role() -> str:
+    """What to ask Trailmix Cloud for: the notes themselves get the plan's notes model, everything else a quick one."""
+    return "notes" if _purpose.get()[0] == "notes" else "quick"
+
+
 def _meter(pid: str, cfg: dict, counts: dict) -> None:
     """Writes down the tokens a cloud AI reported for one call (what Settings → Usage adds up). Never fails the call."""
     if not (counts.get("in") or counts.get("out")):
@@ -391,22 +428,25 @@ def _meter(pid: str, cfg: dict, counts: dict) -> None:
     kind, meeting_id = _purpose.get()
     try:
         model = model_for(pid, cfg)
-        spent = pricing.text_cost(model, counts.get("in", 0), counts.get("out", 0))
+        spent = 0.0 if pid == "trailmix" else pricing.text_cost(model, counts.get("in", 0), counts.get("out", 0))
         db.log_usage(meeting_id, kind, pid, model, 0, spent, counts.get("in", 0), counts.get("out", 0))
     except Exception:
         log.exception("couldn't record AI usage")
 
 
 def _gemini(cfg: dict, prompt: str, system: str | None, on_text: OnText = None, usage: dict | None = None,
-            images: list[bytes] | None = None) -> str:
+            images: list[bytes] | None = None, pid: str = "gemini") -> str:
+    """Google Gemini with your key, or Trailmix Cloud (pid "trailmix"), which speaks the same API."""
     pictures = [{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(b).decode()}} for b in images or []]
     body: dict = {"contents": [{"role": "user", "parts": [*pictures, {"text": prompt}]}]}
     if system:
         body["systemInstruction"] = {"parts": [{"text": system}]}
-    headers = {"x-goog-api-key": cfg["gemini_api_key"]}
+    cred = gemini_client.credential(cfg, pid)
+    headers = gemini_client.headers(cred)
+    url = f"{gemini_client.base(cred)}/v1beta/models/{model_for(pid, cfg)}"
     if on_text:
         text, meta = "", None
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{cfg['gemini_model']}:streamGenerateContent?alt=sse"
+        url += ":streamGenerateContent?alt=sse"
         for event in _sse(url, json=body, headers=headers):
             if event.get("error"):
                 raise LLMError(f"Gemini: {_error_text_of(event)}")
@@ -419,7 +459,7 @@ def _gemini(cfg: dict, prompt: str, system: str | None, on_text: OnText = None, 
         _count(usage, meta)
         return text
     r = _post(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{cfg['gemini_model']}:generateContent",
+        f"{url}:generateContent",
         json=body,
         headers=headers,
     )
@@ -449,8 +489,8 @@ def generate(pid: str, cfg: dict, prompt: str, system: str | None = None, keep_a
         text = _ollama(cfg, prompt, system, keep_alive or OLLAMA_KEEP_ALIVE, 0.0 if exact else 0.2, on_text, images)
     elif pid == "anthropic":
         text = _anthropic(cfg, prompt, system, on_text, images, counts)
-    elif pid == "gemini":
-        text = _gemini(cfg, prompt, system, on_text, counts, images)
+    elif pid in ("gemini", "trailmix"):
+        text = _gemini(cfg, prompt, system, on_text, counts, images, pid)
     elif pid == "custom":
         text = _openai_compatible(cfg["custom_base_url"], cfg["custom_api_key"], cfg["custom_model"], prompt, system, pid,
                                   on_text, images, counts)
@@ -493,11 +533,14 @@ def list_models(pid: str, cfg: dict) -> list[str]:
             return [m.id for m in anthropic.Anthropic(api_key=cfg["anthropic_api_key"], timeout=20).models.list()]
         except anthropic.APIError as e:
             raise LLMError(f"Claude: {e}") from e
+    if pid == "trailmix":
+        return []  # Trailmix Cloud picks the model for each job itself
     if pid == "gemini":
-        if not cfg["gemini_api_key"]:
+        cred = gemini_client.credential(cfg)
+        if not cred:
             raise LLMError("Add an API key first")
-        r = httpx.get("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
-                      headers={"x-goog-api-key": cfg["gemini_api_key"]}, timeout=20)
+        r = httpx.get(f"{gemini_client.base(cred)}/v1beta/models?pageSize=200", headers=gemini_client.headers(cred),
+                      timeout=20)
         if r.status_code >= 400:
             raise LLMError(f"Gemini returned {r.status_code}: {_error_text(r)}")
         return [m["name"].removeprefix("models/") for m in r.json().get("models", [])
@@ -519,7 +562,7 @@ def list_models(pid: str, cfg: dict) -> list[str]:
 
 def test(pid: str, cfg: dict) -> str:
     reply = generate(pid, cfg, "Reply with exactly: OK", keep_alive=OLLAMA_KEEP_ALIVE)
-    return f"{label(pid, cfg)} · {model_for(pid, cfg)} replied “{reply[:40]}”"
+    return f"{label(pid, cfg)} · {model_name(pid, cfg)} replied “{reply[:40]}”"
 
 
 # ── Meeting tasks ───────────────────────────────────────────────────────

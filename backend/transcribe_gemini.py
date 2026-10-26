@@ -14,6 +14,7 @@ stretch it skipped is transcribed again as a smaller request and put in its plac
 Returns the same [{start, end, speaker, text}] segments as the other engines, with speakers named
 "Speaker 1", "Speaker 2"... in order of first appearance.
 """
+import base64
 import json
 import re
 import subprocess
@@ -24,10 +25,10 @@ from urllib.parse import urlparse
 import httpx
 import numpy as np
 
+import gemini_client
 import vad
 
 SR = 16000
-API = "https://generativelanguage.googleapis.com"
 MODEL = "gemini-3.5-transcribe"
 MAX_CHUNK_S = 25 * 60       # the model's limit with diarization is 30 minutes; leave headroom
 OVERLAP_S = 60              # chunks share this much audio, to match their speaker labels
@@ -45,8 +46,8 @@ class GeminiError(Exception):
     pass
 
 
-def _headers(api_key: str) -> dict:
-    return {"x-goog-api-key": api_key}
+class BasicLevel(GeminiError):
+    """Trailmix Cloud won't do this at the account's current level (near-live captions after the month's live hours)."""
 
 
 RATE_LIMIT_RETRIES = 8      # Google's free tier allows few audio tokens a minute; waiting its turn is normal
@@ -63,7 +64,7 @@ def _wait_for(r: httpx.Response, attempt: int) -> float:
 def _request(method: str, url: str, api_key: str, retries: int = 3, **kw) -> httpx.Response:
     """One call, retried on rate limits (patiently) and server errors; failures become GeminiError."""
     kw.setdefault("timeout", 600)
-    kw["headers"] = {**_headers(api_key), **kw.get("headers", {})}
+    kw["headers"] = {**gemini_client.headers(api_key), **kw.get("headers", {})}
     attempt = 0
     while True:
         try:
@@ -79,6 +80,15 @@ def _request(method: str, url: str, api_key: str, retries: int = 3, **kw) -> htt
             time.sleep(_wait_for(r, attempt))
             attempt += 1
             continue
+        if gemini_client.is_cloud(api_key):
+            import cloud
+
+            cloud.note_level(r.headers.get(cloud.LEVEL_HEADER))
+            if r.status_code == 409 and '"level"' in r.text:
+                raise BasicLevel(cloud.error_text(r))
+            if r.status_code in (401, 402, 403):
+                raise GeminiError("This Mac is signed out of Trailmix Cloud; sign in again (Settings → AI providers)"
+                                  if r.status_code == 401 else cloud.error_text(r))
         if r.status_code in (401, 403) or (r.status_code == 400 and "API_KEY_INVALID" in r.text):
             raise GeminiError("Google didn't accept the API key (Settings → Transcription)")
         if r.status_code >= 400:
@@ -93,7 +103,7 @@ def _request(method: str, url: str, api_key: str, retries: int = 3, **kw) -> htt
 def upload(data: bytes, mime: str, api_key: str, name: str = "audio") -> dict:
     """Uploads audio and waits until it's ready. Returns the file ({uri, name, ...})."""
     start = _request(
-        "POST", f"{API}/upload/v1beta/files", api_key, json={"file": {"display_name": name}},
+        "POST", f"{gemini_client.base(api_key)}/upload/v1beta/files", api_key, json={"file": {"display_name": name}},
         headers={"X-Goog-Upload-Protocol": "resumable", "X-Goog-Upload-Command": "start",
                  "X-Goog-Upload-Header-Content-Length": str(len(data)), "X-Goog-Upload-Header-Content-Type": mime},
     )
@@ -110,14 +120,14 @@ def upload(data: bytes, mime: str, api_key: str, name: str = "audio") -> dict:
         if file.get("state") == "FAILED":
             raise GeminiError("Google couldn't process the uploaded audio")
         time.sleep(2)
-        file = _request("GET", f"{API}/v1beta/{file['name']}", api_key).json()
+        file = _request("GET", f"{gemini_client.base(api_key)}/v1beta/{file['name']}", api_key).json()
     raise GeminiError("Google took too long to process the uploaded audio")
 
 
 def delete_file(file: dict, api_key: str) -> None:
     """The audio shouldn't sit on Google's servers any longer than it takes to transcribe it."""
     try:
-        _request("DELETE", f"{API}/v1beta/{file['name']}", api_key, retries=0, timeout=30)
+        _request("DELETE", f"{gemini_client.base(api_key)}/v1beta/{file['name']}", api_key, retries=0, timeout=30)
     except GeminiError:
         pass  # Google removes uploads itself after 48 hours
 
@@ -207,10 +217,12 @@ def parse_turns(text: str) -> list[dict]:
     return sorted(out, key=lambda w: w["start"])
 
 
-def call_llm(file: dict, mime: str, api_key: str, language: str | None, model: str, usage: dict | None = None) -> list[dict]:
+def call_llm(file: dict, mime: str, api_key: str, language: str | None, model: str, usage: dict | None = None,
+             tags: dict | None = None) -> list[dict]:
     """A transcript from a general Gemini model: the audio and a prompt, answered in JSON turns."""
     for attempt in range(2):  # an answer that isn't valid JSON is worth one more try
-        r = _request("POST", f"{API}/v1beta/models/{model}:generateContent", api_key, json=llm_request_body(file, mime, language))
+        r = _request("POST", f"{gemini_client.base(api_key)}/v1beta/models/{model}:generateContent", api_key,
+                     json=llm_request_body(file, mime, language), headers=tags or {})
         j = r.json()
         if usage is not None:
             meta = j.get("usageMetadata") or {}
@@ -231,13 +243,46 @@ def call_llm(file: dict, mime: str, api_key: str, language: str | None, model: s
     raise GeminiError("unreachable")
 
 
+CLIP_PROMPT = ("Transcribe this short stretch of a meeting verbatim{language}. It may start or end mid-sentence: write "
+               "only what is said, without finishing or guessing words. {context}Return JSON: a list of turns, each "
+               '{{"start": "MM:SS", "speaker": "Speaker N", "text": "what they said"}}; an empty list if nobody speaks.')
+
+
+def transcribe_clip(audio: np.ndarray, api_key: str, language: str | None, model: str, context: str = "",
+                    usage: dict | None = None, tags: dict | None = None) -> list[dict]:
+    """[{start, end, text}] for a few seconds of one track, sent with the request instead of uploaded: the near-live
+    captions of Trailmix Cloud, where each clip is cut at a pause (live.py) and the captions are the transcript.
+    `tags`: which meeting and track it's from (gemini_client.meeting_headers)."""
+    said = f" (the language is {language})" if language else ""
+    hint = f"Names and terms that may come up, and what was just said before: {context.strip()}. " if context.strip() else ""
+    body = {"contents": [{"parts": [
+                {"inlineData": {"mimeType": "audio/ogg", "data": base64.b64encode(encode(audio)).decode()}},
+                {"text": CLIP_PROMPT.format(language=said, context=hint)}]}],
+            "generationConfig": {"responseMimeType": "application/json", "responseSchema": LLM_SCHEMA,
+                                 "temperature": 0.0, "maxOutputTokens": 4096}}
+    r = _request("POST", f"{gemini_client.base(api_key)}/v1beta/models/{model}:generateContent", api_key,
+                 retries=1, timeout=30, json=body, headers=tags or {})
+    j = r.json()
+    if usage is not None:
+        meta = j.get("usageMetadata") or {}
+        usage["in"] = usage.get("in", 0) + meta.get("promptTokenCount", 0)
+        usage["out"] = usage.get("out", 0) + meta.get("candidatesTokenCount", 0) + meta.get("thoughtsTokenCount", 0)
+    try:
+        text = "".join(p.get("text", "") for p in j["candidates"][0]["content"]["parts"] if not p.get("thought"))
+    except (KeyError, IndexError):
+        return []  # blocked, or nothing said
+    length = len(audio) / SR
+    return [{"start": min(t["start"], length), "end": min(t["end"], length), "text": t["text"]}
+            for t in parse_turns(text or "[]")]
+
+
 def call(file: dict, mime: str, api_key: str, language: str | None, diarize: bool, model: str = MODEL,
-         usage: dict | None = None) -> list[dict]:
+         usage: dict | None = None, tags: dict | None = None) -> list[dict]:
     if not uses_transcribe_api(model):
-        return call_llm(file, mime, api_key, language, model, usage)
+        return call_llm(file, mime, api_key, language, model, usage, tags)
     body = {"model": model, "input": [{"type": "audio", "uri": file["uri"], "mime_type": mime}],
             "generation_config": _config(language, diarize)}
-    r = _request("POST", f"{API}/v1beta/interactions", api_key, json=body)
+    r = _request("POST", f"{gemini_client.base(api_key)}/v1beta/interactions", api_key, json=body, headers=tags or {})
     return parse_words(r.json())
 
 
@@ -397,7 +442,7 @@ def _transcribe_chunks(audio: np.ndarray, send, max_s: float, repair: bool = Tru
 
 
 def transcribe(audio: np.ndarray, api_key: str, language: str | None = None, diarize: bool = True,
-               on_progress=None, model: str = MODEL, usage: dict | None = None) -> list[dict]:
+               on_progress=None, model: str = MODEL, usage: dict | None = None, tags: dict | None = None) -> list[dict]:
     """[{start, end, speaker, text}] for the whole of `audio` (16 kHz mono float). `diarize` False still
     gives timestamps but no speaker labels (every word is one speaker). `on_progress(i, n)` after each chunk.
     `usage` gets the tokens a general model reported and, as "redo_seconds", the audio sent again to fill gaps."""
@@ -411,7 +456,7 @@ def transcribe(audio: np.ndarray, api_key: str, language: str | None = None, dia
     def send(piece: np.ndarray, name: str) -> list[dict]:
         file = upload(encode(piece), "audio/ogg", api_key, name=name)
         try:
-            return call(file, "audio/ogg", api_key, language, diarize, model, usage)
+            return call(file, "audio/ogg", api_key, language, diarize, model, usage, tags)
         finally:
             delete_file(file, api_key)
 

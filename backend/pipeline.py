@@ -29,6 +29,7 @@ import compare
 import database as db
 import duplicates
 import exporter
+import gemini_client
 import live
 import live_notes
 import questions
@@ -177,7 +178,7 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
     cfg = settings.get_all()
     if m.get("requested_engine"):  # picked for this recording (or "Transcribe again with ..."), not the Settings one
         cfg["transcribe_engine"] = m["requested_engine"]
-    if m.get("requested_transcribe_model") and cfg["transcribe_engine"] != "local":  # picked before processing
+    if m.get("requested_transcribe_model") and cfg["transcribe_engine"] not in ("local", "trailmix"):  # picked before
         cfg["gemini_transcribe_model" if cfg["transcribe_engine"] == "gemini" else "transcribe_model"] = m["requested_transcribe_model"]
     if m.get("requested_model") and m["requested_provider"] in llm_engine.PROVIDERS:
         cfg[llm_engine.model_key(m["requested_provider"])] = m["requested_model"]
@@ -215,7 +216,8 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
             _gate(meeting_id, "transcribe" in force, mlx_engine.FINAL_MODEL_RAM_GB, "The transcription model")
         db.update_meeting(meeting_id, status="transcribing", wait_reason=None)
         began = time.monotonic()
-        transcribe = _transcribe_local if local else _transcribe_gemini if engine == "gemini" else _transcribe_remote
+        transcribe = (_transcribe_local if local else _transcribe_gemini if engine in ("gemini", "trailmix")
+                      else _transcribe_remote)
         segments, labeled, duration = transcribe(m) if local else transcribe(m, cfg)
         _save_transcript(m, segments, labeled, duration, made_with=f"{_speech_model(cfg)}, after the meeting",
                          engine=engine, model=_speech_model(cfg), seconds=round(time.monotonic() - began),
@@ -379,6 +381,11 @@ def _finish_live(m: dict, cfg: dict) -> tuple[list[dict], bool, float] | None:
             for a, b in vad.speech_regions(tail):
                 if local:
                     found = mlx_engine.transcribe_final(tail[a:b], questions.vocabulary_prompt()[:300] or None)
+                elif cfg["transcribe_engine"] == "trailmix":
+                    cred = gemini_client.credential(cfg, "trailmix")
+                    found = transcribe_gemini.transcribe_clip(
+                        tail[a:b], cred, mlx_engine.LANGUAGE, "transcribe_chunk",
+                        tags=gemini_client.meeting_headers(cred, m["id"], _side(name)))
                 else:
                     found = transcribe_remote.transcribe(tail[a:b], cfg["transcribe_url"], cfg["transcribe_api_key"],
                                                          cfg["transcribe_model"], mlx_engine.LANGUAGE)
@@ -426,6 +433,11 @@ def _transcribe_remote(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
     return _label(per_track, list(tracks)), "system" in tracks and "mic" in tracks, duration
 
 
+def _side(track: str) -> str:
+    """A track's name as Trailmix Cloud counts it: your microphone, or the call."""
+    return "mic" if track == "mic" else "call"
+
+
 def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
     """Google's transcription model, which labels who is speaking. With both sides of a call recorded your
     microphone is simply you, and only the other side's track needs its speakers told apart."""
@@ -437,17 +449,24 @@ def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
             tracks[name] = audio
     duration = max((len(a) for a in tracks.values()), default=0) / store.SAMPLE_RATE
     both = "system" in tracks and "mic" in tracks
-    model = cfg["gemini_transcribe_model"]
+    engine = "trailmix" if cfg["transcribe_engine"] == "trailmix" else "gemini"  # Trailmix Cloud picks its own model
+    cred = gemini_client.credential(cfg, engine)
+    model = "transcribe" if engine == "trailmix" else cfg["gemini_transcribe_model"]
+
+    def spent(seconds: float, used: dict) -> float | None:
+        return 0.0 if engine == "trailmix" else pricing.transcript_cost(model, seconds, used)
+
     if both and cfg["gemini_mix_tracks"]:  # one mixed recording: half the cost; who is "you" is worked out here
         audio, used = mixdown.mix(tracks["mic"], tracks["system"]), {}
         try:
             segs = transcribe_gemini.transcribe(
-                audio, cfg["gemini_api_key"], mlx_engine.LANGUAGE, diarize=True, model=model, usage=used,
+                audio, cred, mlx_engine.LANGUAGE, diarize=True, model=model, usage=used,
+                tags=gemini_client.meeting_headers(cred, m["id"]),
                 on_progress=lambda i, n: _progress(m["id"], f"Transcribing: {i}/{n}" if n > 1 else "Transcribing"))
         except transcribe_gemini.GeminiError as e:
             raise RuntimeError(str(e)) from e
         seconds = len(audio) / store.SAMPLE_RATE + used.get("redo_seconds", 0)  # skipped stretches sent again
-        db.log_usage(m["id"], "transcript", "gemini", model, seconds, pricing.transcript_cost(model, seconds, used))
+        db.log_usage(m["id"], "transcript", engine, model, seconds, spent(seconds, used))
         segs = mixdown.name_you(cleanup.drop_hallucinations(segs), tracks["mic"], tracks["system"])
         return cleanup.strip_metrics(sorted(segs, key=lambda s: s["start"])), True, duration
     per_track = {}
@@ -455,14 +474,14 @@ def _transcribe_gemini(m: dict, cfg: dict) -> tuple[list[dict], bool, float]:
         used = {}
         try:
             per_track[name] = transcribe_gemini.transcribe(
-                audio, cfg["gemini_api_key"], mlx_engine.LANGUAGE, diarize=not (both and name == "mic"),
-                model=cfg["gemini_transcribe_model"], usage=used,
+                audio, cred, mlx_engine.LANGUAGE, diarize=not (both and name == "mic"),
+                model=model, usage=used, tags=gemini_client.meeting_headers(cred, m["id"], _side(name)),
                 on_progress=lambda i, n, name=name: _progress(
                     m["id"], f"Transcribing {name} track: {i}/{n}" if n > 1 else f"Transcribing {name} track"))
         except transcribe_gemini.GeminiError as e:
             raise RuntimeError(str(e)) from e
         seconds = len(audio) / store.SAMPLE_RATE + used.get("redo_seconds", 0)  # skipped stretches sent again
-        db.log_usage(m["id"], "transcript", "gemini", model, seconds, pricing.transcript_cost(model, seconds, used))
+        db.log_usage(m["id"], "transcript", engine, model, seconds, spent(seconds, used))
     return _label(per_track, list(tracks), diarized=True), both, duration
 
 
@@ -493,13 +512,15 @@ def _speech_model(cfg: dict) -> str:
     """The speech model's short name, e.g. "whisper-large-v3-turbo"."""
     if cfg["transcribe_engine"] == "gemini":
         return cfg["gemini_transcribe_model"]
+    if cfg["transcribe_engine"] == "trailmix":
+        return "Trailmix Cloud"
     model = mlx_engine.FINAL_MODEL if cfg["transcribe_engine"] == "local" else cfg["transcribe_model"]
     return model.rsplit("/", 1)[-1].removesuffix("-mlx")
 
 
 def _gemini_note(cfg: dict, labeled: bool) -> str | None:
     """How the audio was sent to Google, for the version's record (None unless both tracks were recorded)."""
-    if cfg["transcribe_engine"] != "gemini" or not labeled:
+    if cfg["transcribe_engine"] not in ("gemini", "trailmix") or not labeled:
         return None
     return "mic and call mixed into one recording" if cfg["gemini_mix_tracks"] else "mic and call sent as separate recordings"
 
@@ -593,7 +614,8 @@ def _run_trial(meeting_id: int, engine: str, model: str | None, apply: bool, sum
                 raise RuntimeError(short)
         trial.update(state="running", detail=None)
         began = time.monotonic()
-        transcribe = _transcribe_local if engine == "local" else _transcribe_gemini if engine == "gemini" else _transcribe_remote
+        transcribe = (_transcribe_local if engine == "local" else _transcribe_gemini if engine in ("gemini", "trailmix")
+                      else _transcribe_remote)
         segments, labeled, duration = transcribe(m) if engine == "local" else transcribe(m, cfg)
         used = _speech_model(cfg)
         version = db.add_transcript_version(

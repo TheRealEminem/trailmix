@@ -8,7 +8,8 @@ import json
 
 import httpx
 
-API = "https://generativelanguage.googleapis.com/v1beta"
+import gemini_client
+
 INLINE_LIMIT_BYTES = 18 * 1024 * 1024   # Google's limit is 20 MB per job; leave room for the envelope
 
 _STATES = {"PENDING": "pending", "RUNNING": "running", "SUCCEEDED": "succeeded", "FAILED": "failed",
@@ -21,7 +22,8 @@ class BatchError(Exception):
 
 def _call(method: str, path: str, api_key: str, **kw) -> dict:
     try:
-        r = httpx.request(method, f"{API}/{path}", headers={"x-goog-api-key": api_key}, timeout=kw.pop("timeout", 120), **kw)
+        r = httpx.request(method, f"{gemini_client.base(api_key)}/v1beta/{path}", headers=gemini_client.headers(api_key),
+                          timeout=kw.pop("timeout", 120), **kw)
     except httpx.HTTPError as e:
         raise BatchError(f"Couldn't reach Google: {e or type(e).__name__}") from e
     if r.status_code in (401, 403) or (r.status_code == 400 and "API_KEY_INVALID" in r.text):

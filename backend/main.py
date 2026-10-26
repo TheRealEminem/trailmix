@@ -31,15 +31,18 @@ import audio_store as store
 import auth
 import database as db
 import duplicates
+import gemini_client
 import archive
 import batch_jobs
 import catch_up
+import cloud
 import compare
 import exporter
 import importer
 import live
 import live_notes
 import llm_engine
+import logfile
 import meeting_date
 import meeting_text
 import mlx_engine
@@ -65,6 +68,8 @@ import watched
 import transcribe_gemini
 import transcribe_remote
 
+if "pytest" not in sys.modules:  # the tests import this module, but keep their own data folder and output
+    logfile.configure()
 log = logging.getLogger("trailmix")
 SWEEP_INTERVAL_S = 6 * 3600
 UI_DIR = Path(os.getenv("TRAILMIX_UI_DIR", Path(__file__).resolve().parent.parent / "frontend" / "dist"))
@@ -830,29 +835,37 @@ def health():
 
     def provider_info(pid: str) -> dict:
         ready, why = llm_engine.configured(pid, cfg)
-        return {"id": pid, "label": llm_engine.label(pid, cfg), "model": llm_engine.model_for(pid, cfg),
+        return {"id": pid, "label": llm_engine.label(pid, cfg), "model": llm_engine.model_name(pid, cfg),
                 "ready": ready, "reason": why, "local": llm_engine.is_local(pid, cfg)}
 
     remote = cfg["transcribe_engine"] == "remote"
     gemini = cfg["transcribe_engine"] == "gemini"
+    cloudy = cfg["transcribe_engine"] == "trailmix"
+    off = cloud.features_off(cfg)
     return {
         "summary": provider_info(cfg["summary_provider"]),
         "fallback": provider_info(cfg["summary_fallback"]) if cfg["summary_fallback"] != "none" else None,
         "transcription": {
             "engine": cfg["transcribe_engine"],
-            "model": transcribe_gemini.MODEL if gemini else cfg["transcribe_model"] if remote else mlx_engine.FINAL_MODEL,
-            "live_model": None if gemini else (cfg["transcribe_model"] if cfg["live_final"] else cfg["transcribe_live_model"] or cfg["transcribe_model"])
+            "model": ("Trailmix Cloud" if cloudy else transcribe_gemini.MODEL if gemini else cfg["transcribe_model"] if remote
+                      else mlx_engine.FINAL_MODEL),
+            "live_model": None if gemini or cloudy else (cfg["transcribe_model"] if cfg["live_final"] else cfg["transcribe_live_model"] or cfg["transcribe_model"])
             if remote else (mlx_engine.FINAL_MODEL if cfg["live_final"] else mlx_engine.LIVE_MODEL),
             "url": cfg["transcribe_url"] if remote else None,
             "local_available": mlx_engine.available(),
-            "live_final": cfg["live_final"] and not gemini,  # the transcript made while recording is the final one
-            "gemini_ready": bool(cfg["gemini_api_key"]) and not settings.locked(cfg),  # Google can be used for speaker labels
+            # the transcript made while recording is the final one (with Trailmix Cloud, at the Pro level)
+            "live_final": (cfg["live_final"] and not gemini and not cloudy) or (cloudy and "live_captions" not in off),
+            "gemini_ready": gemini_client.ready(cfg) and not settings.locked(cfg),  # Google can be used for speaker labels
             "remote_ready": preflight.engine_problem("remote", cfg) is None,
+            "cloud_ready": preflight.engine_problem("trailmix", cfg) is None,
         },
+        "cloud": {"signed_in": bool(cfg["cloud_token"]), "available": cloud.offered(cfg),
+                  "account": cloud.account(cfg=cfg), "level": cloud.level(cfg), "off": off},
         "version": archive.APP_VERSION,
         "build": "app" if "/Contents/Resources/" in sys.executable else "source",  # the installed app, or from source
         "templates": templates.listing(),
-        "providers": [{**provider_info(p), "kind": v["kind"]} for p, v in llm_engine.PROVIDERS.items()],
+        "providers": [{**provider_info(p), "kind": v["kind"]} for p, v in llm_engine.PROVIDERS.items()
+                      if p != "trailmix" or cloud.offered(cfg)],
         "ask_before_ai": cfg["ask_before_ai"],
         "audio_retention_days": store.retention_days(),
         "auth": auth.required(),
@@ -908,12 +921,59 @@ def provider_test(pid: str):
         raise HTTPException(502, str(e))
 
 
+# ── Trailmix Cloud ─────────────────────────────────────────────────────
+
+class CloudPoll(BaseModel):
+    code: str
+
+
+def _cloud(fn, *args):
+    try:
+        return fn(*args)
+    except cloud.CloudError as e:
+        raise HTTPException(502, str(e))
+
+
+@app.post("/api/cloud/link")
+def cloud_link():
+    """Starts signing this Mac in: {code, link_url, expires_in, interval}. The UI opens link_url and polls."""
+    return _cloud(cloud.link)
+
+
+@app.post("/api/cloud/poll")
+def cloud_poll(body: CloudPoll):
+    """{status: pending|expired|done, account?}: done once you've signed in in the browser."""
+    return _cloud(cloud.poll, body.code)
+
+
+@app.get("/api/cloud/account")
+def cloud_account(refresh: bool = True):
+    """The plan, level and hours ({} when signed out), fresh from the server unless `refresh` is false."""
+    cfg = settings.get_all()
+    acct = cloud.account(refresh=refresh, cfg=cfg)
+    cfg = settings.get_all()
+    return {"signed_in": bool(cfg["cloud_token"]), "account": acct, "level": cloud.level(cfg),
+            "off": cloud.features_off(cfg)}
+
+
+@app.post("/api/cloud/signout")
+def cloud_signout():
+    cloud.sign_out()
+    return {"signed_in": False}
+
+
 @app.post("/api/transcription/test")
 def transcription_test():
     cfg = settings.get_all()
+    if cfg["transcribe_engine"] == "trailmix":
+        problem = preflight.engine_problem("trailmix", cfg)
+        if problem:
+            raise HTTPException(409, problem)
+        acct = cloud.account(refresh=True, cfg=cfg)
+        return {"ok": True, "message": f"Signed in to Trailmix Cloud ({acct.get('plan', 'unknown')} plan)"}
     if cfg["transcribe_engine"] == "gemini":
         try:
-            return {"ok": True, "message": transcribe_gemini.check(cfg["gemini_api_key"])}
+            return {"ok": True, "message": transcribe_gemini.check(gemini_client.credential(cfg))}
         except transcribe_gemini.GeminiError as e:
             raise HTTPException(502, str(e))
     if cfg["transcribe_engine"] != "remote":
@@ -1259,11 +1319,10 @@ def retranscribe(meeting_id: int, body: RetranscribeRequest | None = None):
     cfg = settings.get_all()
     if engine and engine not in settings.CHOICES["transcribe_engine"]:
         raise HTTPException(422, "Unknown transcription engine")
-    if (engine or cfg["transcribe_engine"]) == "gemini":  # fail now, not after the old notes have been cleared
-        if settings.locked(cfg):
-            raise HTTPException(409, f"{settings.LOCKDOWN}, so recordings can't be sent to Google")
-        if not cfg["gemini_api_key"]:
-            raise HTTPException(409, "Add a Google API key first (Settings → Transcription)")
+    if (engine or cfg["transcribe_engine"]) in ("gemini", "trailmix"):  # fail now, not after the old notes are cleared
+        problem = preflight.engine_problem(engine or cfg["transcribe_engine"], cfg)
+        if problem:
+            raise HTTPException(409, problem)
     if meeting["status"] not in ("done", "error", "ready_summarize"):
         raise HTTPException(409, "This meeting is still being processed")
     if meeting["audio_deleted"] or not store.audio_bytes(meeting):
@@ -1735,7 +1794,7 @@ def _upgradable(cfg: dict, current: str | None = None) -> dict:
 def _speech_engines(cfg: dict) -> list[dict]:
     """The speech engines you could use right now, each with how it's rated: [{engine, model, score}]."""
     out = []
-    if cfg["gemini_api_key"] and not settings.locked(cfg):
+    if gemini_client.ready(cfg) and not settings.locked(cfg):
         out.append({"engine": "gemini", "model": cfg["gemini_transcribe_model"]})
     if cfg["transcribe_url"] and (not settings.locked(cfg) or settings.on_this_computer(cfg["transcribe_url"])):
         out.append({"engine": "remote", "model": cfg["transcribe_model"]})
@@ -1773,7 +1832,7 @@ def upgrades():
     data["notes"].pop("ids")
     # The same notes, rewritten by Gemini as a half-price batch job (when there's a key and Lockdown is off).
     gemini = _upgradable(cfg, cfg["gemini_model"])["notes"]
-    data["notes_batch"] = {"ready": bool(cfg["gemini_api_key"]) and not settings.locked(cfg), "model": cfg["gemini_model"],
+    data["notes_batch"] = {"ready": gemini_client.ready(cfg) and not settings.locked(cfg), "model": cfg["gemini_model"],
                            "score": model_ranks.score(cfg["gemini_model"]), "count": gemini["count"], "from": gemini["from"]}
     transcripts = _transcripts_upgradable(cfg)
     transcripts.pop("ids")
@@ -1785,7 +1844,7 @@ def _estimate(meetings: list[dict], engine: str, model: str | None, cfg: dict) -
     """What redoing these meetings' transcripts would send and cost: {meetings: [{id, title, minutes, cost}],
     minutes, cost (None if the price isn't known), per_minute, as_of}. An upper bound: a silent track isn't sent."""
     model = model or (cfg["gemini_transcribe_model"] if engine == "gemini" else cfg["transcribe_model"] if engine == "remote" else None)
-    mixed = engine == "gemini" and bool(cfg["gemini_mix_tracks"])  # one recording of your mic and the call, not two
+    mixed = engine in ("gemini", "trailmix") and bool(cfg["gemini_mix_tracks"])  # your mic and the call as one recording
     rows = []
     for m in meetings:
         minutes = pricing.meeting_minutes(m["duration_sec"], bool(m["has_system"]), mixed=mixed)
@@ -1830,7 +1889,7 @@ def upgrade_notes_batch(body: NotesBatchRequest):
     cfg = settings.get_all()
     if settings.locked(cfg):
         raise HTTPException(409, f"{settings.LOCKDOWN}, so nothing can be sent to Google")
-    if not cfg["gemini_api_key"]:
+    if not gemini_client.ready(cfg):
         raise HTTPException(409, "Add a Google API key first (Settings → AI providers)")
     ids = body.meeting_ids if body.meeting_ids is not None else _upgradable(cfg, cfg["gemini_model"])["notes"]["ids"]
     newest = sorted((m for m in db.get_meetings(ids) if m), key=lambda m: m["created_at"], reverse=True)[:max(1, body.limit)]

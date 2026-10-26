@@ -9,6 +9,8 @@ import math
 
 import psutil
 
+import cloud
+import gemini_client
 import llm_engine
 import mlx_engine
 import pricing
@@ -32,8 +34,13 @@ def engine_problem(engine: str, cfg: dict) -> str | None:
     if engine == "gemini":
         if settings.locked(cfg):
             return f"{settings.LOCKDOWN}, so recordings can't be sent to Google"
-        if not cfg["gemini_api_key"]:
+        if not gemini_client.ready(cfg):
             return "Add a Google API key first (Settings → Transcription)"
+    elif engine == "trailmix":
+        if settings.locked(cfg):
+            return f"{settings.LOCKDOWN}, so recordings can't be sent to Trailmix Cloud"
+        if not gemini_client.ready(cfg, "trailmix"):
+            return "Sign in to Trailmix Cloud first (Settings → AI providers)"
     elif engine == "remote":
         if not cfg["transcribe_url"]:
             return "Set the transcription endpoint first (Settings → Transcription)"
@@ -54,6 +61,8 @@ def transcribe_models(engine: str, cfg: dict) -> list[dict]:
         return out
     if engine == "remote":
         return [{"id": cfg["transcribe_model"], "label": cfg["transcribe_model"]}]
+    if engine == "trailmix":
+        return [{"id": "transcribe", "label": "Picked by Trailmix Cloud for your plan"}]
     return [{"id": mlx_engine.FINAL_MODEL.rsplit("/", 1)[-1].removesuffix("-mlx"), "label": "Whisper, on this Mac"}]
 
 
@@ -87,7 +96,7 @@ def notes_plan(meetings: list[dict], pid: str, cfg: dict) -> dict:
         tokens_in += tin
         tokens_out += tout
     local = llm_engine.is_local(pid, cfg)
-    cost = None if local else pricing.text_cost(model, tokens_in, tokens_out)
+    cost = None if local else 0.0 if pid == "trailmix" else pricing.text_cost(model, tokens_in, tokens_out)
     vm = psutil.virtual_memory()
     return {
         "provider": pid, "label": llm_engine.label(pid, cfg), "model": model, "local": local,
@@ -112,7 +121,7 @@ def transcribe_plan(meetings: list[dict], engine: str, model: str, cfg: dict) ->
     }
 
 
-ENGINE_LABELS = {"local": "This Mac", "gemini": "Google Gemini", "remote": "Your endpoint"}
+ENGINE_LABELS = {"local": "This Mac", "gemini": "Google Gemini", "remote": "Your endpoint", "trailmix": "Trailmix Cloud"}
 
 
 def preflight(meetings: list[dict], cfg: dict, engine: str | None = None, transcribe_model: str | None = None,
@@ -132,20 +141,21 @@ def preflight(meetings: list[dict], cfg: dict, engine: str | None = None, transc
                      "transcribe_model": transcribe_models(cfg["transcribe_engine"], cfg)[0]["id"]},
         "notes": {
             "options": [{"provider": pid, "label": llm_engine.label(pid, cfg), "kind": info["kind"],
-                         "local": llm_engine.runs_here(pid, cfg), "model": llm_engine.model_for(pid, cfg),
+                         "local": llm_engine.runs_here(pid, cfg), "model": llm_engine.model_name(pid, cfg),
                          **dict(zip(("ready", "reason"), llm_engine.configured(pid, cfg)))}
-                        for pid, info in llm_engine.PROVIDERS.items()],
+                        for pid, info in llm_engine.PROVIDERS.items() if pid != "trailmix" or cloud.offered(cfg)],
             "plan": notes_plan(meetings, provider, plan_cfg),
         },
         "transcribe": None,
         "as_of": pricing.AS_OF,
+        "cloud": cloud.account(cfg=cfg),  # Trailmix Cloud's plan and hours, when signed in: no money to show there
     }
     if needs_transcript:
         models = transcribe_models(engine, cfg)
         out["transcribe"] = {
             "options": [{"engine": e, "label": ENGINE_LABELS[e], "local": e == "local", "ready": not engine_problem(e, cfg),
                          "reason": engine_problem(e, cfg) or "", "models": transcribe_models(e, cfg)}
-                        for e in settings.CHOICES["transcribe_engine"]],
+                        for e in settings.CHOICES["transcribe_engine"] if e != "trailmix" or cloud.offered(cfg)],
             "plan": transcribe_plan(needs_transcript, engine, transcribe_model or models[0]["id"], cfg),
         }
     return out

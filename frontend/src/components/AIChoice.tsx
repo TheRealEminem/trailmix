@@ -449,6 +449,9 @@ export function AISwitch({
     { id: "local", label: "This Mac", ready: tx.local_available, why: "Transcribing on this Mac needs a Mac with MLX" },
     { id: "gemini", label: "Google", ready: tx.gemini_ready, why: "Add a Google API key in Settings → Transcription (and Lockdown off)" },
     { id: "remote", label: "Endpoint", ready: tx.remote_ready, why: "Set a transcription endpoint in Settings → Transcription" },
+    ...(health.cloud?.available || tx.engine === "trailmix"
+      ? [{ id: "trailmix" as const, label: "Cloud", ready: tx.cloud_ready, why: "Sign in to Trailmix Cloud in Settings → AI providers (and Lockdown off)" }]
+      : []),
   ];
 
   const pickEngine = (e: TranscribeEngine) => {
@@ -491,17 +494,32 @@ export function AISwitch({
           className="absolute left-0 top-full z-30 mt-1.5 w-[312px] animate-pop rounded-lg border border-line bg-surface p-3.5 shadow-lg"
         >
           <div className="eyebrow mb-1.5">Transcripts</div>
-          <Segmented
-            size="sm"
-            label="Transcribe with"
-            value={tx.engine}
-            onChange={pickEngine}
-            options={engines.map((e) => ({
-              id: e.id,
-              label: e.label,
-              icon: e.id === "local" ? <LaptopIcon size={13} /> : <CloudIcon size={13} />,
-            }))}
-          />
+          {engines.length > 3 ? ( // four don't fit side by side
+            <Select
+              label="Transcribe with"
+              size="sm"
+              value={tx.engine}
+              onChange={(v) => pickEngine(v as TranscribeEngine)}
+              className="w-full"
+              options={engines.map((e) => ({
+                value: e.id,
+                label: e.id === "trailmix" ? "Trailmix Cloud" : e.id === "gemini" ? "Google Gemini" : e.id === "remote" ? "Your endpoint" : e.label,
+                hint: e.ready ? undefined : "Not set up yet",
+              }))}
+            />
+          ) : (
+            <Segmented
+              size="sm"
+              label="Transcribe with"
+              value={tx.engine}
+              onChange={pickEngine}
+              options={engines.map((e) => ({
+                id: e.id,
+                label: e.label,
+                icon: e.id === "local" ? <LaptopIcon size={13} /> : <CloudIcon size={13} />,
+              }))}
+            />
+          )}
 
           <div className="eyebrow mb-1.5 mt-4">Notes</div>
           <Segmented
@@ -529,11 +547,13 @@ export function AISwitch({
                 .filter((p) => p.local === notes.local)
                 .map((p) => ({ value: p.id, label: p.label, hint: p.ready ? p.model : "Not set up yet" }))}
             />
-            <ModelSelect
-              provider={notes.id}
-              value={notes.model}
-              onChange={(m) => save({ [`${notes.id}_model`]: m } as Parameters<typeof api.putSettings>[0])}
-            />
+            {notes.id !== "trailmix" && ( // Trailmix Cloud picks the model for each job by plan
+              <ModelSelect
+                provider={notes.id}
+                value={notes.model}
+                onChange={(m) => save({ [`${notes.id}_model`]: m } as Parameters<typeof api.putSettings>[0])}
+              />
+            )}
           </div>
 
           <label className="mt-4 flex cursor-pointer items-center justify-between gap-3 border-t border-line pt-3 text-hint">
