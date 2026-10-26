@@ -98,10 +98,31 @@ async def _stats_loop():
 
 
 def _exit_with_parent() -> None:
-    """Trailmix.app starts this server and names itself in TRAILMIX_PARENT_PID. If the app is force-quit
-    or crashes, this process is re-parented to launchd; stop instead of lingering on the port."""
+    """The app (Trailmix.app, or Trailmix.exe on Windows) starts this server and names itself in
+    TRAILMIX_PARENT_PID. If the app is force-quit or crashes, this process is re-parented (to launchd on a
+    Mac); stop instead of lingering on the port."""
     parent = int(os.getenv("TRAILMIX_PARENT_PID") or 0)
     if not parent:
+        return
+
+    if sys.platform == "win32":
+        # Windows keeps reporting the old parent's id after it's gone: wait on the process itself instead.
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        handle = kernel32.OpenProcess(0x00100000, False, parent)  # SYNCHRONIZE
+        if not handle:
+            return
+
+        def watch_handle():
+            kernel32.WaitForSingleObject(handle, 0xFFFFFFFF)  # INFINITE
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        threading.Thread(target=watch_handle, daemon=True, name="parent-watch").start()
         return
 
     def watch():
@@ -739,9 +760,9 @@ def ollama_status():
 
 @app.post("/api/ollama/install", status_code=202)
 def ollama_install():
-    """Download, check and install Ollama (the Mac app), or open it if it's installed but not running."""
-    if sys.platform != "darwin":
-        raise HTTPException(409, "Installing Ollama from here only works on a Mac")
+    """Download, check and install Ollama (the Mac or Windows app), or open it if it's installed but not running."""
+    if sys.platform not in ("darwin", "win32"):
+        raise HTTPException(409, "Installing Ollama from here only works on a Mac or Windows")
     if settings.locked():
         raise HTTPException(409, f"{settings.LOCKDOWN}, so Ollama can't be downloaded")
     if not ollama_setup.start_install(settings.get_all()):

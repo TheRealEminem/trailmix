@@ -1,7 +1,8 @@
-"""Getting a local summary model in place: is Ollama there, which model suits this Mac, and pulling it
+"""Getting a local summary model in place: is Ollama there, which model suits this computer, and pulling it
 with progress the app can show (instead of a terminal `ollama pull`)."""
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,10 @@ RECOMMENDED_SMALL = "qwen2.5:3b"
 # download that carries that signature.
 OLLAMA_ZIP = "https://ollama.com/download/Ollama-darwin.zip"
 OLLAMA_TEAM = "3MU9H2V9Y9"
+# The official Windows installer, signed by Ollama (Authenticode); it installs for the current user into
+# %LOCALAPPDATA%\Programs\Ollama. Trailmix only runs a download whose signature is valid and Ollama's.
+OLLAMA_SETUP_EXE = "https://ollama.com/download/OllamaSetup.exe"
+OLLAMA_WINDOWS_SIGNER = "ollama"  # must be in the signer certificate's subject
 
 _lock = threading.Lock()
 _pull: dict = {}
@@ -34,7 +39,18 @@ _install: dict = {}
 INSTALL_DIRS = [Path("/Applications"), Path.home() / "Applications"]  # first that's writable wins
 
 
+def _windows_app_dir() -> Path:
+    return Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama"
+
+
 def app_path() -> Path | None:
+    """The Ollama app: Ollama.app on a Mac, "ollama app.exe" (the tray app that runs the server) on Windows."""
+    if sys.platform == "win32":
+        for name in ("ollama app.exe", "ollama.exe"):
+            if (_windows_app_dir() / name).exists():
+                return _windows_app_dir() / name
+        found = shutil.which("ollama")
+        return Path(found) if found else None
     for folder in INSTALL_DIRS:
         if (folder / "Ollama.app").exists():
             return folder / "Ollama.app"
@@ -53,7 +69,7 @@ def status(cfg: dict) -> dict:
     with _lock:
         install = dict(_install)
     return {
-        "can_install": sys.platform == "darwin",
+        "can_install": sys.platform in ("darwin", "win32"),
         "installed": app_path() is not None,
         "install": install or None,
         "reachable": reachable,
@@ -105,10 +121,10 @@ def _run(url: str, model: str) -> None:
             _pull.update(active=False, error=f"Couldn't download {model}: {e}")
 
 
-# ── Installing Ollama itself (Mac) ──────────────────────────────────────
+# ── Installing Ollama itself (Mac and Windows) ──────────────────────────
 
 def start_install(cfg: dict) -> bool:
-    """Downloads, checks and installs Ollama.app, then opens it. Opens it if it's installed but not running."""
+    """Downloads, checks and installs the Ollama app, then opens it. Opens it if it's installed but not running."""
     with _lock:
         if _install.get("active"):
             return False
@@ -127,9 +143,9 @@ def _install_run(url: str) -> None:
     try:
         app = app_path()
         if app is None:
-            app = _download_and_install()
+            app = _download_and_install_windows() if sys.platform == "win32" else _download_and_install()
         _set(status="Starting Ollama", progress=None)
-        subprocess.run(["/usr/bin/open", "-g", str(app)], check=True, timeout=20)  # -g: don't steal focus
+        _open(app)
         for _ in range(60):
             if _reachable({"ollama_url": url}):
                 _set(active=False, status="ready", progress=1.0)
@@ -141,22 +157,36 @@ def _install_run(url: str) -> None:
         _set(active=False, error=str(e)[:300])
 
 
+def _open(app: Path) -> None:
+    """Starts the Ollama app without bringing it to the front."""
+    if sys.platform == "win32":
+        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        subprocess.Popen([str(app)], creationflags=flags, close_fds=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        subprocess.run(["/usr/bin/open", "-g", str(app)], check=True, timeout=20)  # -g: don't steal focus
+
+
+def _download(url: str, target: Path) -> None:
+    _set(status="Downloading Ollama")
+    with httpx.stream("GET", url, follow_redirects=True, timeout=httpx.Timeout(60, read=120)) as r:
+        if r.status_code >= 400:
+            raise RuntimeError(f"Couldn't download Ollama (HTTP {r.status_code})")
+        total = int(r.headers.get("content-length") or 0)
+        got = 0
+        with open(target, "wb") as f:
+            for chunk in r.iter_bytes(1 << 20):
+                f.write(chunk)
+                got += len(chunk)
+                if total:
+                    _set(progress=min(0.99, got / total))
+
+
 def _download_and_install() -> Path:
     work = Path(tempfile.mkdtemp(prefix="trailmix-ollama-"))
     try:
         archive = work / "Ollama-darwin.zip"
-        _set(status="Downloading Ollama")
-        with httpx.stream("GET", OLLAMA_ZIP, follow_redirects=True, timeout=httpx.Timeout(60, read=120)) as r:
-            if r.status_code >= 400:
-                raise RuntimeError(f"Couldn't download Ollama (HTTP {r.status_code})")
-            total = int(r.headers.get("content-length") or 0)
-            got = 0
-            with open(archive, "wb") as f:
-                for chunk in r.iter_bytes(1 << 20):
-                    f.write(chunk)
-                    got += len(chunk)
-                    if total:
-                        _set(progress=min(0.99, got / total))
+        _download(OLLAMA_ZIP, archive)
         _set(status="Checking Ollama's signature", progress=None)
         subprocess.run(["/usr/bin/ditto", "-xk", str(archive), str(work / "x")], check=True, timeout=300)
         new = work / "x" / "Ollama.app"
@@ -188,3 +218,43 @@ def _verify(app: Path) -> None:
     gate = subprocess.run(["/usr/sbin/spctl", "--assess", "--type", "execute", str(app)], capture_output=True, text=True)
     if gate.returncode != 0:
         raise RuntimeError("macOS didn't accept the Ollama download, so it wasn't installed")
+
+
+def _download_and_install_windows() -> Path:
+    work = Path(tempfile.mkdtemp(prefix="trailmix-ollama-"))
+    try:
+        setup = work / "OllamaSetup.exe"
+        _download(OLLAMA_SETUP_EXE, setup)
+        _set(status="Checking Ollama's signature", progress=None)
+        _verify_windows(setup)
+        _set(status="Installing Ollama")
+        subprocess.run([str(setup), "/VERYSILENT", "/NORESTART", "/SUPPRESSMSGBOXES"], check=True, timeout=900)
+        app = app_path()
+        if app is None:
+            raise RuntimeError("Ollama's installer finished, but Ollama isn't where it should be")
+        return app
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _verify_windows(setup: Path) -> None:
+    """Refuses a download whose Authenticode signature isn't valid, or isn't Ollama's."""
+    path = str(setup).replace("'", "''")
+    script = (f"$s = Get-AuthenticodeSignature -LiteralPath '{path}'; $s.Status.ToString(); "
+              "if ($s.SignerCertificate) { $s.SignerCertificate.Subject } else { '' }")
+    done = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                          capture_output=True, text=True, timeout=120)
+    lines = [line.strip() for line in done.stdout.splitlines() if line.strip()]
+    problem = signature_problem(lines[0] if lines else "", lines[1] if len(lines) > 1 else "")
+    if problem:
+        raise RuntimeError(problem)
+
+
+def signature_problem(status: str, subject: str) -> str | None:
+    """Why a Windows download of Ollama isn't trusted (its signature's status and signer, as PowerShell's
+    Get-AuthenticodeSignature reports them), or None when it is."""
+    if status.strip().lower() != "valid":
+        return "The Ollama download failed its signature check, so it wasn't installed"
+    if OLLAMA_WINDOWS_SIGNER not in subject.lower():
+        return "The Ollama download isn't signed by Ollama, so it wasn't installed"
+    return None

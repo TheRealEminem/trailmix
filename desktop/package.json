@@ -1,0 +1,11 @@
+{
+  "name": "trailmix-desktop",
+  "private": true,
+  "description": "The Trailmix desktop shell for Windows (and later Linux): a Tauri app around the Trailmix server. Built by scripts/build-windows.py.",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4"
+  }
+}

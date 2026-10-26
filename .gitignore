@@ -15,3 +15,8 @@ helper/.swiftpm/
 .env
 build/
 .DS_Store
+
+# Windows desktop shell (desktop/)
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/

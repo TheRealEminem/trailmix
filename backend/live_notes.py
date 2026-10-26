@@ -70,6 +70,15 @@ def power() -> dict:
             out["low_power"] = bool(re.search(r"^\s*(lowpowermode|powermode)\s+1\b", modes, re.M))
         except (OSError, subprocess.TimeoutExpired):
             pass
+    else:
+        try:  # Windows and Linux: psutil reads the battery (None on a desktop)
+            battery = psutil.sensors_battery()
+        except Exception:
+            battery = None
+        if battery is not None:
+            out["battery"] = True
+            out["percent"] = int(battery.percent) if battery.percent is not None else None
+            out["plugged_in"] = bool(battery.power_plugged)
     _power = (time.time(), out)
     return out
 
