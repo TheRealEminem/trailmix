@@ -114,7 +114,8 @@ def _note(meeting: dict, link: str) -> str:
     when = datetime.fromisoformat(meeting["created_at"].replace("Z", "+00:00"))
     if when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)
-    return f"From the meeting [{meeting['title']}]({link}) on {when.astimezone():%-d %B %Y}, in Trailmix."
+    local = when.astimezone()
+    return f"From the meeting [{meeting['title']}]({link}) on {local.day} {local:%B %Y}, in Trailmix."
 
 
 _sending: set[int] = set()

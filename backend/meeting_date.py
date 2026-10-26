@@ -104,6 +104,6 @@ def parse(reply: str, latest: date) -> dict:
 def guess(m: dict, cfg: dict) -> dict:
     """Asks the AI (the usual chain of providers) when meeting `m` happened. Raises llm_engine.LLMError."""
     latest = date.today()
-    prompt = PROMPT.format(today=latest.strftime("%B %-d, %Y"), lines=clues(m["transcript"] or ""))
+    prompt = PROMPT.format(today=f"{latest:%B} {latest.day}, {latest:%Y}", lines=clues(m["transcript"] or ""))
     reply, _ = llm_engine.run_chain("auto", cfg, lambda pid: llm_engine.generate(pid, cfg, prompt, exact=True))
     return parse(reply, latest)

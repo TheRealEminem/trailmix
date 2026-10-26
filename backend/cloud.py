@@ -13,6 +13,7 @@ import logging
 import os
 import socket
 import subprocess
+import sys
 import time
 import uuid
 
@@ -70,12 +71,21 @@ def device_id() -> str:
     """The same for this Mac every time, and not the Mac's own serial: a hash of its hardware UUID (or, failing that, of
     its network address). The server keeps only a hash of this, to give each Mac one free trial."""
     raw = ""
-    try:
-        out = subprocess.run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True, text=True,
-                             timeout=5).stdout
-        raw = next((line.split('"')[-2] for line in out.splitlines() if "IOPlatformUUID" in line), "")
-    except (OSError, subprocess.SubprocessError, IndexError):
-        pass
+    if sys.platform == "win32":
+        try:  # the id Windows gave this install (not the machine's serial)
+            import winreg
+
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography") as key:
+                raw = str(winreg.QueryValueEx(key, "MachineGuid")[0])
+        except OSError:
+            pass
+    elif sys.platform == "darwin":
+        try:
+            out = subprocess.run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True, text=True,
+                                 timeout=5).stdout
+            raw = next((line.split('"')[-2] for line in out.splitlines() if "IOPlatformUUID" in line), "")
+        except (OSError, subprocess.SubprocessError, IndexError):
+            pass
     return hashlib.sha256(f"trailmix-device:{raw or uuid.getnode()}".encode()).hexdigest()
 
 

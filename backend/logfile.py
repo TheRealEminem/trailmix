@@ -12,6 +12,7 @@ something, or fails, is kept.
 """
 import logging
 import os
+import shutil
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -50,9 +51,28 @@ class LogFile(RotatingFileHandler):
             os.dup2(self.stream.fileno(), fd)
 
     def doRollover(self) -> None:
+        if sys.platform == "win32":
+            self._copy_and_truncate()
+            return
         super().doRollover()
         if self.follows_output and self.stream:
             self._point_output_here()
+
+    def _copy_and_truncate(self) -> None:
+        """Windows won't rename a file another handle has open (the launcher's redirect of stdout/stderr, or a
+        child process's), so the old log is copied aside and the live file emptied in place: every writer keeps
+        the same file, and appends from its new end."""
+        if self.stream:
+            self.stream.flush()
+        base = self.baseFilename
+        for i in range(self.backupCount - 1, 0, -1):
+            older, newer = f"{base}.{i}", f"{base}.{i + 1}"
+            if os.path.exists(older):
+                os.replace(older, newer)
+        if self.backupCount > 0:
+            shutil.copyfile(base, f"{base}.1")
+        with open(base, "r+b") as f:
+            f.truncate(0)
 
 
 class NotPolling(logging.Filter):
