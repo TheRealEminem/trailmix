@@ -193,7 +193,7 @@ def update(changes: dict, internal: bool = False) -> dict:
             import sources
             if any(n not in sources.SOURCES for n in value):
                 raise ValueError(f"auto_import can include {', '.join(sources.SOURCES)}")
-        if key == "watch_folders" and any(not isinstance(f, str) or not f.startswith("/") for f in value):
+        if key == "watch_folders" and any(not isinstance(f, str) or not os.path.isabs(f) for f in value):
             raise ValueError("watch_folders must be full paths")
         if key == "export_formats" and any(f not in ("pdf", "docx", "odt", "md", "txt") for f in value):
             raise ValueError("export_formats can include pdf, docx, odt, md and txt")

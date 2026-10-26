@@ -70,7 +70,7 @@ fn get_text(url: &str) -> Option<String> {
     minreq::get(url).with_timeout(10).send().ok().filter(|r| r.status_code == 200).and_then(|r| r.as_str().ok().map(String::from))
 }
 
-fn post(url: &str) -> Option<u16> {
+fn post(url: &str) -> Option<i32> {
     minreq::post(url).with_timeout(10).send().ok().map(|r| r.status_code)
 }
 

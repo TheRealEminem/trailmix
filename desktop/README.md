@@ -13,7 +13,9 @@ with the same server and the same web app.
 - `selftest.rs`: `--self-test <url> <me.wav> <them.wav>`, `--window-test <url> <out.png>` and `--list-audio`, for CI
   (`scripts/smoke-test-windows.py`) and for checking a real machine.
 
-Build the installer with `python scripts/build-windows.py` (on Windows: Python, Node.js and Rust needed). The GitHub
+Build the installer with `python scripts/build-windows.py` (on Windows: Python, Node.js and Rust needed). A plain
+`cargo test` in `src-tauri` wants the staged resources to exist first: `python scripts/build-windows.py --stage-only`,
+or empty `build/windows/{python,backend,ui,bin}` folders and a `build/windows/VERSION` as the CI job makes. The GitHub
 `windows` job in `.github/workflows/release.yml` does that and runs the smoke test on every tag.
 
 Not yet on Windows (their capability flags are off, so the web app hides them): the updater, hotkeys, call

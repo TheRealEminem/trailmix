@@ -82,7 +82,8 @@ def meeting_doc(title: str, when: datetime, duration: float, speakers: str, summ
     """part: 'all', 'summary' or 'transcript'. transcript items: {time, speaker, text}."""
     doc = Doc(title if part != "transcript" else f"{title}: transcript")
     doc.blocks.append(Block("title", doc.title))
-    meta = f"{when:%A, %B %-d, %Y} at {when:%-I:%M %p} · {fmt_duration(duration)}"
+    hour = when.strftime("%I").lstrip("0") or "12"  # no leading zero (strftime's %-I isn't portable)
+    meta = f"{when:%A, %B} {when.day}, {when:%Y} at {hour}:{when:%M %p} · {fmt_duration(duration)}"
     if speakers:
         meta += f" · {speakers}"
     doc.blocks.append(Block("meta", meta))

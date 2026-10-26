@@ -79,4 +79,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri
+      # tauri-build checks that the bundled resources (what scripts/build-windows.py stages) exist, even for a test.
+      - name: Stand-ins for the staged resources
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/windows/python, build/windows/backend, build/windows/ui, build/windows/bin | Out-Null
+          Copy-Item VERSION build/windows/VERSION
       - run: cargo test --manifest-path desktop/src-tauri/Cargo.toml

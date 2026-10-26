@@ -413,7 +413,8 @@ def _local_llm_paused(cfg: dict) -> None:
 def _meeting_context(m: dict, cfg: dict, question: str) -> str:
     """The meeting's notes and transcript, cut to what the model can take: for a long meeting and a small
     local model, the parts of the transcript that match the question."""
-    when = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00")).astimezone().strftime("%A %B %-d, %Y")
+    local = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00")).astimezone()
+    when = f"{local:%A %B} {local.day}, {local:%Y}"
     parts = [f"MEETING: {m['title']} ({when})"]
     if m.get("summary"):
         parts.append(f"NOTES:\n{m['summary']}")
@@ -2144,7 +2145,8 @@ def ask_everything(body: Question):
     budget = (llm_engine.chain_context_chars(cfg) - len(question) - 500) // len(meetings)
     blocks = []
     for m in meetings:
-        when = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00")).astimezone().strftime("%b %-d, %Y")
+        local = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00")).astimezone()
+        when = f"{local:%b} {local.day}, {local:%Y}"
         body_text = m["summary"] or meeting_text.transcript_text(m, cfg)
         if material := attachments.context_block(m["id"], budget // 3):
             body_text += "\n\n" + material
