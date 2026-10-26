@@ -4,10 +4,13 @@ import "@fontsource-variable/fraunces/full.css";
 import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 import App from "./App";
+import ErrorBoundary from "./components/ErrorBoundary";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <ErrorBoundary scope="window">
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>,
 );
