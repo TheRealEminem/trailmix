@@ -18,6 +18,7 @@ import type { ActiveRecording } from "./capture";
 import { formatDuration, tildePath } from "./format";
 import { platformWords, setRecorderPlatform } from "./platform";
 import { PreflightSheet } from "./components/AIChoice";
+import ErrorBoundary from "./components/ErrorBoundary";
 import AskPanel from "./components/AskPanel";
 import { MenuIcon, MicIcon } from "./components/icons";
 import { Ambient, Logo, TrailScene } from "./components/illustrations";
@@ -834,6 +835,8 @@ export default function App() {
         <div className="relative mx-auto w-full max-w-[872px] px-5 pb-24 pt-7 sm:px-8 lg:px-10 lg:pt-12">
           <UpdateBanner native={native} />
           <ModelsBanner />
+          {/* A page that fails to draw says so here; the sidebar stays usable, and opening another page starts afresh. */}
+          <ErrorBoundary scope="page" key={`${view}-${selectedId}`}>
           {waiting.some((id) => id !== selectedId || view !== "main") && !preflightIds && (
             <div className="panel mb-6 flex animate-enter flex-wrap items-center justify-between gap-3 px-4 py-3 text-label">
               <span className="text-ink-soft">
@@ -1031,6 +1034,7 @@ export default function App() {
               <Skeleton className="h-64 w-full rounded-xl" />
             </div>
           )}
+          </ErrorBoundary>
         </div>
       </main>
 
