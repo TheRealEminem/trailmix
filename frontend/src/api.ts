@@ -154,7 +154,7 @@ export interface TranscriptVersion {
   speakers: string[];
 }
 
-export type TranscribeEngine = "local" | "remote" | "gemini";
+export type TranscribeEngine = "local" | "remote" | "gemini" | "trailmix";
 
 /** Another engine or model being tried on a meeting's saved audio. */
 export interface Trial {
@@ -345,7 +345,37 @@ export interface CatchUpPlan {
   as_of: string;
 }
 
-export type ProviderId = "ollama" | "anthropic" | "openai" | "gemini" | "deepseek" | "custom";
+export type ProviderId = "ollama" | "anthropic" | "openai" | "gemini" | "deepseek" | "custom" | "trailmix";
+
+/** Trailmix Cloud, as the server last described it ({} when signed out). */
+export interface CloudAccount {
+  email?: string;
+  plan?: "trial" | "basic" | "pro" | "max" | "none";
+  status?: "active" | "lapsed";
+  /** what the plan gives right now: a Pro plan is at the Basic level once the month's live hours are used */
+  level?: "pro" | "basic";
+  pro_hours_used?: number;
+  pro_hours_limit?: number | null;
+  trial_hours_left?: number | null;
+  period_end?: string | null;
+  manage_url?: string | null;
+  upgrade_url?: string | null;
+}
+
+export interface CloudStatus {
+  signed_in: boolean;
+  account: CloudAccount;
+  level: "pro" | "basic";
+  /** features Trailmix Cloud doesn't give at this level, with why */
+  off: Partial<Record<"live_captions" | "catch_up" | "live_notes", string>>;
+}
+
+export interface CloudLink {
+  code: string;
+  link_url: string;
+  expires_in: number;
+  interval: number;
+}
 
 export interface Settings {
   auto_transcribe: boolean;
@@ -378,7 +408,9 @@ export interface Settings {
   custom_base_url: string;
   custom_model: string;
   custom_api_key: string;
-  transcribe_engine: "local" | "remote" | "gemini";
+  transcribe_engine: TranscribeEngine;
+  /** Trailmix Cloud's account as last seen ({} when signed out); signing in sets it, not the settings page */
+  cloud_account: CloudAccount;
   /** Who reads attachments added to the searchable notes: this computer only, or your summary provider */
   attachments_engine: "local" | "provider";
   /** Offer to shrink a file bigger than this many MB (a HEIC photo is always offered) */
@@ -519,7 +551,7 @@ export interface Health {
   summary: ProviderInfo;
   fallback: ProviderInfo | null;
   transcription: {
-    engine: "local" | "remote" | "gemini";
+    engine: TranscribeEngine;
     model: string;
     /** null with Gemini: it transcribes after the recording, not during */
     live_model: string | null;
@@ -531,6 +563,12 @@ export interface Health {
     gemini_ready: boolean;
     /** A transcription endpoint is set (and allowed) */
     remote_ready: boolean;
+    /** Signed in to Trailmix Cloud (and Lockdown is off) */
+    cloud_ready: boolean;
+  };
+  cloud: CloudStatus & {
+    /** This copy of Trailmix knows where Trailmix Cloud is (it isn't offered otherwise) */
+    available: boolean;
   };
   /** This copy of Trailmix, e.g. "0.14.0" ("dev" from source) */
   version: string;
@@ -897,6 +935,11 @@ export const api = {
   providerModels: (id: ProviderId) => request<{ models: string[] }>(`/providers/${id}/models`),
   providerTest: (id: ProviderId) => request<{ message: string }>(`/providers/${id}/test`, json("POST")),
   transcriptionTest: () => request<{ message: string }>("/transcription/test", json("POST")),
+  cloudLink: () => request<CloudLink>("/cloud/link", json("POST")),
+  cloudPoll: (code: string) =>
+    request<{ status: "pending" | "expired" | "done"; account?: CloudAccount }>("/cloud/poll", json("POST", { code })),
+  cloudAccount: (refresh = true) => request<CloudStatus>(`/cloud/account?refresh=${refresh}`),
+  cloudSignOut: () => request<{ signed_in: false }>("/cloud/signout", json("POST")),
 
   listMeetings: () => request<MeetingListItem[]>("/meetings"),
   search: (q: string) => request<SearchHit[]>(`/search?q=${encodeURIComponent(q)}`),

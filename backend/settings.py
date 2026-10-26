@@ -35,7 +35,7 @@ DEFAULTS = {
     # People
     "your_name": "",
     # Summaries
-    "summary_provider": "ollama",       # ollama | anthropic | openai | gemini | deepseek | custom
+    "summary_provider": "ollama",       # ollama | anthropic | openai | gemini | deepseek | custom | trailmix
     "summary_fallback": "none",         # a second provider to try if the first fails, or "none"
     "summary_template": "general",
     "custom_template": "",
@@ -56,6 +56,7 @@ DEFAULTS = {
     "custom_api_key": "",
     # Transcription
     "transcribe_engine": "local",       # local (MLX on this Mac) | remote (OpenAI-compatible endpoint) | gemini (speaker labels)
+                                        # | trailmix (Trailmix Cloud)
     "transcribe_url": "",               # e.g. https://api.openai.com/v1 or http://my-mac:8770/v1
     "transcribe_api_key": "",
     "transcribe_model": "whisper-1",
@@ -64,6 +65,10 @@ DEFAULTS = {
     "gemini_mix_tracks": True,          # send your mic and the call mixed as one recording: half the cost (mixdown.py)
     "live_final": _ROOMY,               # transcribe with the accurate model while recording (see live.py)
     "live_notes": "auto",               # notes written during the meeting: auto | on | off (live_notes.py)
+    # Trailmix Cloud (cloud.py): this Mac's device token, from signing in, and the account as last seen (plan, level,
+    # hours). Set by signing in, never from the settings page.
+    "cloud_token": "",
+    "cloud_account": {},
     "spend_warn_cents": 50,             # ask before one thing that would cost this much or more (0: never ask); Settings → Usage
     "whats_new_seen": "",               # the version whose "What's new" you last closed
     "setup_done": False,                # the first-run setup was finished or skipped (Welcome.tsx)
@@ -103,7 +108,8 @@ DEFAULTS = {
     "export_separate_files": False,   # False = one document containing both
     "export_audio": False,            # also the recording (hard-linked: no extra space on the same disk)
 }
-SECRETS = {k for k in DEFAULTS if k.endswith("_api_key")}
+SECRETS = {k for k in DEFAULTS if k.endswith("_api_key")} | {"cloud_token"}
+INTERNAL = {"cloud_token", "cloud_account"}  # written by the backend itself, not through the settings page
 # Environment variables people already use for these keys.
 _KEY_ENV = {
     "anthropic_api_key": "ANTHROPIC_API_KEY",
@@ -112,9 +118,9 @@ _KEY_ENV = {
     "deepseek_api_key": "DEEPSEEK_API_KEY",
 }
 CHOICES = {
-    "summary_provider": ("ollama", "anthropic", "openai", "gemini", "deepseek", "custom"),
-    "summary_fallback": ("none", "ollama", "anthropic", "openai", "gemini", "deepseek", "custom"),
-    "transcribe_engine": ("local", "remote", "gemini"),
+    "summary_provider": ("ollama", "anthropic", "openai", "gemini", "deepseek", "custom", "trailmix"),
+    "summary_fallback": ("none", "ollama", "anthropic", "openai", "gemini", "deepseek", "custom", "trailmix"),
+    "transcribe_engine": ("local", "remote", "gemini", "trailmix"),
     "live_notes": ("auto", "on", "off"),
     "duplicates": ("merge", "ask", "keep"),
     "attachments_engine": ("local", "provider"),
@@ -161,9 +167,9 @@ def public() -> dict:
     return s
 
 
-def update(changes: dict) -> dict:
+def update(changes: dict, internal: bool = False) -> dict:
     for key, value in changes.items():
-        if key not in DEFAULTS:
+        if key not in DEFAULTS or (key in INTERNAL and not internal):
             raise ValueError(f"Unknown setting: {key}")
         if not isinstance(value, type(DEFAULTS[key])):
             raise ValueError(f"Setting {key} must be a {type(DEFAULTS[key]).__name__}")

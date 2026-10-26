@@ -33,11 +33,9 @@ final class BundledServer {
         stopping = false
         failure = nil
 
+        // The server keeps the log from growing forever (backend/logfile.py rotates it at 5 MB).
         let logs = Bundled.logFile.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
-        if let size = (try? FileManager.default.attributesOfItem(atPath: Bundled.logFile.path)[.size]) as? Int, size > 5_000_000 {
-            try? FileManager.default.removeItem(at: Bundled.logFile)  // keep the log from growing forever
-        }
         if !FileManager.default.fileExists(atPath: Bundled.logFile.path) {
             FileManager.default.createFile(atPath: Bundled.logFile.path, contents: nil)
         }
