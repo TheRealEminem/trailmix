@@ -8,6 +8,7 @@ import contextlib
 import contextvars
 import json
 import logging
+import time
 import os
 import re
 from collections.abc import Callable, Iterator
@@ -176,13 +177,25 @@ def chain(choice: str, cfg: dict) -> list[str]:
 
 # ── Ollama ──────────────────────────────────────────────────────────────
 
+_tags_cache: dict[str, tuple[float, list[dict]]] = {}  # Ollama URL -> (when, its models)
+TAGS_CACHE_S = 5.0
+
+
 def _ollama_tags(cfg: dict) -> list[dict]:
+    """Ollama's installed models, remembered for a few seconds: the health check and the event stream's system
+    snapshot ask often, and Ollama being down shouldn't cost a timeout each time."""
+    url = cfg["ollama_url"]
+    at, tags = _tags_cache.get(url, (0.0, []))
+    if time.monotonic() - at < TAGS_CACHE_S:
+        return tags
     try:
-        r = httpx.get(f"{cfg['ollama_url']}/api/tags", timeout=2)
+        r = httpx.get(f"{url}/api/tags", timeout=2)
         r.raise_for_status()
-        return r.json().get("models", [])
+        tags = r.json().get("models", [])
     except (httpx.HTTPError, ValueError):
-        return []
+        tags = []
+    _tags_cache[url] = (time.monotonic(), tags)
+    return tags
 
 
 def ollama_model_size_gb(cfg: dict) -> float | None:

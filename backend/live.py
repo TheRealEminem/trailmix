@@ -20,6 +20,7 @@ import numpy as np
 import audio_store as store
 import cloud
 import database as db
+import events
 import gemini_client
 import live_gemini
 import mlx_engine
@@ -164,6 +165,7 @@ class LiveSession:
         self.notify = None  # async: pushes a message to the recording app
         with _registry_lock:
             _active[meeting_id] = self
+        events.notify()  # the windows and the menu bar app hear of it now
 
     @property
     def has_system(self) -> bool:
@@ -336,6 +338,7 @@ class LiveSession:
             f.close()
         with _registry_lock:
             _active.pop(self.meeting_id, None)
+        events.notify()
 
     def finish(self) -> None:
         """After the recording stops: waits for the chunk being transcribed, then saves the final-mode

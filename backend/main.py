@@ -19,10 +19,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -31,6 +31,7 @@ import audio_store as store
 import auth
 import database as db
 import duplicates
+import events
 import gemini_client
 import archive
 import batch_jobs
@@ -203,6 +204,9 @@ async def lifespan(_: FastAPI):
     models.prefetch()
     file_import.clear_leftovers()  # temporary copies from an import the last run didn't finish
     pipeline.recover_unfinished()
+    events.topics = {"recorder": recorder.status, "live": live_recordings, "system": resources.snapshot,
+                     "models": models.status}
+    ticker = asyncio.create_task(events.run())
     sweeper = asyncio.create_task(_sweep_loop())
     warmer = asyncio.create_task(_warm_loop()) if os.getenv("TRAILMIX_WARM") != "0" else None
     note_taker = asyncio.create_task(_live_notes_loop())
@@ -220,6 +224,7 @@ async def lifespan(_: FastAPI):
     stats.cancel()
     note_taker.cancel()
     sweeper.cancel()
+    ticker.cancel()
     if warmer:
         warmer.cancel()
 
@@ -429,6 +434,54 @@ def recorder_check_in(body: RecorderCheckIn):
     if body.lockdown is not None and body.lockdown != want:  # keep the recorder's copy in step
         commands.append("lockdown" if want else "no-lockdown")
     return {"commands": commands}
+
+
+@app.websocket("/api/recorder/ws")
+async def recorder_socket(ws: WebSocket):
+    """The menu bar app's line to the server. It sends what it would record (JSON, as for check-in) whenever that
+    changes; it gets {"commands": [...]} the moment the window asks for something, and {"live": [...]} whenever
+    the recordings in progress change, so it needn't ask."""
+    if not auth.is_authorized(ws):
+        await ws.close(code=4401)
+        return
+    await ws.accept()
+    loop = asyncio.get_running_loop()
+    send_lock = asyncio.Lock()
+
+    async def send(message: dict) -> None:
+        async with send_lock:
+            await ws.send_json(message)
+
+    def push(commands: list[str]) -> None:  # from any thread (recorder.request runs in the threadpool)
+        asyncio.run_coroutine_threadsafe(send({"commands": commands}), loop)
+
+    async def forward_live() -> None:
+        queue, current = await events.subscribe(frozenset({"live"}))
+        try:
+            if "live" in current:
+                await send({"live": json.loads(current["live"])})
+            while True:
+                changed = await queue.get()
+                await send({"live": json.loads(changed["live"])})
+        finally:
+            events.unsubscribe(queue)
+
+    forwarding = asyncio.create_task(forward_live())
+    recorder.attach(push)
+    try:
+        while True:
+            info = await ws.receive_json()
+            commands = await run_in_threadpool(recorder.check_in, info)
+            want = await run_in_threadpool(settings.locked)
+            if info.get("lockdown") is not None and info["lockdown"] != want:  # keep the recorder's copy in step
+                commands.append("lockdown" if want else "no-lockdown")
+            if commands:
+                await send({"commands": commands})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        recorder.detach(push)
+        forwarding.cancel()
 
 
 @app.get("/api/recorder")
@@ -1101,6 +1154,15 @@ async def stream(ws: WebSocket, meeting_id: int, draft: int = 1, client: str = "
             await ws.close()
         except Exception:
             pass
+
+
+@app.get("/api/events")
+async def event_stream():
+    """What's going on, as it changes (server-sent events; events.py): the menu bar recorder, recordings in
+    progress, memory and disk, the speech models' downloads. One open stream per window, instead of asking
+    every couple of seconds."""
+    return StreamingResponse(events.stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/live")
