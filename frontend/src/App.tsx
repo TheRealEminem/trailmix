@@ -47,12 +47,12 @@ import {
   useConfirm,
 } from "./components/ui";
 import type { ToastState } from "./components/ui";
+import { EventsContext, useEvents } from "./events";
 import { useTheme } from "./theme";
 
 const POLL_MS = 2000;
 const DRAFT_POLL_MS = 700; // while the open meeting's notes are being written, so they come in smoothly
 const WORKSPACE_KEY = "trailmix.workspace";
-const LIVE_POLL_MS = 2000;
 const HEALTH_RETRY_MS = 5000;
 // Statuses where the backend is working (or about to); the rest are resting states that need no polling.
 const REST = ["done", "error", "ready_transcribe", "ready_summarize"]; // waiting_confirm continues by itself
@@ -162,8 +162,11 @@ export default function App() {
   const [native, setNative] = useState<NativeRecorder | null>(null);
   const [remoteStopping, setRemoteStopping] = useState(false);
   const remoteRef = useRef<LiveRecording | null>(null);
-  const remoteAt = useRef(0); // when `remote` was fetched, so its timer can tick between polls
+  const remoteAt = useRef(0); // when `remote` was last heard of, so its timer can tick between updates
+  const lastRemoteId = useRef<number | null>(null);
   const onRecorderScreenRef = useRef(true);
+  // The menu bar recorder, recordings in progress, memory and the speech models, pushed as they change.
+  const events = useEvents(authState === "ok");
 
   const fail = useCallback(
     (text: string) => setToast({ tone: "error", text }),
@@ -346,47 +349,30 @@ export default function App() {
     setDrawer(false);
   }, []);
 
+  useEffect(() => {
+    setNative(events.recorder?.available ? events.recorder : null);
+  }, [events.recorder]);
+
   // Recordings can also be started from the menu bar helper. Follow whatever is live; when one ends while
   // you're watching it, open the meeting, just like after a recording made here.
   useEffect(() => {
-    if (authState !== "ok") return;
-    let alive = true;
-    let lastId: number | null = null;
-    const tick = async () => {
-      api
-        .nativeRecorder()
-        .then((n) => alive && setNative(n.available ? n : null))
-        .catch(() => alive && setNative(null));
-      try {
-        const all = await api.live();
-        if (!alive) return;
-        const other =
-          all.find((l) => l.id !== recRef.current?.meetingId) ?? null;
-        setOwnLive(all.find((l) => l.id === recRef.current?.meetingId) ?? null);
-        remoteAt.current = Date.now();
-        remoteRef.current = other;
-        setRemote(other);
-        const id = other?.id ?? null;
-        if (id !== lastId) {
-          const ended = lastId;
-          lastId = id;
-          void refreshList();
-          if (ended !== null) {
-            setRemoteStopping(false);
-            if (id === null && onRecorderScreenRef.current) openMeeting(ended);
-          }
-        }
-      } catch {
-        /* backend down: the health check explains that */
+    const all = events.live;
+    const other = all.find((l) => l.id !== recRef.current?.meetingId) ?? null;
+    setOwnLive(all.find((l) => l.id === recRef.current?.meetingId) ?? null);
+    remoteAt.current = Date.now();
+    remoteRef.current = other;
+    setRemote(other);
+    const id = other?.id ?? null;
+    if (id !== lastRemoteId.current) {
+      const ended = lastRemoteId.current;
+      lastRemoteId.current = id;
+      void refreshList();
+      if (ended !== null) {
+        setRemoteStopping(false);
+        if (id === null && onRecorderScreenRef.current) openMeeting(ended);
       }
-    };
-    void tick();
-    const t = setInterval(tick, LIVE_POLL_MS);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [authState, refreshList, openMeeting]);
+    }
+  }, [events.live, refreshList, openMeeting]);
 
   // Links like /#meeting-12 (the menu bar helper uses them) open that meeting; #import, #settings, #tasks
   // and #ask open those pages.
@@ -661,6 +647,34 @@ export default function App() {
     void refreshTasks();
   };
 
+  const handleDeleteTask = async (t: Task) => {
+    if (!meeting) return;
+    const id = meeting.id;
+    setMeeting({ ...meeting, tasks: meeting.tasks.filter((x) => x.id !== t.id), tasks_deleted: meeting.tasks_deleted + 1 });
+    await guarded(async () => {
+      await api.deleteTask(t.id);
+      setToast({
+        tone: "success",
+        text: "Task deleted.",
+        action: {
+          label: "Undo",
+          run: () => void guarded(() => api.restoreTask(t.id), id).then(() => void refreshTasks()),
+        },
+      });
+    }, id);
+    void refreshTasks();
+  };
+
+  const handleSendTask = async (t: Task) => {
+    if (!meeting) return;
+    const id = meeting.id;
+    await guarded(async () => {
+      const { ticket } = await api.sendTask(t.id);
+      setToast({ tone: "success", text: `Sent to ${ticket.name}.` });
+    }, id);
+    void refreshTasks();
+  };
+
   const handleQuit = async () => {
     const ok = await confirm({
       title: "Quit Trailmix?",
@@ -726,6 +740,7 @@ export default function App() {
   };
 
   return (
+    <EventsContext.Provider value={events}>
     <div className="relative flex h-full">
       <Ambient />
 
@@ -854,6 +869,7 @@ export default function App() {
               onOpenMeeting={openMeeting}
               onChanged={() => void refreshTasks()}
               onError={fail}
+              onToast={setToast}
             />
           ) : view === "import" ? (
             <ImportPanel
@@ -1003,6 +1019,8 @@ export default function App() {
                 void guarded(() => api.setSpeakers(meeting.id, n), meeting.id)
               }
               onToggleTask={(t, d) => void handleToggleTask(t, d)}
+              onDeleteTask={(t) => void handleDeleteTask(t)}
+              onSendTask={handleSendTask}
               onError={fail}
             />
           ) : (
@@ -1057,5 +1075,6 @@ export default function App() {
         />
       )}
     </div>
+    </EventsContext.Provider>
   );
 }

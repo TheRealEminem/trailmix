@@ -55,6 +55,8 @@ interface Props {
   onBookmarks: (b: Bookmark[]) => void;
   onSpeakers: (names: Record<string, string>) => void;
   onToggleTask: (t: Task, done: boolean) => void;
+  onDeleteTask: (t: Task) => void;
+  onSendTask: (t: Task) => Promise<void>;
   onError: (msg: string) => void;
   workspaces: Workspace[];
   onWorkspace: (id: number | null) => void;
@@ -297,6 +299,8 @@ export default function MeetingView({
               health={health}
               onResummarize={on.onChooseAI}
               onToggleTask={on.onToggleTask}
+              onDeleteTask={on.onDeleteTask}
+              onSendTask={on.onSendTask}
             />
           )}
           {tab === "notes" && (

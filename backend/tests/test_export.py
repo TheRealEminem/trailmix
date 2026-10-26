@@ -28,7 +28,7 @@ def make_meeting(audio: bool) -> dict:
     db.update_meeting(mid, transcript="x", segments_json=segs, transcribed=1, has_system=1, duration_sec=5, summary=summary,
                       status="done", speaker_names_json={"Them": "Priya"})
     db.replace_tasks(mid, ["Priya: fix the login bug", "Alex: update docs"])
-    db.set_task_done(db.tasks_for(mid)[0]["id"], True)
+    db.update_task(db.tasks_for(mid)[0]["id"], done=True)
     if audio:
         folder = db.AUDIO_DIR / str(mid)
         folder.mkdir(parents=True)

@@ -78,6 +78,11 @@ final class HelperModel: ObservableObject {
     private var sources: [(UInt8, AudioSource)] = []
     private var streamer: Streamer?
     private var socket: URLSessionWebSocketTask?
+    /// The server's line to this recorder (ServerClient.openRecorderSocket), while it's open.
+    private var recorderSocket: URLSessionWebSocketTask?
+    private var legacyServer = false  // a server from before the recorder socket: ask and check in instead
+    private var lastReport: Data?
+    private var ticks = 0
     private var stopRequested = false
     private var stopTimeout: Task<Void, Never>?
     private var timers: [Timer] = []
@@ -139,13 +144,26 @@ final class HelperModel: ObservableObject {
     private var checkingIn = false
     private var micNameCache: (id: String, name: String)?
 
-    /// Lets the server know this recorder is here (so the Trailmix window's Record button records through it),
-    /// and carries out what the window asked for.
+    /// Lets the server know this recorder is here (so the Trailmix window's Record button records through it)
+    /// and what it would record. With the recorder socket open that's a message down it when something
+    /// changed (and a ping now and then, so a dead line is noticed); otherwise a check-in, which also brings
+    /// back what the window asked for meanwhile.
     func checkIn() async {
+        if recorderSocket != nil {
+            ticks += 1
+            sendReport()
+            if ticks % 20 == 0 { pingRecorderSocket() }
+            return
+        }
         guard !checkingIn, connection != .offline, let client = try? client() else { return }
         checkingIn = true
         defer { checkingIn = false }
         guard let commands = try? await client.checkIn(recorderInfo) else { return }
+        perform(commands)
+    }
+
+    /// Carries out what the window asked for.
+    private func perform(_ commands: [String]) {
         if commands.contains("start"), phase == .idle, other == nil {
             start()
         }
@@ -232,8 +250,11 @@ final class HelperModel: ObservableObject {
         return FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
     }
 
-    /// Keeps the connection status current and notices recordings started in the Trailmix window.
+    /// Keeps the connection status current and notices recordings started in the Trailmix window. With the
+    /// recorder socket open, all of that arrives by itself; this then only opens the socket again once it's lost.
     func poll() async {
+        if recorderSocket != nil { return }
+        if !legacyServer, await openRecorderSocket() { return }
         do {
             let live = try await client().live()
             connection = .online
@@ -250,6 +271,82 @@ final class HelperModel: ObservableObject {
             connection = .offline
             other = nil
         }
+    }
+
+    // MARK: The recorder socket
+
+    /// Opens the server's line to this recorder. True once the server has answered on it; false if it couldn't
+    /// (the server is down, or too old to have one: then the old way, asking, is used).
+    private func openRecorderSocket() async -> Bool {
+        guard let client = try? client() else { return false }
+        let socket = client.openRecorderSocket()
+        let first: URLSessionWebSocketTask.Message
+        do {
+            first = try await socket.receive()
+        } catch {
+            let status = (socket.response as? HTTPURLResponse)?.statusCode ?? 0
+            if status == 404 || status == 405 { legacyServer = true }
+            return false
+        }
+        recorderSocket = socket
+        legacyServer = false
+        connection = .online
+        lastReport = nil
+        heard(first)
+        sendReport()
+        Task { [weak self] in
+            while true {
+                let message: URLSessionWebSocketTask.Message
+                do {
+                    message = try await socket.receive()
+                } catch {
+                    self?.recorderSocketEnded(socket)
+                    return
+                }
+                self?.heard(message)
+            }
+        }
+        return true
+    }
+
+    private func heard(_ message: URLSessionWebSocketTask.Message) {
+        guard case .string(let text) = message,
+              let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { return }
+        if let commands = object["commands"] as? [String] { perform(commands) }
+        if let live = object["live"], let data = try? JSONSerialization.data(withJSONObject: live),
+           let recordings = try? JSONDecoder().decode([LiveRecording].self, from: data) {
+            // Our own recording can be announced before meetingID is set: don't take it for someone else's.
+            other = recordings.first { $0.id != meetingID && !(phase == .starting && $0.client == "helper") }
+            otherFetchedAt = Date()
+            syncCatchUp()
+        }
+    }
+
+    /// What this recorder would record, sent when it differs from what the server was last told.
+    private func sendReport() {
+        guard let socket = recorderSocket,
+              let data = try? JSONSerialization.data(withJSONObject: recorderInfo, options: .sortedKeys),
+              data != lastReport else { return }
+        lastReport = data
+        socket.send(.string(String(decoding: data, as: UTF8.self))) { [weak self] error in
+            if error != nil { Task { @MainActor in self?.recorderSocketEnded(socket) } }
+        }
+    }
+
+    private func pingRecorderSocket() {
+        guard let socket = recorderSocket else { return }
+        socket.sendPing { [weak self] error in
+            if error != nil { Task { @MainActor in self?.recorderSocketEnded(socket) } }
+        }
+    }
+
+    /// The line was lost (the server stopped, most likely): the next poll opens it again, or says what's wrong.
+    private func recorderSocketEnded(_ socket: URLSessionWebSocketTask) {
+        guard recorderSocket === socket else { return }
+        recorderSocket = nil
+        socket.cancel()
+        connection = .offline
+        other = nil
     }
 
     // MARK: What the menu and the hotkeys do

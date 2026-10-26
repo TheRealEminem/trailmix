@@ -19,10 +19,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -31,15 +31,19 @@ import audio_store as store
 import auth
 import database as db
 import duplicates
+import events
+import gemini_client
 import archive
 import batch_jobs
 import catch_up
+import cloud
 import compare
 import exporter
 import importer
 import live
 import live_notes
 import llm_engine
+import logfile
 import meeting_date
 import meeting_text
 import mlx_engine
@@ -52,6 +56,7 @@ import resources
 import settings
 import telemetry
 import templates
+import trackers
 import model_ranks
 import recording_laws
 import pricing
@@ -65,6 +70,8 @@ import watched
 import transcribe_gemini
 import transcribe_remote
 
+if "pytest" not in sys.modules:  # the tests import this module, but keep their own data folder and output
+    logfile.configure()
 log = logging.getLogger("trailmix")
 SWEEP_INTERVAL_S = 6 * 3600
 UI_DIR = Path(os.getenv("TRAILMIX_UI_DIR", Path(__file__).resolve().parent.parent / "frontend" / "dist"))
@@ -197,6 +204,9 @@ async def lifespan(_: FastAPI):
     models.prefetch()
     file_import.clear_leftovers()  # temporary copies from an import the last run didn't finish
     pipeline.recover_unfinished()
+    events.topics = {"recorder": recorder.status, "live": live_recordings, "system": resources.snapshot,
+                     "models": models.status}
+    ticker = asyncio.create_task(events.run())
     sweeper = asyncio.create_task(_sweep_loop())
     warmer = asyncio.create_task(_warm_loop()) if os.getenv("TRAILMIX_WARM") != "0" else None
     note_taker = asyncio.create_task(_live_notes_loop())
@@ -214,6 +224,7 @@ async def lifespan(_: FastAPI):
     stats.cancel()
     note_taker.cancel()
     sweeper.cancel()
+    ticker.cancel()
     if warmer:
         warmer.cancel()
 
@@ -311,7 +322,8 @@ class BookmarksPut(BaseModel):
 
 
 class TaskPatch(BaseModel):
-    done: bool
+    done: bool | None = None
+    deleted: bool | None = None  # false: back from being deleted (Undo)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
@@ -337,7 +349,9 @@ def _present(m: dict) -> dict:
     out["my_notes"] = meeting_text.my_notes(m)
     out["speaker_names"] = meeting_text.speaker_names(m, cfg)
     out["qa"] = json.loads(m["qa_json"]) if m.get("qa_json") else []
-    out["tasks"] = db.tasks_for(m["id"])
+    tasks = db.tasks_for(m["id"], deleted=True)
+    out["tasks"] = [t for t in tasks if not t["deleted"]]
+    out["tasks_deleted"] = len(tasks) - len(out["tasks"])  # all of them deleted: no Action Items section at all
     out["attachments"] = [attachments.present(a) for a in db.attachments_for(m["id"])]
     out["summary_draft"] = None if m["summary"] else pipeline.draft(m["id"])  # the notes so far, while they're written
     out["title_auto"] = bool(m["title_auto"])
@@ -422,6 +436,54 @@ def recorder_check_in(body: RecorderCheckIn):
     if body.lockdown is not None and body.lockdown != want:  # keep the recorder's copy in step
         commands.append("lockdown" if want else "no-lockdown")
     return {"commands": commands}
+
+
+@app.websocket("/api/recorder/ws")
+async def recorder_socket(ws: WebSocket):
+    """The menu bar app's line to the server. It sends what it would record (JSON, as for check-in) whenever that
+    changes; it gets {"commands": [...]} the moment the window asks for something, and {"live": [...]} whenever
+    the recordings in progress change, so it needn't ask."""
+    if not auth.is_authorized(ws):
+        await ws.close(code=4401)
+        return
+    await ws.accept()
+    loop = asyncio.get_running_loop()
+    send_lock = asyncio.Lock()
+
+    async def send(message: dict) -> None:
+        async with send_lock:
+            await ws.send_json(message)
+
+    def push(commands: list[str]) -> None:  # from any thread (recorder.request runs in the threadpool)
+        asyncio.run_coroutine_threadsafe(send({"commands": commands}), loop)
+
+    async def forward_live() -> None:
+        queue, current = await events.subscribe(frozenset({"live"}))
+        try:
+            if "live" in current:
+                await send({"live": json.loads(current["live"])})
+            while True:
+                changed = await queue.get()
+                await send({"live": json.loads(changed["live"])})
+        finally:
+            events.unsubscribe(queue)
+
+    forwarding = asyncio.create_task(forward_live())
+    recorder.attach(push)
+    try:
+        while True:
+            info = await ws.receive_json()
+            commands = await run_in_threadpool(recorder.check_in, info)
+            want = await run_in_threadpool(settings.locked)
+            if info.get("lockdown") is not None and info["lockdown"] != want:  # keep the recorder's copy in step
+                commands.append("lockdown" if want else "no-lockdown")
+            if commands:
+                await send({"commands": commands})
+    except WebSocketDisconnect:
+        pass
+    finally:
+        recorder.detach(push)
+        forwarding.cancel()
 
 
 @app.get("/api/recorder")
@@ -832,29 +894,37 @@ def health():
 
     def provider_info(pid: str) -> dict:
         ready, why = llm_engine.configured(pid, cfg)
-        return {"id": pid, "label": llm_engine.label(pid, cfg), "model": llm_engine.model_for(pid, cfg),
+        return {"id": pid, "label": llm_engine.label(pid, cfg), "model": llm_engine.model_name(pid, cfg),
                 "ready": ready, "reason": why, "local": llm_engine.is_local(pid, cfg)}
 
     remote = cfg["transcribe_engine"] == "remote"
     gemini = cfg["transcribe_engine"] == "gemini"
+    cloudy = cfg["transcribe_engine"] == "trailmix"
+    off = cloud.features_off(cfg)
     return {
         "summary": provider_info(cfg["summary_provider"]),
         "fallback": provider_info(cfg["summary_fallback"]) if cfg["summary_fallback"] != "none" else None,
         "transcription": {
             "engine": cfg["transcribe_engine"],
-            "model": transcribe_gemini.MODEL if gemini else cfg["transcribe_model"] if remote else mlx_engine.FINAL_MODEL,
-            "live_model": None if gemini else (cfg["transcribe_model"] if cfg["live_final"] else cfg["transcribe_live_model"] or cfg["transcribe_model"])
+            "model": ("Trailmix Cloud" if cloudy else transcribe_gemini.MODEL if gemini else cfg["transcribe_model"] if remote
+                      else mlx_engine.FINAL_MODEL),
+            "live_model": None if gemini or cloudy else (cfg["transcribe_model"] if cfg["live_final"] else cfg["transcribe_live_model"] or cfg["transcribe_model"])
             if remote else (mlx_engine.FINAL_MODEL if cfg["live_final"] else mlx_engine.LIVE_MODEL),
             "url": cfg["transcribe_url"] if remote else None,
             "local_available": mlx_engine.available(),
-            "live_final": cfg["live_final"] and not gemini,  # the transcript made while recording is the final one
-            "gemini_ready": bool(cfg["gemini_api_key"]) and not settings.locked(cfg),  # Google can be used for speaker labels
+            # the transcript made while recording is the final one (with Trailmix Cloud, at the Pro level)
+            "live_final": (cfg["live_final"] and not gemini and not cloudy) or (cloudy and "live_captions" not in off),
+            "gemini_ready": gemini_client.ready(cfg) and not settings.locked(cfg),  # Google can be used for speaker labels
             "remote_ready": preflight.engine_problem("remote", cfg) is None,
+            "cloud_ready": preflight.engine_problem("trailmix", cfg) is None,
         },
+        "cloud": {"signed_in": bool(cfg["cloud_token"]), "available": cloud.offered(cfg),
+                  "account": cloud.account(cfg=cfg), "level": cloud.level(cfg), "off": off},
         "version": archive.APP_VERSION,
         "build": "app" if "/Contents/Resources/" in sys.executable else "source",  # the installed app, or from source
         "templates": templates.listing(),
-        "providers": [{**provider_info(p), "kind": v["kind"]} for p, v in llm_engine.PROVIDERS.items()],
+        "providers": [{**provider_info(p), "kind": v["kind"]} for p, v in llm_engine.PROVIDERS.items()
+                      if p != "trailmix" or cloud.offered(cfg)],
         "ask_before_ai": cfg["ask_before_ai"],
         "audio_retention_days": store.retention_days(),
         "auth": auth.required(),
@@ -910,12 +980,59 @@ def provider_test(pid: str):
         raise HTTPException(502, str(e))
 
 
+# ── Trailmix Cloud ─────────────────────────────────────────────────────
+
+class CloudPoll(BaseModel):
+    code: str
+
+
+def _cloud(fn, *args):
+    try:
+        return fn(*args)
+    except cloud.CloudError as e:
+        raise HTTPException(502, str(e))
+
+
+@app.post("/api/cloud/link")
+def cloud_link():
+    """Starts signing this Mac in: {code, link_url, expires_in, interval}. The UI opens link_url and polls."""
+    return _cloud(cloud.link)
+
+
+@app.post("/api/cloud/poll")
+def cloud_poll(body: CloudPoll):
+    """{status: pending|expired|done, account?}: done once you've signed in in the browser."""
+    return _cloud(cloud.poll, body.code)
+
+
+@app.get("/api/cloud/account")
+def cloud_account(refresh: bool = True):
+    """The plan, level and hours ({} when signed out), fresh from the server unless `refresh` is false."""
+    cfg = settings.get_all()
+    acct = cloud.account(refresh=refresh, cfg=cfg)
+    cfg = settings.get_all()
+    return {"signed_in": bool(cfg["cloud_token"]), "account": acct, "level": cloud.level(cfg),
+            "off": cloud.features_off(cfg)}
+
+
+@app.post("/api/cloud/signout")
+def cloud_signout():
+    cloud.sign_out()
+    return {"signed_in": False}
+
+
 @app.post("/api/transcription/test")
 def transcription_test():
     cfg = settings.get_all()
+    if cfg["transcribe_engine"] == "trailmix":
+        problem = preflight.engine_problem("trailmix", cfg)
+        if problem:
+            raise HTTPException(409, problem)
+        acct = cloud.account(refresh=True, cfg=cfg)
+        return {"ok": True, "message": f"Signed in to Trailmix Cloud ({acct.get('plan', 'unknown')} plan)"}
     if cfg["transcribe_engine"] == "gemini":
         try:
-            return {"ok": True, "message": transcribe_gemini.check(cfg["gemini_api_key"])}
+            return {"ok": True, "message": transcribe_gemini.check(gemini_client.credential(cfg))}
         except transcribe_gemini.GeminiError as e:
             raise HTTPException(502, str(e))
     if cfg["transcribe_engine"] != "remote":
@@ -1039,6 +1156,15 @@ async def stream(ws: WebSocket, meeting_id: int, draft: int = 1, client: str = "
             await ws.close()
         except Exception:
             pass
+
+
+@app.get("/api/events")
+async def event_stream():
+    """What's going on, as it changes (server-sent events; events.py): the menu bar recorder, recordings in
+    progress, memory and disk, the speech models' downloads. One open stream per window, instead of asking
+    every couple of seconds."""
+    return StreamingResponse(events.stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/live")
@@ -1261,11 +1387,10 @@ def retranscribe(meeting_id: int, body: RetranscribeRequest | None = None):
     cfg = settings.get_all()
     if engine and engine not in settings.CHOICES["transcribe_engine"]:
         raise HTTPException(422, "Unknown transcription engine")
-    if (engine or cfg["transcribe_engine"]) == "gemini":  # fail now, not after the old notes have been cleared
-        if settings.locked(cfg):
-            raise HTTPException(409, f"{settings.LOCKDOWN}, so recordings can't be sent to Google")
-        if not cfg["gemini_api_key"]:
-            raise HTTPException(409, "Add a Google API key first (Settings → Transcription)")
+    if (engine or cfg["transcribe_engine"]) in ("gemini", "trailmix"):  # fail now, not after the old notes are cleared
+        problem = preflight.engine_problem(engine or cfg["transcribe_engine"], cfg)
+        if problem:
+            raise HTTPException(409, problem)
     if meeting["status"] not in ("done", "error", "ready_summarize"):
         raise HTTPException(409, "This meeting is still being processed")
     if meeting["audio_deleted"] or not store.audio_bytes(meeting):
@@ -1737,7 +1862,7 @@ def _upgradable(cfg: dict, current: str | None = None) -> dict:
 def _speech_engines(cfg: dict) -> list[dict]:
     """The speech engines you could use right now, each with how it's rated: [{engine, model, score}]."""
     out = []
-    if cfg["gemini_api_key"] and not settings.locked(cfg):
+    if gemini_client.ready(cfg) and not settings.locked(cfg):
         out.append({"engine": "gemini", "model": cfg["gemini_transcribe_model"]})
     if cfg["transcribe_url"] and (not settings.locked(cfg) or settings.on_this_computer(cfg["transcribe_url"])):
         out.append({"engine": "remote", "model": cfg["transcribe_model"]})
@@ -1775,7 +1900,7 @@ def upgrades():
     data["notes"].pop("ids")
     # The same notes, rewritten by Gemini as a half-price batch job (when there's a key and Lockdown is off).
     gemini = _upgradable(cfg, cfg["gemini_model"])["notes"]
-    data["notes_batch"] = {"ready": bool(cfg["gemini_api_key"]) and not settings.locked(cfg), "model": cfg["gemini_model"],
+    data["notes_batch"] = {"ready": gemini_client.ready(cfg) and not settings.locked(cfg), "model": cfg["gemini_model"],
                            "score": model_ranks.score(cfg["gemini_model"]), "count": gemini["count"], "from": gemini["from"]}
     transcripts = _transcripts_upgradable(cfg)
     transcripts.pop("ids")
@@ -1787,7 +1912,7 @@ def _estimate(meetings: list[dict], engine: str, model: str | None, cfg: dict) -
     """What redoing these meetings' transcripts would send and cost: {meetings: [{id, title, minutes, cost}],
     minutes, cost (None if the price isn't known), per_minute, as_of}. An upper bound: a silent track isn't sent."""
     model = model or (cfg["gemini_transcribe_model"] if engine == "gemini" else cfg["transcribe_model"] if engine == "remote" else None)
-    mixed = engine == "gemini" and bool(cfg["gemini_mix_tracks"])  # one recording of your mic and the call, not two
+    mixed = engine in ("gemini", "trailmix") and bool(cfg["gemini_mix_tracks"])  # your mic and the call as one recording
     rows = []
     for m in meetings:
         minutes = pricing.meeting_minutes(m["duration_sec"], bool(m["has_system"]), mixed=mixed)
@@ -1832,7 +1957,7 @@ def upgrade_notes_batch(body: NotesBatchRequest):
     cfg = settings.get_all()
     if settings.locked(cfg):
         raise HTTPException(409, f"{settings.LOCKDOWN}, so nothing can be sent to Google")
-    if not cfg["gemini_api_key"]:
+    if not gemini_client.ready(cfg):
         raise HTTPException(409, "Add a Google API key first (Settings → AI providers)")
     ids = body.meeting_ids if body.meeting_ids is not None else _upgradable(cfg, cfg["gemini_model"])["notes"]["ids"]
     newest = sorted((m for m in db.get_meetings(ids) if m), key=lambda m: m["created_at"], reverse=True)[:max(1, body.limit)]
@@ -2191,11 +2316,53 @@ def list_tasks():
 
 @app.patch("/api/tasks/{task_id}")
 def update_task(task_id: int, body: TaskPatch):
-    meeting_id = db.set_task_done(task_id, body.done)
+    meeting_id = db.update_task(task_id, done=body.done, deleted=body.deleted)
     if meeting_id is None:
         raise HTTPException(404, "Task not found")
     _reexport(meeting_id)
     return {"ok": True}
+
+
+@app.delete("/api/tasks/{task_id}")
+def delete_task(task_id: int):
+    """Hides the task without ticking it off. It stays hidden when the notes are rewritten, and is left out of
+    exports; PATCH {"deleted": false} brings it back."""
+    meeting_id = db.update_task(task_id, deleted=True)
+    if meeting_id is None:
+        raise HTTPException(404, "Task not found")
+    _reexport(meeting_id)
+    return {"ok": True}
+
+
+@app.post("/api/tasks/{task_id}/send")
+def send_task(task_id: int, request: Request):
+    """Makes a ticket from the task in the tracker picked in Settings → Tasks (trackers.py), once."""
+    try:
+        ticket = trackers.send(task_id, str(request.base_url))
+    except LookupError:
+        raise HTTPException(404, "Task not found")
+    except trackers.AlreadySent:
+        raise HTTPException(409, "This task was already sent")
+    except trackers.TrackerError as e:
+        raise HTTPException(502, str(e))
+    _reexport(db.get_task(task_id)["meeting_id"])  # meeting.json carries the ticket
+    return {"ticket": ticket}
+
+
+@app.get("/api/trackers")
+def list_trackers():
+    return trackers.describe()
+
+
+@app.get("/api/trackers/{tracker_id}/projects")
+def tracker_projects(tracker_id: str):
+    """The tracker's projects, for the project picker, read with the saved settings."""
+    try:
+        return trackers.get(tracker_id).projects(settings.get_all())
+    except KeyError:
+        raise HTTPException(404, "No such tracker")
+    except trackers.TrackerError as e:
+        raise HTTPException(502, str(e))
 
 
 # ── Files ──────────────────────────────────────────────────────────────

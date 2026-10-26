@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
-import { api } from "../api";
-import type { SystemInfo } from "../api";
+import { useContext, useState } from "react";
+import { EventsContext } from "../events";
 import { ChevronDownIcon } from "./icons";
 import { Collapse } from "./ui";
 
@@ -15,9 +14,9 @@ function Stat({ label, value, warn }: { label: string; value: string; warn?: boo
   );
 }
 
-/** Live resource readout, framed as the weather for the trail ahead. */
+/** Live resource readout (from the event stream), framed as the weather for the trail ahead. */
 export default function SystemStatus() {
-  const [sys, setSys] = useState<SystemInfo | null>(null);
+  const sys = useContext(EventsContext).system;
   const [open, setOpen] = useState(() => {
     try {
       return localStorage.getItem(OPEN_KEY) === "1";
@@ -33,21 +32,6 @@ export default function SystemStatus() {
       /* ignore */
     }
   };
-
-  useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api
-        .system()
-        .then((s) => alive && setSys(s))
-        .catch(() => alive && setSys(null));
-    void load();
-    const t = setInterval(load, 3000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, []);
 
   if (!sys) return null;
   const transcribeNeeds = sys.final_model_gb + sys.headroom_gb;

@@ -14,6 +14,7 @@ import type {
 import {
   ArrowRightIcon,
   ChartIcon,
+  KeyIcon,
   CheckIcon,
   ChevronLeftIcon,
   CloudIcon,
@@ -29,6 +30,7 @@ import type { Transcriber } from "../transcribers";
 import { Ambient, Logo, TrailScene } from "./illustrations";
 import { CONSENT, Source, entryFor, guess, regionOptions, stamp } from "./RecordingLaws";
 import SoundCheck, { soundCheckPassed } from "./SoundCheck";
+import CloudPanel from "./Cloud";
 import { Collapse, Segmented, Select, Spinner, Switch } from "./ui";
 
 /** The home-screen checklist this replaced: closing it meant "I've done setup", so it still does. */
@@ -47,7 +49,7 @@ export function needsSetup(s: Settings, meetingCount: number): boolean {
   return !s.setup_done && meetingCount === 0 && !closedChecklist;
 }
 
-type StepId = "hello" | "name" | "laws" | "transcribe" | "notes" | "sound" | "stats" | "done";
+type StepId = "hello" | "name" | "laws" | "ai" | "transcribe" | "notes" | "sound" | "stats" | "done";
 
 interface Props {
   health: Health | null;
@@ -68,6 +70,8 @@ export default function Welcome({ health, native, dusk, onChanged, onDone }: Pro
   const [device, setDevice] = useState<DeviceAdvice | null>(null);
   const [askStats, setAskStats] = useState(false);
   const [at, setAt] = useState<StepId>("hello");
+  // What "How should Trailmix's AI run?" picked, for the questions after it: on this Mac or with your own keys
+  const [prefer, setPrefer] = useState<"local" | "cloud" | undefined>(undefined);
   // The menu bar recorder can drop out of a poll for a moment: once it's been seen, keep its step.
   const [canSoundCheck, setCanSoundCheck] = useState(hasCapability(native, "sound_check"));
   useEffect(() => {
@@ -92,13 +96,14 @@ export default function Welcome({ health, native, dusk, onChanged, onDone }: Pro
       "hello",
       "name",
       "laws",
+      ...(health?.cloud?.available ? (["ai"] as const) : []),
       ...(s.transcribe_engine === "remote" ? [] : (["transcribe"] as const)),
       "notes",
       ...(canSoundCheck ? (["sound"] as const) : []),
       ...(askStats ? (["stats"] as const) : []),
       "done",
     ]);
-  }, [s, steps, canSoundCheck, askStats]);
+  }, [s, steps, canSoundCheck, askStats, health]);
 
   const saved = (next: Settings) => {
     setS(next);
@@ -116,16 +121,42 @@ export default function Welcome({ health, native, dusk, onChanged, onDone }: Pro
 
   const index = steps ? steps.indexOf(at) : 0;
   const next = () => steps && setAt(steps[Math.min(index + 1, steps.length - 1)]);
-  const back = () => steps && setAt(steps[Math.max(index - 1, 0)]);
+  const back = () => {
+    if (!steps) return;
+    const cloudChosen = s?.transcribe_engine === "trailmix" && s?.summary_provider === "trailmix";
+    const earlier = steps.slice(0, index).filter((id) => !(cloudChosen && (id === "transcribe" || id === "notes")));
+    setAt(earlier[earlier.length - 1] ?? steps[0]);
+  };
   const nav = { onBack: back, next };
+  // Trailmix Cloud does both transcripts and notes: the two questions about them are skipped
+  const pastAi = () => {
+    if (!steps) return;
+    const rest = steps.slice(index + 1).filter((id) => id !== "transcribe" && id !== "notes");
+    setAt(rest[0] ?? "done");
+  };
 
   let page: ReactNode = null;
   if (s && steps) {
     if (at === "hello") page = <Hello dusk={dusk} onStart={next} />;
     else if (at === "name") page = <NameStep s={s} onSaved={saved} {...nav} />;
     else if (at === "laws") page = <LawsStep s={s} onSaved={saved} {...nav} />;
-    else if (at === "transcribe") page = <TranscribeStep s={s} device={device} onSaved={saved} {...nav} />;
-    else if (at === "notes") page = <NotesStep s={s} device={device} onSaved={saved} {...nav} />;
+    else if (at === "ai")
+      page = (
+        <AiStep
+          s={s}
+          device={device}
+          onSaved={saved}
+          onBack={back}
+          onChoose={(mode) => {
+            if (mode === "trailmix") return pastAi();
+            setPrefer(mode);
+            next();
+          }}
+        />
+      );
+    else if (at === "transcribe")
+      page = <TranscribeStep s={s} device={device} prefer={prefer} onSaved={saved} {...nav} />;
+    else if (at === "notes") page = <NotesStep s={s} device={device} prefer={prefer} onSaved={saved} {...nav} />;
     else if (at === "sound") page = <SoundStep native={native} {...nav} />;
     else if (at === "stats") page = <StatsStep s={s} onSaved={saved} {...nav} />;
     else page = <DoneStep s={s} health={health} native={native} onBack={back} onFinish={finish} />;
@@ -531,9 +562,17 @@ function TranscribeStep({
   onSaved,
   onBack,
   next,
-}: NavProps & { s: Settings; device: DeviceAdvice | null; onSaved: (s: Settings) => void }) {
+  prefer,
+}: NavProps & {
+  s: Settings;
+  device: DeviceAdvice | null;
+  onSaved: (s: Settings) => void;
+  prefer?: "local" | "cloud";
+}) {
   const current = transcriberFor(s.transcribe_engine, s.transcribe_url);
-  const [mode, setMode] = useState<"local" | "cloud">(current && !s.lockdown ? "cloud" : "local");
+  const [mode, setMode] = useState<"local" | "cloud">(
+    s.lockdown ? "local" : (prefer ?? (current ? "cloud" : "local")),
+  );
   const [which, setWhich] = useState<Transcriber>(current ?? TRANSCRIBERS[0]);
   const [key, setKey] = useState("");
   const [address, setAddress] = useState(current?.id === "server" ? s.transcribe_url : "");
@@ -676,7 +715,82 @@ function TranscribeStep({
   );
 }
 
-const CLOUD: { id: Exclude<ProviderId, "ollama" | "custom">; label: string; keyUrl: string }[] = [
+/**
+ * The first AI question, when Trailmix Cloud is offered: Trailmix runs it (sign in, or start the free trial, right here;
+ * the transcript and notes questions are then skipped), on this Mac, or with your own keys (those questions follow).
+ */
+function AiStep({
+  s,
+  device,
+  onSaved,
+  onBack,
+  onChoose,
+}: {
+  s: Settings;
+  device: DeviceAdvice | null;
+  onSaved: (s: Settings) => void;
+  onBack: () => void;
+  onChoose: (mode: "trailmix" | "local" | "cloud") => void;
+}) {
+  const using = s.transcribe_engine === "trailmix" || s.summary_provider === "trailmix";
+  const [mode, setMode] = useState<"trailmix" | "local" | "cloud">(
+    s.lockdown ? "local" : using || device?.verdict === "cloud" ? "trailmix" : "local",
+  );
+  const [signedIn, setSignedIn] = useState(!!s.secret_hints?.cloud_token);
+
+  const save = async () => {
+    if (mode !== "trailmix") return onChoose(mode);
+    onSaved(await api.putSettings({ transcribe_engine: "trailmix", summary_provider: "trailmix" }));
+    onChoose("trailmix");
+  };
+
+  return (
+    <Page
+      icon={<SparkleIcon size={20} />}
+      title="How should Trailmix's AI run?"
+      sub="It turns recordings into text and writes the notes. You can change this any time in Settings."
+      onBack={onBack}
+      onNext={save}
+      disabled={mode === "trailmix" && !signedIn}
+    >
+      <div role="radiogroup" aria-label="How the AI runs" className="space-y-3">
+        <Choice
+          selected={mode === "trailmix"}
+          onSelect={() => setMode("trailmix")}
+          disabled={s.lockdown}
+          icon={<CloudIcon size={18} />}
+          title="Trailmix Cloud"
+          badge={device?.verdict !== "local" && !s.lockdown ? "Easiest" : undefined}
+          body={
+            s.lockdown
+              ? "Lockdown mode is on, so everything stays on this Mac."
+              : "Trailmix runs it for you, on any Mac, with nothing to install or set up. Try 5 hours of Pro free (captions while you talk, catch-up when you zone out), then plans from $8 a month. Cancel any time; everything stays on this Mac."
+          }
+        >
+          <CloudPanel intro={false} onChange={(status) => setSignedIn(status.signed_in)} />
+        </Choice>
+        <Choice
+          selected={mode === "local"}
+          onSelect={() => setMode("local")}
+          icon={<LaptopIcon size={18} />}
+          title="On this Mac"
+          badge={device?.verdict === "local" ? "Recommended" : undefined}
+          body="Private and free: nothing leaves this computer. Needs a few GB of downloads and a recent Mac."
+        />
+        <Choice
+          selected={mode === "cloud"}
+          onSelect={() => setMode("cloud")}
+          disabled={s.lockdown}
+          icon={<KeyIcon size={18} />}
+          title="Your own API keys"
+          body="Google, OpenAI, Claude and others, billed to you by them, with an estimate before anything big."
+        />
+      </div>
+    </Page>
+  );
+}
+
+const CLOUD: { id: Exclude<ProviderId, "ollama" | "custom" | "trailmix">; label: string; keyUrl: string }[] = [
   { id: "anthropic", label: "Claude", keyUrl: "https://console.anthropic.com/settings/keys" },
   { id: "openai", label: "OpenAI", keyUrl: "https://platform.openai.com/api-keys" },
   { id: "gemini", label: "Gemini", keyUrl: "https://aistudio.google.com/apikey" },
@@ -689,10 +803,19 @@ function NotesStep({
   onSaved,
   onBack,
   next,
-}: NavProps & { s: Settings; device: DeviceAdvice | null; onSaved: (s: Settings) => void }) {
+  prefer,
+}: NavProps & {
+  s: Settings;
+  device: DeviceAdvice | null;
+  onSaved: (s: Settings) => void;
+  prefer?: "local" | "cloud";
+}) {
   const current = CLOUD.find((c) => c.id === s.summary_provider);
   const [mode, setMode] = useState<"local" | "cloud">(
-    s.lockdown ? "local" : current || s.summary_provider === "custom" || device?.verdict === "cloud" ? "cloud" : "local",
+    s.lockdown
+      ? "local"
+      : (prefer ??
+          (current || s.summary_provider === "custom" || device?.verdict === "cloud" ? "cloud" : "local")),
   );
   // A key you've added (for transcription, say) picks its provider.
   const [cloud, setCloud] = useState(

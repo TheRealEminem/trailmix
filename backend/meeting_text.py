@@ -175,7 +175,8 @@ def action_items(summary: str) -> list[str]:
 
 
 def summary_with_tasks(summary: str, tasks: list[dict]) -> str:
-    """The summary with each action item's checkbox reflecting whether you've ticked it off."""
+    """The summary with each action item's checkbox reflecting whether you've ticked it off, and without the ones
+    you deleted. `tasks` are all of the meeting's, deleted ones included, in the order of the bullets."""
     lines, inside, i = summary.splitlines(), False, 0
     out = []
     for line in lines:
@@ -185,7 +186,10 @@ def summary_with_tasks(summary: str, tasks: list[dict]) -> str:
             inside = False
         mt = _BULLET.match(line) if inside else None
         if mt and i < len(tasks) and mt.group(2).strip(" .").lower() not in ("none", "n/a"):
-            line = f"- [{'x' if tasks[i]['done'] else ' '}] {mt.group(2)}"
+            task = tasks[i]
             i += 1
+            if task.get("deleted"):
+                continue
+            line = f"- [{'x' if task['done'] else ' '}] {mt.group(2)}"
         out.append(line)
     return "\n".join(out)

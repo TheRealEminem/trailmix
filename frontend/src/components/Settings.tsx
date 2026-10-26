@@ -18,10 +18,12 @@ import type {
   ProviderId,
   RecordingLaws as RecordingLawsT,
   Settings as SettingsT,
+  Tracker,
 } from "../api";
 import { tildePath } from "../format";
 import { useBigSpend } from "../spend";
 import UsagePanel from "./Usage";
+import CloudPanel, { PLAN_NAMES } from "./Cloud";
 import { TRANSCRIBERS } from "../transcribers";
 import type { ThemePref } from "../theme";
 import {
@@ -52,6 +54,7 @@ import {
   CompassIcon,
   PaperclipIcon,
   ShrinkIcon,
+  CheckSquareIcon,
 } from "./icons";
 import {
   OrganizeProgress,
@@ -191,10 +194,13 @@ function SecretField({
   hint,
   onSave,
   label,
+  what = "API key",
 }: {
   hint: string | null | undefined;
   onSave: (v: string) => void;
   label: string;
+  /** What it is, for the placeholder. */
+  what?: string;
 }) {
   const [v, setV] = useState("");
   return (
@@ -206,7 +212,7 @@ function SecretField({
         spellCheck={false}
         aria-label={label}
         placeholder={
-          hint ? `Saved (${hint}), paste to replace` : "Paste API key"
+          hint ? `Saved (${hint}), paste to replace` : `Paste ${what}`
         }
         onChange={(e) => setV(e.target.value)}
         onKeyDown={(e) => {
@@ -298,6 +304,11 @@ const PROVIDER_META: Record<
     label: "OpenAI-compatible",
     blurb:
       "Anything that speaks the OpenAI chat API: OpenRouter, Groq, LM Studio, vLLM…",
+  },
+  trailmix: {
+    label: "Trailmix Cloud",
+    blurb:
+      "Trailmix runs the AI for you, on a plan instead of a key. The audio and text of a meeting pass through Trailmix's server to Google's Gemini while they're processed, and aren't kept there.",
   },
 };
 
@@ -1317,12 +1328,15 @@ function ProviderCard({
   save,
   primary,
   fallback,
+  reload,
 }: {
   id: ProviderId;
   s: SettingsT;
   save: (c: Partial<SettingsT>) => Promise<void>;
   primary: boolean;
   fallback: boolean;
+  /** fetch the settings again (after signing in to Trailmix Cloud) */
+  reload: () => void;
 }) {
   const [open, setOpen] = useState(primary);
   const [models, setModels] = useState<string[]>([]);
@@ -1330,19 +1344,20 @@ function ProviderCard({
     { ok: boolean; text: string } | "busy" | null
   >(null);
   const meta = PROVIDER_META[id];
-  const hint = s.secret_hints?.[`${id}_api_key`];
+  const hint = s.secret_hints?.[id === "trailmix" ? "cloud_token" : `${id}_api_key`];
   const modelKey = `${id}_model` as keyof SettingsT;
   const label = id === "custom" ? s.custom_name || meta.label : meta.label;
   const local = id === "ollama";
+  const hosted = id === "trailmix";
   const ready = local || (id === "custom" ? !!s.custom_base_url : !!hint);
 
   useEffect(() => {
-    if (!open || !ready || models.length) return;
+    if (!open || !ready || models.length || hosted) return;
     api
       .providerModels(id)
       .then((r) => setModels(r.models))
       .catch(() => {}); // "Load models" shows the reason
-  }, [open, ready, id, models.length]);
+  }, [open, ready, id, models.length, hosted]);
 
   const run = async (fn: () => Promise<string>) => {
     setResult("busy");
@@ -1371,9 +1386,13 @@ function ProviderCard({
             <span className="block truncate text-hint text-ink-soft">
               {local
                 ? s.ollama_url
-                : ready
-                  ? String(s[modelKey] || "no model picked")
-                  : "Not set up"}
+                : hosted
+                  ? ready
+                    ? PLAN_NAMES[s.cloud_account?.plan ?? "none"]
+                    : "Not signed in"
+                  : ready
+                    ? String(s[modelKey] || "no model picked")
+                    : "Not set up"}
             </span>
           </span>
         </span>
@@ -1410,6 +1429,9 @@ function ProviderCard({
               </>
             )}
           </p>
+          {hosted ? (
+            <CloudPanel intro={false} onChange={reload} />
+          ) : (
           <div className="divide-y divide-line">
             {id === "custom" && (
               <>
@@ -1494,6 +1516,7 @@ function ProviderCard({
               <TestResult state={result} />
             </div>
           </div>
+          )}
         </div>
       </Collapse>
     </div>
@@ -1504,6 +1527,7 @@ function ProviderCard({
 const TRANSCRIBE_PRESETS = TRANSCRIBERS.filter((t) => t.engine === "remote");
 
 const PROVIDER_IDS: ProviderId[] = [
+  "trailmix",
   "ollama",
   "anthropic",
   "openai",
@@ -1704,6 +1728,18 @@ export default function Settings({
     }
   };
 
+  const reload = () =>
+    void api.getSettings().then((fresh) => {
+      setS(fresh);
+      onChanged();
+    });
+  // Trailmix Cloud is offered once this copy of Trailmix knows where it is (or it's already in use)
+  const cloudOffered =
+    !!health?.cloud.available ||
+    s?.transcribe_engine === "trailmix" ||
+    s?.summary_provider === "trailmix";
+  const providerIds = PROVIDER_IDS.filter((p) => p !== "trailmix" || cloudOffered);
+
   const testTranscription = async () => {
     setTResult("busy");
     try {
@@ -1771,7 +1807,7 @@ export default function Settings({
     id === "custom"
       ? s.custom_name || PROVIDER_META.custom.label
       : PROVIDER_META[id].label;
-  const providerOptions = PROVIDER_IDS.map((p) => ({
+  const providerOptions = providerIds.map((p) => ({
     value: p,
     label: providerLabel(p),
     hint: p === "ollama" ? "Local" : "Cloud",
@@ -1980,12 +2016,13 @@ export default function Settings({
         blurb="Connect the models you want to use. Keys are stored in Trailmix's database and never shown again."
         delay={160}
       >
-        {PROVIDER_IDS.map((id) => (
+        {providerIds.map((id) => (
           <ProviderCard
             key={id}
             id={id}
             s={s}
             save={save}
+            reload={reload}
             primary={s.summary_provider === id}
             fallback={s.summary_fallback === id}
           />
@@ -2014,9 +2051,19 @@ export default function Settings({
               { id: "local", label: "This Mac (MLX)" },
               { id: "remote", label: "Remote endpoint" },
               { id: "gemini", label: "Google Gemini" },
+              ...(cloudOffered ? [{ id: "trailmix" as const, label: "Trailmix Cloud" }] : []),
             ]}
           />
         </Row>
+        {s.transcribe_engine === "trailmix" && (
+          <p className="py-3.5 text-hint leading-relaxed text-ink-soft">
+            {!s.secret_hints?.cloud_token
+              ? "Sign in to Trailmix Cloud under AI providers to use it."
+              : health?.cloud.off.live_captions
+                ? `${health.cloud.off.live_captions}. Each meeting's transcript is made right after you stop, with speakers told apart.`
+                : "Captions appear while you talk, about 10 seconds behind, and they become the transcript: there's nothing left to wait for when you stop."}
+          </p>
+        )}
         {s.transcribe_engine === "gemini" && (
           <>
             <Row
@@ -2070,7 +2117,7 @@ export default function Settings({
             </p>
           </>
         )}
-        {s.transcribe_engine !== "gemini" && <SwitchRow
+        {s.transcribe_engine !== "gemini" && s.transcribe_engine !== "trailmix" && <SwitchRow
           icon={<LinesIcon size={16} />}
           label="Final transcript while recording"
           hint={
@@ -2188,7 +2235,11 @@ export default function Settings({
         blurb="How much paid AI Trailmix has used. It only stops to ask before something that would cost a lot."
         delay={210}
       >
-        <UsagePanel warnCents={s.spend_warn_cents} onWarnCents={(c) => void save({ spend_warn_cents: c })} />
+        <UsagePanel
+          warnCents={s.spend_warn_cents}
+          onWarnCents={(c) => void save({ spend_warn_cents: c })}
+          cloud={s.secret_hints?.cloud_token ? s.cloud_account : null}
+        />
       </Section>
 
       <Section
@@ -2260,6 +2311,8 @@ export default function Settings({
           onChange={(v) => save({ attachments_always_shrink: v })}
         />
       </Section>
+
+      <TasksSection s={s} save={save} />
 
       <Section
         icon={<BackpackIcon size={16} />}
@@ -2457,6 +2510,103 @@ export default function Settings({
         )}
       </Section>
     </div>
+  );
+}
+
+/** Where "Send to …" on a task makes a ticket: one picker of trackers, then what the chosen one needs, as its rows. */
+function TasksSection({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT>) => Promise<void> }) {
+  const [trackers, setTrackers] = useState<Tracker[]>([]);
+  const [projects, setProjects] = useState<{ id: string; name: string }[] | null>(null);
+  const [check, setCheck] = useState<{ ok: boolean; text: string } | "busy" | null>(null);
+  const tracker = trackers.find((t) => t.id === s.task_tracker);
+  const values = s as unknown as Record<string, string>;
+  const address = tracker?.fields.find((f) => f.kind === "url")?.key;
+
+  useEffect(() => {
+    api
+      .trackers()
+      .then((t) => setTrackers(t.trackers))
+      .catch(() => undefined);
+  }, []);
+
+  // Its projects, for the picker (reading only), whenever it or where it is changes.
+  const loadProjects = async (report: boolean) => {
+    if (!tracker) return;
+    if (report) setCheck("busy");
+    try {
+      const found = await api.trackerProjects(tracker.id);
+      setProjects(found);
+      if (report)
+        setCheck({ ok: true, text: `${tracker.name} is answering, with ${found.length} project${found.length === 1 ? "" : "s"}.` });
+    } catch (e) {
+      setProjects(null);
+      if (report) setCheck({ ok: false, text: (e as Error).message });
+    }
+  };
+  useEffect(() => {
+    setCheck(null);
+    void loadProjects(false);
+  }, [tracker?.id, address && values[address], s.secret_hints]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <Section
+      icon={<CheckSquareIcon size={16} />}
+      id="tasks"
+      title="Tasks"
+      blurb="Send a meeting's action items on to where you keep track of work. Each task goes once, with a link back to its meeting."
+      delay={230}
+    >
+      <Row label="Send tasks to" hint={tracker ? tracker.blurb : "Nowhere: tasks stay in Trailmix."}>
+        <Select
+          label="Send tasks to"
+          value={s.task_tracker}
+          onChange={(v) => void save({ task_tracker: v })}
+          options={[{ value: "", label: "Nowhere" }, ...trackers.map((t) => ({ value: t.id, label: t.name }))]}
+        />
+      </Row>
+      {tracker?.fields.map((f) => (
+        <Row key={f.key} label={f.label} hint={f.hint}>
+          {f.kind === "secret" ? (
+            <SecretField
+              label={f.label}
+              what={f.label.toLowerCase()}
+              hint={s.secret_hints?.[f.key]}
+              onSave={(v) => void save({ [f.key]: v })}
+            />
+          ) : f.kind === "project" ? (
+            <Select
+              label={f.label}
+              value={values[f.key] ?? ""}
+              onChange={(v) => void save({ [f.key]: v })}
+              options={[
+                { value: "", label: "No project" },
+                ...(projects ?? []).map((p) => ({ value: p.id, label: p.name })),
+                // the saved one, while the list isn't there (it's closed, or the project's gone)
+                ...(values[f.key] && !projects?.some((p) => p.id === values[f.key])
+                  ? [{ value: values[f.key], label: projects ? "A project that's gone" : "The saved project" }]
+                  : []),
+              ]}
+            />
+          ) : (
+            <TextField
+              label={f.label}
+              mono
+              value={values[f.key] ?? ""}
+              placeholder={f.placeholder}
+              onSave={(v) => void save({ [f.key]: v })}
+            />
+          )}
+        </Row>
+      ))}
+      {tracker && (
+        <div className="py-4">
+          <button className="btn btn-sm btn-soft" disabled={check === "busy"} onClick={() => void loadProjects(true)}>
+            Check the connection
+          </button>
+          <TestResult state={check} />
+        </div>
+      )}
+    </Section>
   );
 }
 

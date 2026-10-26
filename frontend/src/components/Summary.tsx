@@ -5,7 +5,7 @@ import type { Health, Meeting, Task } from "../api";
 import { AlertIcon, CheckIcon, CompassIcon, FlagIcon, LeafIcon, RefreshIcon, SignpostIcon, SparkleIcon } from "./icons";
 import { ContourBadge } from "./illustrations";
 import { AttachedMaterials } from "./Attachments";
-import TaskItem from "./TaskItem";
+import TaskItem, { useTracker } from "./TaskItem";
 import { CopyButton } from "./ui";
 
 interface Props {
@@ -14,6 +14,8 @@ interface Props {
   /** Opens the sheet for picking which AI writes the notes. */
   onResummarize: () => void;
   onToggleTask: (task: Task, done: boolean) => void;
+  onDeleteTask: (task: Task) => void;
+  onSendTask: (task: Task) => Promise<void>;
 }
 
 /** Splits the summary around its "## Action Items" section so that part can be interactive. */
@@ -49,7 +51,7 @@ function textOf(node: ReactNode): string {
   return "";
 }
 
-export default function Summary({ meeting, health, onResummarize, onToggleTask }: Props) {
+export default function Summary({ meeting, health, onResummarize, onToggleTask, onDeleteTask, onSendTask }: Props) {
   const busy = !["done", "error"].includes(meeting.status);
   const canRegenerate = !!meeting.transcript && meeting.status !== "ready_summarize";
 
@@ -66,7 +68,14 @@ export default function Summary({ meeting, health, onResummarize, onToggleTask }
       )}
 
       {meeting.summary ? (
-        <SummaryBody summary={meeting.summary} tasks={meeting.tasks} onToggleTask={onToggleTask} />
+        <SummaryBody
+          summary={meeting.summary}
+          tasks={meeting.tasks}
+          tasksDeleted={meeting.tasks_deleted}
+          onToggleTask={onToggleTask}
+          onDeleteTask={onDeleteTask}
+          onSendTask={onSendTask}
+        />
       ) : meeting.summary_draft && finishedLines(meeting.summary_draft) ? (
         <DraftBody draft={meeting.summary_draft} />
       ) : (
@@ -161,8 +170,25 @@ function DraftBody({ draft }: { draft: string }) {
   );
 }
 
-function SummaryBody({ summary, tasks, onToggleTask }: { summary: string; tasks: Task[]; onToggleTask: (t: Task, done: boolean) => void }) {
+function SummaryBody({
+  summary,
+  tasks,
+  tasksDeleted,
+  onToggleTask,
+  onDeleteTask,
+  onSendTask,
+}: { summary: string; tasks: Task[]; tasksDeleted: number } & Pick<Props, "onToggleTask" | "onDeleteTask" | "onSendTask">) {
+  const tracker = useTracker();
   const { before, heading, after } = splitActions(summary);
+  if (heading && tasks.length === 0 && tasksDeleted > 0) {
+    // you deleted every one of them: no section left to show
+    return (
+      <div className="prose-summary">
+        <Markdown>{before}</Markdown>
+        {after && <Markdown>{after}</Markdown>}
+      </div>
+    );
+  }
   if (!heading || tasks.length === 0) {
     return (
       <div className="prose-summary">
@@ -183,7 +209,14 @@ function SummaryBody({ summary, tasks, onToggleTask }: { summary: string; tasks:
       </h2>
       <div className="-mx-2 space-y-px">
         {tasks.map((t) => (
-          <TaskItem key={t.id} text={t.text} done={t.done} onToggle={(d) => onToggleTask(t, d)} />
+          <TaskItem
+            key={t.id}
+            task={t}
+            tracker={tracker}
+            onToggle={(d) => onToggleTask(t, d)}
+            onDelete={() => onDeleteTask(t)}
+            onSend={() => onSendTask(t)}
+          />
         ))}
       </div>
       {after && <Markdown>{after}</Markdown>}
