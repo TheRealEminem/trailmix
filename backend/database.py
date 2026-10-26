@@ -604,7 +604,7 @@ def set_source_sync(source: str, **fields) -> None:
 
 def watched_paths(under: str) -> set[str]:
     """The files in this watched folder (and below) that have been looked at already."""
-    prefix = under.rstrip("/") + "/"
+    prefix = os.path.join(under.rstrip("/\\"), "")  # the folder with its separator ("\" on Windows)
     with connect() as conn:
         rows = conn.execute("SELECT path FROM watched_files WHERE substr(path, 1, ?) = ?", (len(prefix), prefix))
         return {r["path"] for r in rows}
@@ -612,7 +612,7 @@ def watched_paths(under: str) -> set[str]:
 
 def watched_counts(under: str) -> dict[str, int]:
     """state -> how many files, in this watched folder."""
-    prefix = under.rstrip("/") + "/"
+    prefix = os.path.join(under.rstrip("/\\"), "")  # the folder with its separator ("\" on Windows)
     with connect() as conn:
         rows = conn.execute("SELECT state, count(*) AS n FROM watched_files WHERE substr(path, 1, ?) = ? GROUP BY state",
                             (len(prefix), prefix))

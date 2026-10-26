@@ -98,10 +98,31 @@ async def _stats_loop():
 
 
 def _exit_with_parent() -> None:
-    """Trailmix.app starts this server and names itself in TRAILMIX_PARENT_PID. If the app is force-quit
-    or crashes, this process is re-parented to launchd; stop instead of lingering on the port."""
+    """The app (Trailmix.app, or Trailmix.exe on Windows) starts this server and names itself in
+    TRAILMIX_PARENT_PID. If the app is force-quit or crashes, this process is re-parented (to launchd on a
+    Mac); stop instead of lingering on the port."""
     parent = int(os.getenv("TRAILMIX_PARENT_PID") or 0)
     if not parent:
+        return
+
+    if sys.platform == "win32":
+        # Windows keeps reporting the old parent's id after it's gone: wait on the process itself instead.
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+        handle = kernel32.OpenProcess(0x00100000, False, parent)  # SYNCHRONIZE
+        if not handle:
+            return
+
+        def watch_handle():
+            kernel32.WaitForSingleObject(handle, 0xFFFFFFFF)  # INFINITE
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        threading.Thread(target=watch_handle, daemon=True, name="parent-watch").start()
         return
 
     def watch():
@@ -392,7 +413,8 @@ def _local_llm_paused(cfg: dict) -> None:
 def _meeting_context(m: dict, cfg: dict, question: str) -> str:
     """The meeting's notes and transcript, cut to what the model can take: for a long meeting and a small
     local model, the parts of the transcript that match the question."""
-    when = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00")).astimezone().strftime("%A %B %-d, %Y")
+    local = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00")).astimezone()
+    when = f"{local:%A %B} {local.day}, {local:%Y}"
     parts = [f"MEETING: {m['title']} ({when})"]
     if m.get("summary"):
         parts.append(f"NOTES:\n{m['summary']}")
@@ -739,9 +761,9 @@ def ollama_status():
 
 @app.post("/api/ollama/install", status_code=202)
 def ollama_install():
-    """Download, check and install Ollama (the Mac app), or open it if it's installed but not running."""
-    if sys.platform != "darwin":
-        raise HTTPException(409, "Installing Ollama from here only works on a Mac")
+    """Download, check and install Ollama (the Mac or Windows app), or open it if it's installed but not running."""
+    if sys.platform not in ("darwin", "win32"):
+        raise HTTPException(409, "Installing Ollama from here only works on a Mac or Windows")
     if settings.locked():
         raise HTTPException(409, f"{settings.LOCKDOWN}, so Ollama can't be downloaded")
     if not ollama_setup.start_install(settings.get_all()):
@@ -2123,7 +2145,8 @@ def ask_everything(body: Question):
     budget = (llm_engine.chain_context_chars(cfg) - len(question) - 500) // len(meetings)
     blocks = []
     for m in meetings:
-        when = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00")).astimezone().strftime("%b %-d, %Y")
+        local = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00")).astimezone()
+        when = f"{local:%b} {local.day}, {local:%Y}"
         body_text = m["summary"] or meeting_text.transcript_text(m, cfg)
         if material := attachments.context_block(m["id"], budget // 3):
             body_text += "\n\n" + material

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The Trailmix window. The web app talks to the shell over the trailmix:// protocol, not the Tauri IPC.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

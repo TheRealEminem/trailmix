@@ -244,7 +244,7 @@ def status() -> dict:
     folders = []
     for f in cfg["watch_folders"]:
         counts = db.watched_counts(f)
-        prefix = f.rstrip("/") + "/"
+        prefix = os.path.join(f.rstrip("/\\"), "")
         folders.append({
             "path": f, "imported": counts.get("imported", 0), "skipped": counts.get("skipped", 0),
             "failed": counts.get("failed", 0), "waiting": sum(1 for p in list(_pending) if p.startswith(prefix)),

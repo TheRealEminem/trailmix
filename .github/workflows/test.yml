@@ -48,3 +48,41 @@ jobs:
         working-directory: frontend
       - run: npx tsc --noEmit && npm run build
         working-directory: frontend
+
+  # The server on Windows: what the Windows app bundles (scripts/build-windows.py), with ffmpeg from the same
+  # wheel the app takes it from.
+  backend-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-server.txt
+      - name: ffmpeg
+        shell: pwsh
+        run: |
+          pip install -q --no-deps --target ff imageio-ffmpeg
+          New-Item -ItemType Directory -Force ffbin | Out-Null
+          Copy-Item (Get-ChildItem ff/imageio_ffmpeg/binaries/ffmpeg-win-*.exe)[-1].FullName ffbin/ffmpeg.exe
+          "$PWD\ffbin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - run: pip install -r backend/requirements-server.txt pytest
+      - run: python -m pytest -q backend/tests
+
+  # The Windows desktop shell (desktop/): compiles, and its own tests pass (the wire format, the audio
+  # converter, the app roll-up).
+  desktop-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      # tauri-build checks that the bundled resources (what scripts/build-windows.py stages) exist, even for a test.
+      - name: Stand-ins for the staged resources
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/windows/python, build/windows/backend, build/windows/ui, build/windows/bin | Out-Null
+          Copy-Item VERSION build/windows/VERSION
+      - run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
