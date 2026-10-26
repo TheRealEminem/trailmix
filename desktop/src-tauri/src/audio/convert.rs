@@ -73,7 +73,7 @@ impl Converter {
         } else {
             self.interpolate(mono)
         };
-        out.into_iter().map(|s| (s * 32767.0).round().clamp(-32768.0, 32767.0) as i16).collect()
+        out.into_iter().map(|s| (s * 32768.0).round().clamp(-32768.0, 32767.0) as i16).collect()
     }
 
     /// Each frame mixed down to one float sample in -1…1.
