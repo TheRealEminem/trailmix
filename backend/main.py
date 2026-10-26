@@ -406,6 +406,8 @@ class RecorderCheckIn(BaseModel):
     call_app: str | None = None  # a call app using audio right now (the speech model gets ready)
     call_reminders: bool | None = None
     lockdown: bool | None = None  # the recorder's copy of Lockdown mode (it skips update checks)
+    platform: str | None = None  # "macos-arm64", "windows-x64"…
+    capabilities: list[str] | None = None  # recorder.CAPABILITIES it supports; None: an older Mac app (all)
 
 
 class OpenAtLogin(BaseModel):

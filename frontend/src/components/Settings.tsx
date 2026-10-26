@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { api, inApp, PRIVACY_POLICY } from "../api";
+import { api, hasCapability, inApp, missingCapabilityReason, PRIVACY_POLICY } from "../api";
 import type {
   ExportFormat,
   ExportJob,
@@ -1100,7 +1100,7 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
   const [error, setError] = useState<string | null>(null);
   const [asked, setAsked] = useState(false);
   const [beta, setBeta] = useState<boolean | null>(null); // until the recorder reports the change
-  const u = native?.update ?? null;
+  const u = hasCapability(native, "auto_update") ? (native?.update ?? null) : null;
   useEffect(() => {
     if (beta !== null && u?.beta === beta) setBeta(null);
   }, [beta, u?.beta]);
@@ -1118,7 +1118,9 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
     : null;
 
   let status: ReactNode;
-  if (!u)
+  if (native && !hasCapability(native, "auto_update"))
+    status = `${missingCapabilityReason(native, "auto_update")} Download new versions from GitHub.`;
+  else if (!u)
     status = native
       ? "This copy of Trailmix doesn't update itself (a development build)."
       : "Open Trailmix.app to check for updates.";
@@ -2411,9 +2413,14 @@ export default function Settings({
         blurb="Trailmix keeps running in the background until you quit it."
         delay={280}
       >
-        {native?.available && native.call_reminders !== undefined && (
-          <CallReminders native={native} />
-        )}
+        {native?.available &&
+          (hasCapability(native, "call_reminder") ? (
+            native.call_reminders !== undefined && <CallReminders native={native} />
+          ) : (
+            <Row label="Remind me to record calls" hint={missingCapabilityReason(native, "call_reminder")}>
+              <Switch checked={false} onChange={() => {}} disabled label="Remind me to record calls" />
+            </Row>
+          ))}
         <Row
           label="Setup"
           hint="The first-run questions again, one at a time: your name, transcription, notes and a sound check."
