@@ -92,6 +92,7 @@
         Download for Mac
       </a>
       <div class="meta">Free and open source · Apple silicon (M1 or newer) · macOS 14.2 or later</div>
+      <div class="meta" id="intel" hidden>On an Intel Mac? <a id="intel-link" href="https://github.com/TheRealEminem/trailmix/releases/latest" data-goatcounter-click="download-dmg-intel" data-goatcounter-title="Download Trailmix for Intel">Download for Intel</a></div>
       <div class="shot"><img src="assets/app.jpg" alt="Trailmix showing the notes of a meeting: overview, discussion, decisions and action items" width="1800" height="1164" /></div>
     </div>
 
@@ -143,7 +144,7 @@
       <details><summary>What do I need?</summary><p>A Mac with Apple silicon (M1 or newer) on macOS 14.2 or later. 16 GB of memory is best for local summaries; with 8 GB, use a cloud AI for summaries or a small local model.</p></details>
       <details><summary>Does anything leave my Mac?</summary><p>Not by default: recording, transcription and summaries all run locally. If you add an API key for a cloud AI, only the transcript goes to that provider, to write the notes.</p></details>
       <details><summary>How do updates work?</summary><p>Trailmix checks for new versions and offers to install them from its menu or window. After an update macOS asks for the microphone and system audio permissions again, until Trailmix is signed by Apple.</p></details>
-      <details><summary>Windows, Linux or an Intel Mac?</summary><p>Not yet. The speech engine Trailmix uses runs on Apple silicon; other platforms are planned.</p></details>
+      <details><summary>Windows, Linux or an Intel Mac?</summary><p>Intel Macs on macOS 14.2 or later get a download of their own, under the button above, from the first release built for them. Transcribing on an Intel Mac is slower, so a cloud engine may suit you better. Windows and Linux are planned.</p></details>
     </section>
 
     <footer>Trailmix is free and open source (AGPL-3.0) · <a href="https://github.com/TheRealEminem/trailmix">Source on GitHub</a> · <a href="https://github.com/TheRealEminem/trailmix/releases">All releases</a> · <a href="privacy.html">Privacy policy</a></footer>
@@ -152,14 +153,22 @@
     // The download button offers the newest promoted release that has a disk image for Apple silicon,
     // Trailmix-macos-arm64.dmg (Trailmix-arm64.dmg in releases from before there were other platforms): a release
     // whose Mac build failed has none and is passed over. If GitHub can't be asked, the link in the page stays.
+    // The Intel link (Trailmix-macos-x86_64.dmg) shows only once a promoted release has one, the same way.
     fetch("https://api.github.com/repos/TheRealEminem/trailmix/releases?per_page=30")
       .then((r) => (r.ok ? r.json() : []))
       .then((releases) => {
+        let arm = null, intel = null;
         for (const release of releases) {  // newest first
           if (release.draft || release.prerelease) continue;
           const find = (name) => release.assets.find((a) => a.name === name);
-          const dmg = find("Trailmix-macos-arm64.dmg") || find("Trailmix-arm64.dmg");
-          if (dmg) return (document.getElementById("download").href = dmg.browser_download_url);
+          arm = arm || find("Trailmix-macos-arm64.dmg") || find("Trailmix-arm64.dmg");
+          intel = intel || find("Trailmix-macos-x86_64.dmg");
+          if (arm && intel) break;
+        }
+        if (arm) document.getElementById("download").href = arm.browser_download_url;
+        if (intel) {
+          document.getElementById("intel-link").href = intel.browser_download_url;
+          document.getElementById("intel").hidden = false;
         }
       })
       .catch(() => {});
