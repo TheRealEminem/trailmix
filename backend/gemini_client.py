@@ -2,14 +2,13 @@
 
 With your own key they go to Google, signed with the key. With Trailmix Cloud they go to Trailmix's server, which
 runs Gemini on its own key, signed with this Mac's device token (tokens start with "tmc_"). The credential is passed
-around as one string either way, so the modules that talk to Gemini (transcribe_gemini, gemini_batch, live_gemini,
+around as one string either way, so the modules that talk to Gemini (transcribe_gemini, gemini_batch,
 llm_engine) build their addresses and headers from it here and never need to know which it is.
 """
 import os
 
 GOOGLE = "https://generativelanguage.googleapis.com"
 CLOUD_TOKEN_PREFIX = "tmc_"
-LIVE_PATH = "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 
 
 class NotConfigured(Exception):
@@ -57,8 +56,3 @@ def meeting_headers(cred: str, meeting_id: int | None, track: str | None = None)
     if not is_cloud(cred) or meeting_id is None:
         return {}
     return {"X-Trailmix-Meeting": str(meeting_id), **({"X-Trailmix-Track": track} if track else {})}
-
-
-def live_url(cred: str) -> str:
-    """The WebSocket address for live captions."""
-    return base(cred).replace("https://", "wss://", 1).replace("http://", "ws://", 1) + LIVE_PATH

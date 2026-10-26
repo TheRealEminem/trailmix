@@ -1169,7 +1169,6 @@ async def stream(ws: WebSocket, meeting_id: int, draft: int = 1, client: str = "
         stop_wait.cancel()
         if drafter:
             drafter.cancel()
-        await session.stop_gemini()  # the last words of the live captions
         await run_in_threadpool(session.finish)  # waits for the chunk in hand, saves the transcript so far
         session.close()
         db.update_meeting(

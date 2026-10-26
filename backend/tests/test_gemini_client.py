@@ -2,21 +2,18 @@ import pytest
 
 import gemini_batch
 import gemini_client
-import live_gemini
 import transcribe_gemini
 
 
 def test_your_own_key_goes_to_google_signed_with_the_key():
     assert gemini_client.base("AIza-key") == "https://generativelanguage.googleapis.com"
     assert gemini_client.headers("AIza-key") == {"x-goog-api-key": "AIza-key"}
-    assert gemini_client.live_url("AIza-key").startswith("wss://generativelanguage.googleapis.com/ws/")
 
 
 def test_a_cloud_token_goes_to_trailmix_cloud_as_a_bearer_token(monkeypatch):
     monkeypatch.setenv("TRAILMIX_CLOUD_URL", "http://127.0.0.1:8787/")
     assert gemini_client.base("tmc_abc") == "http://127.0.0.1:8787"
     assert gemini_client.headers("tmc_abc") == {"Authorization": "Bearer tmc_abc"}
-    assert gemini_client.live_url("tmc_abc") == "ws://127.0.0.1:8787" + gemini_client.LIVE_PATH
 
 
 def test_a_cloud_token_without_an_address_says_so(monkeypatch):
@@ -51,5 +48,3 @@ def test_every_module_sends_to_the_same_place(monkeypatch):
     gemini_batch.status("batches/1", "tmc_abc")
     assert [u for u, _ in seen] == ["https://cloud.example/v1beta/files/1", "https://cloud.example/v1beta/batches/1"]
     assert all(h["Authorization"] == "Bearer tmc_abc" for _, h in seen)
-    channel = live_gemini.Channel("tmc_abc", None, lambda *a: None, lambda *a: None)
-    assert channel.url.startswith("wss://cloud.example/ws/")
