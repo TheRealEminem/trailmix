@@ -67,13 +67,13 @@ final class Updater: ObservableObject {
         }
     }
 
-    /// Where releases are looked up: TRAILMIX_UPDATE_URL (tests), else the repo baked into Info.plist. GitHub's
-    /// "latest" never includes pre-releases; with beta updates the recent releases are listed instead.
+    /// Where releases are looked up: TRAILMIX_UPDATE_URL (tests), else the repo baked into Info.plist. The recent
+    /// releases are listed rather than asking for GitHub's "latest": a release whose build for this Mac failed has
+    /// no disk image for it, and the newest one that has is offered instead.
     private var feed: URL? {
         if let override = ProcessInfo.processInfo.environment["TRAILMIX_UPDATE_URL"] { return URL(string: override) }
         guard let repo = Self.repo else { return nil }
-        return URL(string: beta ? "https://api.github.com/repos/\(repo)/releases?per_page=20"
-                                : "https://api.github.com/repos/\(repo)/releases/latest")
+        return URL(string: "https://api.github.com/repos/\(repo)/releases?per_page=30")
     }
 
     /// All recent releases, for finding the one to go back to: TRAILMIX_RELEASES_URL (tests), else GitHub's list.
@@ -139,21 +139,16 @@ final class Updater: ObservableObject {
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200,
-              let parsed = try? JSONSerialization.jsonObject(with: data),
-              let json = Self.newest(parsed, beta: beta),
-              let tag = json["tag_name"] as? String else {
+              let parsed = try? JSONSerialization.jsonObject(with: data) else {
             if latest == nil, manual || state == .checking { state = .offline }
             return
         }
         checkedAt = Date()
         await findPrevious()
         // A version you went back from stays skipped; a newer one than it is offered as usual.
-        if let skip = skipped, !Self.isNewer(String(tag.trimmingPrefix("v")), than: skip) {
-            latest = nil
-            state = .upToDate
-            return
-        }
-        guard let release = Self.release(json), Self.isNewer(release.version, than: Self.current) else {
+        guard let release = Self.newest(parsed, beta: beta),
+              skipped.map({ Self.isNewer(release.version, than: $0) }) ?? true,
+              Self.isNewer(release.version, than: Self.current) else {
             latest = nil
             state = .upToDate
             return
@@ -162,18 +157,29 @@ final class Updater: ObservableObject {
         state = .available(release.version)
     }
 
-    /// A release from GitHub's JSON, if it has a disk image for this Mac.
+    /// This Mac's kind, as release disk images are named: Trailmix-<version>-macos-<arch>.dmg.
+    #if arch(arm64)
+    static let arch = "arm64"
+    #else
+    static let arch = "x86_64"
+    #endif
+
+    /// A release from GitHub's JSON, if it has a disk image for this Mac: Trailmix-<version>-macos-<arch>.dmg, or on
+    /// Apple silicon Trailmix-<version>-arm64.dmg, the name releases had before there were builds for other computers.
+    /// The checksum is the one published next to that image.
     static func release(_ json: [String: Any]) -> Release? {
         guard let tag = json["tag_name"] as? String else { return nil }
         let version = String(tag.trimmingPrefix("v"))
-        let assets = (json["assets"] as? [[String: Any]]) ?? []
-        func asset(_ suffix: String) -> URL? {
-            assets.first { ($0["name"] as? String)?.hasSuffix(suffix) == true && ($0["name"] as? String)?.contains(version) == true }
-                .flatMap { $0["browser_download_url"] as? String }.flatMap(URL.init(string:))
+        var assets: [String: URL] = [:]
+        for asset in (json["assets"] as? [[String: Any]]) ?? [] {
+            if let name = asset["name"] as? String, let url = (asset["browser_download_url"] as? String).flatMap(URL.init(string:)) {
+                assets[name] = url
+            }
         }
-        guard let dmg = asset("-arm64.dmg") else { return nil }
+        let names = ["Trailmix-\(version)-macos-\(arch).dmg"] + (arch == "arm64" ? ["Trailmix-\(version)-arm64.dmg"] : [])
+        guard let name = names.first(where: { assets[$0] != nil }), let dmg = assets[name] else { return nil }
         return Release(version: version, notes: (json["html_url"] as? String).flatMap(URL.init(string:)), dmg: dmg,
-                       checksum: asset("-arm64.dmg.sha256"), prerelease: json["prerelease"] as? Bool ?? false)
+                       checksum: assets[name + ".sha256"], prerelease: json["prerelease"] as? Bool ?? false)
     }
 
     /// The release to go back to: the one this version replaced if it's still published, else the newest
@@ -194,15 +200,15 @@ final class Updater: ObservableObject {
         return older.filter { beta || !$0.prerelease }.max { isNewer($1.version, than: $0.version) }
     }
 
-    /// The release to offer from GitHub's answer: one release ("latest"), or a list (beta updates) from which
-    /// the highest version that isn't a draft (and, without beta updates, isn't a pre-release).
-    static func newest(_ parsed: Any, beta: Bool) -> [String: Any]? {
-        if let one = parsed as? [String: Any] { return one }
-        let usable = (parsed as? [[String: Any]] ?? []).filter {
-            $0["draft"] as? Bool != true && (beta || $0["prerelease"] as? Bool != true) && $0["tag_name"] is String
-        }
-        func version(_ r: [String: Any]) -> String { String((r["tag_name"] as! String).trimmingPrefix("v")) }
-        return usable.max { isNewer(version($1), than: version($0)) }
+    /// The release to offer from GitHub's answer, a list of releases (or just one, as tests may give): the highest
+    /// version that has a disk image for this Mac and isn't a draft (and, without beta updates, isn't a pre-release).
+    /// A release without one, because its build for this Mac failed, is passed over, so this Mac stays on (or gets)
+    /// the last one built for it while other kinds of computer move on.
+    static func newest(_ parsed: Any, beta: Bool) -> Release? {
+        let list = (parsed as? [String: Any]).map { [$0] } ?? parsed as? [[String: Any]] ?? []
+        return list.filter { $0["draft"] as? Bool != true }.compactMap(release)
+            .filter { beta || !$0.prerelease }
+            .max { isNewer($1.version, than: $0.version) }
     }
 
     static func isNewer(_ a: String, than b: String) -> Bool {
