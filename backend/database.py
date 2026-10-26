@@ -228,6 +228,10 @@ def init_db() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     AUDIO_DIR.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
+        # Write-ahead logging, kept in the database file from here on: the windows' reads (meeting lists, live state)
+        # no longer wait while the pipeline writes a transcript, and a writer no longer waits for readers. The
+        # database then comes with -wal and -shm files beside it; copying it needs the server stopped.
+        conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
         conn.executescript(HISTORY_SCHEMA)
         conn.execute(FTS_TABLE)
@@ -299,6 +303,7 @@ def connect():
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA synchronous = NORMAL")  # with WAL: durable at each checkpoint, not each commit; much less fsync
     try:
         yield conn
         conn.commit()
