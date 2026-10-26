@@ -1,0 +1,40 @@
+[package]
+name = "trailmix"
+version = "0.0.0"  # the real version comes from VERSION through tauri.conf.json (scripts/build-windows.py)
+description = "Trailmix: records your meetings and writes the notes, on this computer"
+edition = "2021"
+rust-version = "1.77"
+
+[[bin]]
+name = "Trailmix"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
+tauri-plugin-opener = "2.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+minreq = { version = "2", features = ["json-using-serde"] }
+tungstenite = "0.30"
+url = "2"
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Media_Audio",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+  "Win32_System_Threading",
+  "Win32_Devices_FunctionDiscovery",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_PropertiesSystem",
+] }
+
+[profile.release]
+strip = true
