@@ -782,7 +782,42 @@ export interface NativeRecorder {
   /** "Zoom call started. Record it?" */
   call_reminders?: boolean;
   update?: UpdateInfo | null;
+  /** "macos-arm64", "macos-x86_64", "windows-x64", "linux-x64" ("macos" from older Mac apps) */
+  platform?: string;
+  capabilities?: string[];
 }
+
+/** What a native recorder may be able to do. The Mac app does all of it; other platforms' recorders may not. */
+export type RecorderCapability =
+  | "system_audio"
+  | "per_app_audio"
+  | "call_reminder"
+  | "hotkeys"
+  | "open_at_login"
+  | "auto_update"
+  | "sound_check";
+
+const MISSING_CAPABILITY: Record<RecorderCapability, string> = {
+  system_audio: "Recording other apps' audio isn't",
+  per_app_audio: "Picking one app's audio isn't",
+  call_reminder: "Call reminders aren't",
+  hotkeys: "Keyboard shortcuts aren't",
+  open_at_login: "Opening at login isn't",
+  auto_update: "Updating from here isn't",
+  sound_check: "The sound check isn't",
+};
+
+const PLATFORM_NAMES: Record<string, string> = { macos: "macOS", windows: "Windows", linux: "Linux" };
+
+/** Can the menu bar recorder do this? Older Mac apps don't send a list; the server fills in the Mac set. */
+export const hasCapability = (n: NativeRecorder | null, c: RecorderCapability) =>
+  !!n?.capabilities?.includes(c);
+
+/** Why a control is missing: "Call reminders aren't available on Windows yet." */
+export const missingCapabilityReason = (n: NativeRecorder | null, c: RecorderCapability) => {
+  const os = PLATFORM_NAMES[(n?.platform ?? "").split("-")[0]] ?? "this computer";
+  return `${MISSING_CAPABILITY[c]} available on ${os} yet.`;
+};
 
 /** What Trailmix.app's updater is doing (only the full app updates itself). */
 export interface UpdateInfo {

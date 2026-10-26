@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { PRIVACY_POLICY, api } from "../api";
+import { PRIVACY_POLICY, api, hasCapability, missingCapabilityReason } from "../api";
 import type {
   DeviceAdvice,
   Health,
@@ -73,9 +73,9 @@ export default function Welcome({ health, native, dusk, onChanged, onDone }: Pro
   // What "How should Trailmix's AI run?" picked, for the questions after it: on this Mac or with your own keys
   const [prefer, setPrefer] = useState<"local" | "cloud" | undefined>(undefined);
   // The menu bar recorder can drop out of a poll for a moment: once it's been seen, keep its step.
-  const [hasNative, setHasNative] = useState(!!native);
+  const [canSoundCheck, setCanSoundCheck] = useState(hasCapability(native, "sound_check"));
   useEffect(() => {
-    if (native) setHasNative(true);
+    if (native) setCanSoundCheck(hasCapability(native, "sound_check"));
   }, [native]);
 
   useEffect(() => {
@@ -99,11 +99,11 @@ export default function Welcome({ health, native, dusk, onChanged, onDone }: Pro
       ...(health?.cloud?.available ? (["ai"] as const) : []),
       ...(s.transcribe_engine === "remote" ? [] : (["transcribe"] as const)),
       "notes",
-      ...(hasNative ? (["sound"] as const) : []),
+      ...(canSoundCheck ? (["sound"] as const) : []),
       ...(askStats ? (["stats"] as const) : []),
       "done",
     ]);
-  }, [s, steps, hasNative, askStats, health]);
+  }, [s, steps, canSoundCheck, askStats, health]);
 
   const saved = (next: Settings) => {
     setS(next);
@@ -1141,7 +1141,7 @@ function DoneStep({
       </h1>
       <p className="hero-sub mt-2">
         Start your call as usual (Zoom, Meet, Teams, FaceTime), then press <b className="font-medium text-ink">Start recording</b>
-        {native?.shortcut_record ? (
+        {native?.shortcut_record && hasCapability(native, "hotkeys") ? (
           <>
             {" "}
             or <kbd className="kbd">{native.shortcut_record}</kbd> from any app
@@ -1165,7 +1165,7 @@ function DoneStep({
         >
           {notes && !notes.ready && <p className="text-hint text-ink-soft">{notes.reason || "Finish it in Settings → AI."}</p>}
         </Summary>
-        {native && (
+        {hasCapability(native, "sound_check") && (
           <Summary
             done={soundCheckPassed(native)}
             label="Sound check"
@@ -1178,7 +1178,7 @@ function DoneStep({
         <div className="mt-5 space-y-3 text-ui leading-relaxed text-ink-soft">
           <p>
             Trailmix lives in your menu bar, so you can close this window and it keeps listening
-            {native.shortcut_mark ? (
+            {!hasCapability(native, "hotkeys") ? null : native.shortcut_mark ? (
               <>
                 . Press <kbd className="kbd">{native.shortcut_mark}</kbd> during a call to flag a moment
               </>
@@ -1187,7 +1187,12 @@ function DoneStep({
             )}
             .
           </p>
-          {native.open_at_login !== undefined && native.open_at_login !== null && (
+          {!hasCapability(native, "hotkeys") && (
+            <p className="text-hint">{missingCapabilityReason(native, "hotkeys")}</p>
+          )}
+          {!hasCapability(native, "open_at_login") ? (
+            <p className="text-hint">{missingCapabilityReason(native, "open_at_login")}</p>
+          ) : native.open_at_login !== undefined && native.open_at_login !== null && (
             <label className="flex cursor-pointer items-center gap-2.5 text-ink">
               <input
                 type="checkbox"
