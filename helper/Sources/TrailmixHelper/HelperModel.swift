@@ -211,8 +211,20 @@ final class HelperModel: ObservableObject {
             "lockdown": UserDefaults.standard.bool(forKey: "lockdown"),
             "update": Updater.shared.report ?? NSNull(),
             "call_app": currentCallApp ?? NSNull(),
+            "platform": Self.platform,
+            "capabilities": Self.capabilities,
         ]
     }
+
+    /// Which build of the recorder this is, and what it can do: the web app hides what a platform's recorder
+    /// can't (ports to Windows and Linux report fewer). The Mac app does all of it.
+    #if arch(arm64)
+    private static let platform = "macos-arm64"
+    #else
+    private static let platform = "macos-x86_64"
+    #endif
+    private static let capabilities = ["system_audio", "per_app_audio", "call_reminder", "hotkeys", "open_at_login",
+                                       "auto_update", "sound_check"]
 
     private static func appName(_ bundleID: String) -> String {
         if bundleID == AudioApp.calls { return "FaceTime & iPhone calls" }
