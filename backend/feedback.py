@@ -160,8 +160,9 @@ def _log_tail() -> list[str]:
         lines = path.read_text(errors="replace").splitlines()[-4000:]
     except OSError:
         return []
-    keep = [ln for ln in lines if re.search(r"error|exception|traceback|warning|failed|\bWARN", ln, re.I)
-            and '" 200 ' not in ln and "HTTP/1.1" not in ln]
+    # A line logged at WARNING or above, or part of a traceback (logfile.py says how lines look).
+    keep = [ln for ln in lines if re.search(r" (WARNING|ERROR|CRITICAL) |Traceback|^\s+File \"|\w+(Error|Exception)\b", ln)
+            and "HTTP/1.1" not in ln]
     return keep[-LOG_LINES:]
 
 

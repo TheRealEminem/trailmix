@@ -42,6 +42,7 @@ import importer
 import live
 import live_notes
 import llm_engine
+import logfile
 import meeting_date
 import meeting_text
 import mlx_engine
@@ -67,6 +68,8 @@ import watched
 import transcribe_gemini
 import transcribe_remote
 
+if "pytest" not in sys.modules:  # the tests import this module, but keep their own data folder and output
+    logfile.configure()
 log = logging.getLogger("trailmix")
 SWEEP_INTERVAL_S = 6 * 3600
 UI_DIR = Path(os.getenv("TRAILMIX_UI_DIR", Path(__file__).resolve().parent.parent / "frontend" / "dist"))
