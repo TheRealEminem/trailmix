@@ -224,10 +224,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.version.outputs.tag }}
-          # Off until the Windows app can update itself: an installer published now would leave everyone who took it
-          # downloading each version by hand. Until then it's built and smoke-tested on every release and kept as this
-          # run's Trailmix-windows-x64 artifact, for testing. Set to "1" to publish it.
-          PUBLISH_WINDOWS: "0"
+          # On since the Windows app updates itself (0.19.3). "0" keeps the installer out of releases (it's still built,
+          # smoke-tested and kept as this run's Trailmix-windows-x64 artifact).
+          PUBLISH_WINDOWS: "1"
         # Each disk image is named for the computer it's for, Trailmix-<version>-macos-<arch>.dmg (the app's updater picks
         # its own by that name), and has a copy with a fixed name, Trailmix-macos-<arch>.dmg, so a link to
         # releases/latest/download/... always works ("latest" skips pre-releases: the last promoted version).

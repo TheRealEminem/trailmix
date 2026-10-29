@@ -9,6 +9,15 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.19.3",
+    items: [
+      {
+        title: "Trailmix for Windows, in beta",
+        body: "Trailmix now runs on Windows 10 and 11 (64-bit), with its own download on the Trailmix site. It records your mic and the other side of the call, lives in the system tray, and updates itself.",
+      },
+    ],
+  },
+  {
     version: "0.19.2",
     items: [
       {
