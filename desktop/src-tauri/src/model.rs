@@ -167,8 +167,13 @@ impl Model {
     }
 
     pub fn set_source(&self, source: MeetingSource) {
+        self.update_prefs(|prefs| prefs.source = source.raw());
+    }
+
+    /// Changes the settings, saves them, and lets the server and the tray know.
+    pub fn update_prefs(&self, change: impl FnOnce(&mut Prefs)) {
         let mut prefs = self.prefs.lock().unwrap_or_else(|e| e.into_inner());
-        prefs.source = source.raw();
+        change(&mut prefs);
         prefs.save();
         drop(prefs);
         self.check_in_soon();
@@ -244,6 +249,7 @@ impl Model {
         if audio::wasapi::process_loopback_supported() {
             caps.push("per_app_audio");
         }
+        caps.extend(["hotkeys", "call_reminder"]);
         caps
     }
 
@@ -296,10 +302,10 @@ impl Model {
             "version": self.version,
             "mic_allowed": true,
             "sound_check": null,
-            "shortcut_record": "",
-            "shortcut_mark": "",
+            "shortcut_record": prefs.shortcut_record.display(),
+            "shortcut_mark": prefs.shortcut_mark.display(),
             "open_at_login": open_at_login,
-            "call_reminders": null,
+            "call_reminders": prefs.call_reminders,
             "lockdown": updater.as_ref().map(|u| u.lockdown()),
             "update": updater.as_ref().map(|u| u.report()),
             "call_app": self.call_app(),
@@ -338,8 +344,8 @@ impl Model {
         name
     }
 
-    /// Carries out what the window asked for. Call reminders and the sound check aren't on Windows yet
-    /// (their capability flags are off, so the window doesn't ask).
+    /// Carries out what the window asked for. The sound check isn't on Windows yet (its capability flag is
+    /// off, so the window doesn't ask).
     fn perform(self: &Arc<Self>, commands: &[String]) {
         let updater = self.updater();
         for command in commands {
@@ -351,6 +357,12 @@ impl Model {
                         self.start();
                     }
                 }
+                // Turning reminders on again also asks about the apps you'd said not to (as on the Mac).
+                "call-reminders" => self.update_prefs(|prefs| {
+                    prefs.call_reminders = true;
+                    prefs.muted_call_apps.clear();
+                }),
+                "no-call-reminders" => self.update_prefs(|prefs| prefs.call_reminders = false),
                 "open-at-login" | "no-open-at-login" => {
                     if let Some(exe) = self.installed_exe() {
                         login::set(&exe, command == "open-at-login");
