@@ -7,10 +7,12 @@
 mod app;
 mod audio;
 mod client;
+mod login;
 mod model;
 mod prefs;
 mod selftest;
 mod server;
+mod update;
 mod win;
 mod window;
 mod wire;
@@ -18,15 +20,24 @@ mod wire;
 use tauri::{Manager, RunEvent};
 
 enum Mode {
-    Normal,
+    Normal { at_login: bool },
     SelfTest(Vec<String>),
     WindowTest(Vec<String>),
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // A copy of this program installing an update over the app (update.rs): no window, no tray.
+    if args.iter().any(|a| a == update::APPLY_FLAG) {
+        std::process::exit(update::apply(&args));
+    }
     if args.iter().any(|a| a == "--list-audio") {
         selftest::list_audio();
+        return;
+    }
+    let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+    if args.iter().any(|a| a == "--version") {
+        println!("{}", context.package_info().version);
         return;
     }
     let mode = if args.iter().any(|a| a == "--self-test") {
@@ -34,7 +45,7 @@ fn main() {
     } else if args.iter().any(|a| a == "--window-test") {
         Mode::WindowTest(args.clone())
     } else {
-        Mode::Normal
+        Mode::Normal { at_login: args.iter().any(|a| a == login::FLAG) }
     };
 
     let built = tauri::Builder::default()
@@ -43,13 +54,13 @@ fn main() {
         .setup(move |app| {
             let handle = app.handle().clone();
             match mode {
-                Mode::Normal => app::launch(&handle)?,
+                Mode::Normal { at_login } => app::launch(&handle, at_login)?,
                 Mode::SelfTest(args) => selftest::run(handle, args),
                 Mode::WindowTest(args) => selftest::window_test(handle, args),
             }
             Ok(())
         })
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building Trailmix");
 
     built.run(|app, event| match event {
