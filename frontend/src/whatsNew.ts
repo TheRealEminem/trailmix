@@ -9,6 +9,19 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.19.4",
+    items: [
+      {
+        title: "Stop is quick on Intel Macs and Windows",
+        body: "Live drafts no longer try a hard stretch of audio over and over, so pressing Stop never waits on one. They also leave half the processor free for your call.",
+      },
+      {
+        title: "Shortcuts and call reminders on Windows",
+        body: "Start and stop recording with a keyboard shortcut, and get a nudge when a call starts, as on the Mac.",
+      },
+    ],
+  },
+  {
     version: "0.19.3",
     items: [
       {
