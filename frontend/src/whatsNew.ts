@@ -9,6 +9,28 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.19.0",
+    items: [
+      {
+        title: "Delete a task, or send it to your tracker",
+        body: "A task that isn't one can be deleted (with Undo) instead of ticked off, and any task can be sent to Traverse as a ticket, with a link back to the meeting. Pick your tracker once; it's off until you do.",
+        where: "Settings → Tasks",
+      },
+      {
+        title: "Fewer gaps in Google transcripts",
+        body: "When Google's transcription model silently skips a stretch where someone was speaking, Trailmix now notices and transcribes that stretch again.",
+      },
+      {
+        title: "Changes show up straight away",
+        body: "The window and the menu bar are told the moment something changes, instead of checking every few seconds.",
+      },
+      {
+        title: "Trailmix for Intel Macs",
+        body: "Intel Macs on macOS 14.2 or later now get a version of their own, transcribing with whisper.cpp. Tell a friend with an older Mac.",
+      },
+    ],
+  },
+  {
     version: "0.18.1",
     items: [
       {
