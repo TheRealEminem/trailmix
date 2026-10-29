@@ -42,7 +42,9 @@ Needs an Apple silicon Mac (the Intel build also works on an Intel Mac, or under
 downloaded once into `build/cache`, checked against a pinned checksum). The version is in `VERSION`. To sign it
 with an Apple Developer ID, set `TRAILMIX_SIGN_IDENTITY="Developer ID Application: …"` (that also turns on the
 hardened runtime; notarizing is a separate `xcrun notarytool` step). The bundled ffmpeg is a static build from
-the [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) package, which is GPL-licensed.
+the [imageio-ffmpeg](https://github.com/imageio/imageio-ffmpeg) package, which is GPL-licensed. Python package
+versions are pinned in `backend/constraints.txt`, so a build today matches one next month; `scripts/build-app.sh --pin`
+resolves them afresh with the app's own Python and rewrites the file.
 
 ## Run from source
 

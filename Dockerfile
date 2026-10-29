@@ -10,8 +10,8 @@ RUN npm run build
 FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app/backend
-COPY backend/requirements-server.txt ./
-RUN pip install --no-cache-dir -r requirements-server.txt
+COPY backend/requirements-server.txt backend/constraints.txt ./
+RUN pip install --no-cache-dir -c constraints.txt -r requirements-server.txt
 COPY backend/*.py ./
 COPY backend/assets ./assets
 COPY --from=web /web/dist /app/frontend/dist
