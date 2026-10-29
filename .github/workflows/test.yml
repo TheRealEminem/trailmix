@@ -15,9 +15,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/requirements-server.txt
+          cache-dependency-path: backend/constraints.txt
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg  # audio is encoded with it, as in the Docker image
-      - run: pip install -r backend/requirements-server.txt pytest
+      - run: pip install -c backend/constraints.txt -r backend/requirements-server.txt pytest ruff
+      - run: ruff check backend
       - run: python -m pytest -q backend/tests
 
   # The speech engine used where MLX isn't (Intel Macs, Windows, Linux), on real speech with its tiny model.
@@ -29,8 +30,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/requirements-whispercpp.txt
-      - run: pip install -r backend/requirements-whispercpp.txt pytest
+          cache-dependency-path: backend/constraints.txt
+      - run: pip install -c backend/constraints.txt -r backend/requirements-whispercpp.txt pytest
       - run: python -m pytest -q backend/tests/test_engine_whispercpp.py backend/tests/test_local_engine.py
         env:
           TRAILMIX_ENGINE_TEST: "1"
@@ -59,15 +60,15 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: backend/requirements-server.txt
+          cache-dependency-path: backend/constraints.txt
       - name: ffmpeg
         shell: pwsh
         run: |
-          pip install -q --no-deps --target ff imageio-ffmpeg
+          pip install -q --no-deps --target ff -c backend/constraints.txt imageio-ffmpeg
           New-Item -ItemType Directory -Force ffbin | Out-Null
           Copy-Item (Get-ChildItem ff/imageio_ffmpeg/binaries/ffmpeg-win-*.exe)[-1].FullName ffbin/ffmpeg.exe
           "$PWD\ffbin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
-      - run: pip install -r backend/requirements-server.txt pytest
+      - run: pip install -c backend/constraints.txt -r backend/requirements-server.txt pytest
       - run: python -m pytest -q backend/tests
 
   # The Windows desktop shell (desktop/): compiles, and its own tests pass (the wire format, the audio

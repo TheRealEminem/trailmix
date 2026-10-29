@@ -5,10 +5,11 @@
 #   scripts/build-app.sh                         build dist/Trailmix.app for Apple silicon (MLX)
 #   scripts/build-app.sh --dmg                   also make dist/Trailmix-<version>-macos-<arch>.dmg, the file you hand out
 #   TRAILMIX_ARCH=x86_64 scripts/build-app.sh    for an Intel Mac (whisper.cpp, built from source with AVX2)
+#   scripts/build-app.sh --pin                   resolve the Python packages afresh and rewrite backend/constraints.txt
 #
 # Needs: a Mac on macOS 14.2+ (Apple silicon for arm64; an Intel Mac, or Apple silicon with Rosetta, for x86_64),
 # the Xcode command line tools (swift), Node.js and internet access (downloads the Python runtime once into
-# build/cache, plus Python packages).
+# build/cache, plus Python packages, at the versions pinned in backend/constraints.txt).
 #
 # Signing: ad-hoc by default, which is fine on your own Mac and for people who accept the "unidentified
 # developer" prompt. To sign for real, set TRAILMIX_SIGN_IDENTITY="Developer ID Application: …" (this turns
@@ -37,6 +38,8 @@ case "$ARCH" in
   *) echo "TRAILMIX_ARCH is arm64 or x86_64, not $ARCH" >&2; exit 1 ;;
 esac
 PY_FILE="cpython-$PY_VERSION+$PY_RELEASE-$PY_ARCH-apple-darwin-install_only_stripped.tar.gz"
+# Every Python package at the version listed here, so a build today matches one next month (--pin rewrites it).
+CONSTRAINTS="$ROOT/backend/constraints.txt"
 
 say() { printf '\033[1;32m›\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
@@ -47,6 +50,41 @@ if [ "$ARCH" = arm64 ]; then
 elif [ "$(uname -m)" = arm64 ]; then
   arch -x86_64 /usr/bin/true 2>/dev/null || die "Building for an Intel Mac here needs Rosetta: softwareupdate --install-rosetta"
 fi
+fetch_runtime() {  # the Python runtime into build/cache, checked against its pinned checksum
+  mkdir -p "$CACHE"
+  if [ ! -f "$CACHE/$PY_FILE" ]; then
+    say "Downloading the Python runtime ($PY_VERSION, once)…"
+    curl -fL --progress-bar -o "$CACHE/$PY_FILE.part" "https://github.com/astral-sh/python-build-standalone/releases/download/$PY_RELEASE/${PY_FILE//+/%2B}"
+    mv "$CACHE/$PY_FILE.part" "$CACHE/$PY_FILE"
+  fi
+  [ "$(shasum -a 256 "$CACHE/$PY_FILE" | cut -d' ' -f1)" = "$PY_SHA256" ] || { rm -f "$CACHE/$PY_FILE"; die "The downloaded Python runtime failed its checksum; try again."; }
+}
+
+export PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_INPUT=1
+
+if [ "${1:-}" = "--pin" ]; then
+  # Resolve everything the installs ask for (the app's packages, whisper.cpp's, the ffmpeg wheel) with the app's own
+  # Python, and write the versions down. Nothing is built.
+  fetch_runtime
+  TMP="$(mktemp -d)"
+  trap 'rm -rf "$TMP"' EXIT
+  tar -xzf "$CACHE/$PY_FILE" -C "$TMP"
+  say "Resolving the Python packages with Python $PY_VERSION…"
+  "$TMP/python/bin/python3" -m venv "$TMP/venv"
+  PIP="$TMP/venv/bin/pip"
+  "$PIP" install -q -r "$ROOT/backend/requirements-app.txt" -r "$ROOT/backend/requirements-whispercpp.txt"
+  "$PIP" install -q --no-deps "mlx-whisper>=0.4" imageio-ffmpeg
+  {
+    echo "# Pinned Python package versions for every Trailmix install: the Mac app, the Docker image, CI and a source checkout."
+    echo "# What scripts/build-app.sh --pin resolved from the requirements files with the app's own Python ($PY_VERSION) on $(date +%Y-%m-%d)."
+    echo "# Used with pip's -c: a requirement only ever gets the version listed here; a package not listed floats. To move"
+    echo "# to newer versions, run --pin again and look at the diff."
+    "$PIP" freeze --exclude-editable | grep -v '^pip=='
+  } >"$CONSTRAINTS"
+  say "Wrote $CONSTRAINTS ($(grep -c '==' "$CONSTRAINTS") packages)."
+  exit 0
+fi
+
 command -v swift >/dev/null || die "Building needs the Xcode command line tools: xcode-select --install"
 command -v npm >/dev/null || die "Building needs Node.js (brew install node)."
 
@@ -93,21 +131,14 @@ cat >"$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 # ── Python runtime ─────────────────────────────────────────────────────
-mkdir -p "$CACHE"
-if [ ! -f "$CACHE/$PY_FILE" ]; then
-  say "Downloading the Python runtime ($PY_VERSION, once)…"
-  curl -fL --progress-bar -o "$CACHE/$PY_FILE.part" "https://github.com/astral-sh/python-build-standalone/releases/download/$PY_RELEASE/${PY_FILE//+/%2B}"
-  mv "$CACHE/$PY_FILE.part" "$CACHE/$PY_FILE"
-fi
-[ "$(shasum -a 256 "$CACHE/$PY_FILE" | cut -d' ' -f1)" = "$PY_SHA256" ] || { rm -f "$CACHE/$PY_FILE"; die "The downloaded Python runtime failed its checksum; try again."; }
+fetch_runtime
 tar -xzf "$CACHE/$PY_FILE" -C "$RES"   # -> Resources/python
 PY="$RES/python/bin/python3"
 
-say "Installing Python packages…"
-export PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_INPUT=1
+say "Installing Python packages (backend/constraints.txt)…"
 if [ "$ARCH" = arm64 ]; then
-  "$PY" -m pip install -q --no-compile -r "$ROOT/backend/requirements-app.txt"
-  "$PY" -m pip install -q --no-compile --no-deps "mlx-whisper>=0.4"
+  "$PY" -m pip install -q --no-compile -c "$CONSTRAINTS" -r "$ROOT/backend/requirements-app.txt"
+  "$PY" -m pip install -q --no-compile --no-deps -c "$CONSTRAINTS" "mlx-whisper>=0.4"
 else
   # whisper.cpp has no Intel Mac wheel, so it's compiled here: for any Intel Mac that runs macOS 14.2 (all have
   # AVX2) rather than tuned to this one, and on the CPU (Metal on Intel Macs' GPUs is slower or unsupported).
@@ -119,7 +150,7 @@ else
   # Under Rosetta the command line tools' xcrun can't load (it has no Intel half), so CMake gets the compilers
   # and SDK found here instead of looking them up itself.
   [ "$(uname -m)" = arm64 ] && BUILD_ENV+=(CC="$(xcrun -f clang)" CXX="$(xcrun -f clang++)" SDKROOT="$(xcrun --show-sdk-path)")
-  env -i "${BUILD_ENV[@]}" "$PY" -m pip install -q --no-compile -r "$ROOT/backend/requirements-whispercpp.txt"
+  env -i "${BUILD_ENV[@]}" "$PY" -m pip install -q --no-compile -c "$CONSTRAINTS" -r "$ROOT/backend/requirements-whispercpp.txt"
   # Built this way, it still looks for its libraries in pip's build folder, which is gone; they're next to it.
   WSITE="$RES/python/lib/python${PY_VERSION%.*}/site-packages"
   for f in "$WSITE"/_pywhispercpp*.so "$WSITE"/libwhisper*.dylib "$WSITE"/libggml*.dylib; do
@@ -134,7 +165,7 @@ fi
 # ffmpeg: a static build from the imageio-ffmpeg wheel (only system frameworks, includes the Opus encoder).
 FF_TMP="$(mktemp -d)"
 trap 'rm -rf "$FF_TMP"' EXIT
-"$PY" -m pip install -q --no-compile --no-deps --target "$FF_TMP" imageio-ffmpeg
+"$PY" -m pip install -q --no-compile --no-deps --target "$FF_TMP" -c "$CONSTRAINTS" imageio-ffmpeg
 cp "$FF_TMP"/imageio_ffmpeg/binaries/ffmpeg-macos-* "$RES/bin/ffmpeg"
 chmod +x "$RES/bin/ffmpeg"
 
