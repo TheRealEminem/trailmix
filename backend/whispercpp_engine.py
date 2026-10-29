@@ -38,8 +38,10 @@ _model = None
 _model_name: str | None = None
 
 
-def _threads() -> int:
-    return max(1, min(8, _cores()))
+def _threads(meeting: bool = False) -> int:
+    """All the cores (up to 8) after a meeting; half of them during one, so the call, the recorder and the window
+    aren't starved on a slower computer."""
+    return max(1, min(8, _cores() // 2 if meeting else _cores()))
 
 
 def _load(model: str):
@@ -61,9 +63,10 @@ def _compression_ratio(text: str) -> float:
     return len(data) / len(zlib.compress(data)) if data else 0.0
 
 
-def run(audio: np.ndarray, model: str, prompt: str | None, language: str | None) -> list[dict]:
+def run(audio: np.ndarray, model: str, prompt: str | None, language: str | None, meeting: bool = False) -> list[dict]:
     found = _load(model).transcribe(
         np.ascontiguousarray(audio, dtype=np.float32),
+        n_threads=_threads(meeting),
         extract_probability=True,
         language=language or "auto",
         no_context=True,  # avoids repetition loops on long recordings

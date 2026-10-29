@@ -48,12 +48,13 @@ def model_label(model: str) -> str:
     return name.removesuffix("-mlx")
 
 
-def run(audio: np.ndarray, model: str, prompt: str | None = None) -> list[dict]:
+def run(audio: np.ndarray, model: str, prompt: str | None = None, meeting: bool = False) -> list[dict]:
     """`prompt`: what was said just before (live chunks are a few seconds long; it gives the model the
-    context a long recording would have, for names and words cut at a chunk's start)."""
+    context a long recording would have, for names and words cut at a chunk's start). `meeting`: a call is going
+    on, so the engine leaves it room (whisper.cpp uses half the cores rather than all of them)."""
     if ENGINE is None:
         raise RuntimeError("No local transcription engine is installed")
-    return ENGINE.run(audio, model, prompt, LANGUAGE)
+    return ENGINE.run(audio, model, prompt, LANGUAGE, meeting)
 
 
 def filter_hallucinations(segs: list[dict]) -> list[dict]:
@@ -65,7 +66,7 @@ def transcribe_live(audio: np.ndarray, prompt: str | None = None) -> list[dict] 
     if not _lock.acquire(blocking=False):
         return None
     try:
-        segs = run(audio, LIVE_MODEL, prompt)
+        segs = run(audio, LIVE_MODEL, prompt, meeting=True)
     finally:
         _lock.release()
     return filter_hallucinations(segs)
@@ -74,7 +75,7 @@ def transcribe_live(audio: np.ndarray, prompt: str | None = None) -> list[dict] 
 def transcribe_final(audio: np.ndarray, prompt: str | None = None) -> list[dict]:
     """The accurate model on a chunk, in this process (final transcript while recording). Waits its turn."""
     with _lock:
-        return run(audio, FINAL_MODEL, prompt)
+        return run(audio, FINAL_MODEL, prompt, meeting=True)
 
 
 def loaded() -> str | None:

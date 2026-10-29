@@ -80,3 +80,14 @@ def test_whisper_cpp_segments_come_out_as_whisper_ones(monkeypatch):
     assert segs[0]["avg_logprob"] == pytest.approx(math.log(0.5)) and segs[1]["avg_logprob"] == 0.0
     assert segs[0]["no_speech_prob"] == 0.0 and segs[0]["compression_ratio"] > 0
     assert calls[0]["language"] == "auto" and calls[0]["initial_prompt"] == "Priya" and calls[0]["no_context"]
+
+
+def test_whisper_cpp_leaves_a_meeting_room(monkeypatch):
+    monkeypatch.setattr(whispercpp_engine, "_cores", lambda: 8)
+    calls = []
+    monkeypatch.setattr(whispercpp_engine, "_load", lambda m: SimpleNamespace(transcribe=lambda a, **kw: calls.append(kw) or []))
+    whispercpp_engine.run(np.zeros(1600, dtype=np.float32), "m", None, "en", meeting=True)
+    whispercpp_engine.run(np.zeros(1600, dtype=np.float32), "m", None, "en")
+    assert [c["n_threads"] for c in calls] == [4, 8]
+    monkeypatch.setattr(whispercpp_engine, "_cores", lambda: 1)
+    assert whispercpp_engine._threads(meeting=True) == 1

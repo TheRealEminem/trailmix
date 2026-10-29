@@ -11,7 +11,7 @@ FINAL_MODEL = "mlx-community/whisper-large-v3-turbo"
 FINAL_MODEL_RAM_GB = 3.0  # rough peak, for the RAM gate
 
 
-def run(audio: np.ndarray, model: str, prompt: str | None, language: str | None) -> list[dict]:
+def run(audio: np.ndarray, model: str, prompt: str | None, language: str | None, meeting: bool = False) -> list[dict]:
     import mlx_whisper  # lazy: slow import, and lets the API boot without it
 
     result = mlx_whisper.transcribe(
