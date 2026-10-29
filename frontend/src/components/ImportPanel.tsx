@@ -616,7 +616,7 @@ function GranolaBrowser({ onImported, onError }: Pick<Props, "onImported" | "onE
       .granolaImportStatus()
       .then((j) => j.active && setJob(j))
       .catch(() => undefined);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!job?.active) return;
