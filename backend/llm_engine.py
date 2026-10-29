@@ -533,7 +533,13 @@ def run_chain(choice: str, cfg: dict, fn) -> tuple[object, str]:
 
 # ── Model discovery & connection tests ─────────────────────────────────
 
+# Gemini models that don't write text: speech, pictures, music, video, embeddings, and agents for other jobs. The
+# listing says what each one takes in (generateContent), not what it puts out, so they're told by name.
+_NOT_FOR_NOTES = re.compile(r"tts|image|imagen|veo|lyria|banana|robotics|computer-use|transcribe|embed|aqa|deep-research|antigravity", re.I)
+
+
 def list_models(pid: str, cfg: dict) -> list[str]:
+    """The models a provider offers for writing notes (the picker in Settings; any other name can still be typed)."""
     if pid == "ollama":
         tags = _ollama_tags(cfg)
         if not tags:
@@ -558,8 +564,9 @@ def list_models(pid: str, cfg: dict) -> list[str]:
                       timeout=20)
         if r.status_code >= 400:
             raise LLMError(f"Gemini returned {r.status_code}: {_error_text(r)}")
-        return [m["name"].removeprefix("models/") for m in r.json().get("models", [])
-                if "generateContent" in m.get("supportedGenerationMethods", [])]
+        names = [m["name"].removeprefix("models/") for m in r.json().get("models", [])
+                 if "generateContent" in m.get("supportedGenerationMethods", [])]
+        return [n for n in names if not _NOT_FOR_NOTES.search(n)]
     base = cfg["custom_base_url"] if pid == "custom" else PROVIDERS[pid]["base"]
     key = cfg[f"{pid}_api_key"]
     if not base:
