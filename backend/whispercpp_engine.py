@@ -8,6 +8,7 @@ import gc
 import math
 import os
 import platform
+import time
 import zlib
 
 import numpy as np
@@ -63,10 +64,20 @@ def _compression_ratio(text: str) -> float:
     return len(data) / len(zlib.compress(data)) if data else 0.0
 
 
+def _meeting_limits(seconds: float) -> dict:
+    """During a meeting a chunk must come back quickly, since Stop waits for the one being transcribed: no retries at
+    higher temperatures (whisper.cpp's fallback, which on some audio retried one chunk for 40 seconds), and a deadline
+    of twice the audio's length (at least 15 seconds), after which it stops with what it has."""
+    deadline = time.monotonic() + max(15.0, 2 * seconds)
+    return {"temperature_inc": 0.0, "abort_callback": lambda: time.monotonic() > deadline}
+
+
 def run(audio: np.ndarray, model: str, prompt: str | None, language: str | None, meeting: bool = False) -> list[dict]:
+    limits = _meeting_limits(len(audio) / 16000) if meeting else {}
     found = _load(model).transcribe(
         np.ascontiguousarray(audio, dtype=np.float32),
         n_threads=_threads(meeting),
+        **limits,
         extract_probability=True,
         language=language or "auto",
         no_context=True,  # avoids repetition loops on long recordings
