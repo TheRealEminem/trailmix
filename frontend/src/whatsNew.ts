@@ -9,6 +9,19 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.19.2",
+    items: [
+      {
+        title: "A problem on one page no longer blanks the window",
+        body: "If a page hits an error, it says so, with Try again and Reload, and the sidebar keeps working. Report a problem from there and the error goes with it.",
+      },
+      {
+        title: "The window stays quick while a meeting is processed",
+        body: "Lists and the live view no longer wait while a transcript or notes are being saved.",
+      },
+    ],
+  },
+  {
     version: "0.19.1",
     items: [
       {
