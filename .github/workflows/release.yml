@@ -1,7 +1,7 @@
 # Builds the Mac app for Apple silicon and for Intel Macs and the Windows installer, tries each end to end on its own
 # kind of computer, and publishes them as a *pre-release* (a beta).
-#   git tag v0.1.0 && git push --tags      -> builds, tests, publishes Trailmix-0.1.0-macos-{arm64,x86_64}.dmg and
-#                                             Trailmix-0.1.0-windows-x64.exe as a pre-release
+#   git tag v0.1.0 && git push --tags      -> builds, tests, publishes Trailmix-0.1.0-macos-{arm64,x86_64}.dmg (and,
+#                                             once PUBLISH_WINDOWS is on, Trailmix-0.1.0-windows-x64.exe) as a pre-release
 #   Actions tab -> "Build Mac app" -> Run   -> builds and tests it, keeps it as a downloadable artifact only
 #     ... on main, with "Release it" ticked -> tags main as v<VERSION> and publishes it, as a pushed tag would
 #     ... and "To everyone" ticked too      -> also promotes it right away (scripts/promote.sh), skipping the beta days
@@ -196,12 +196,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.version.outputs.tag }}
+          # Off until the Windows app can update itself: an installer published now would leave everyone who took it
+          # downloading each version by hand. Until then it's built and smoke-tested on every release and kept as this
+          # run's Trailmix-windows-x64 artifact, for testing. Set to "1" to publish it.
+          PUBLISH_WINDOWS: "0"
         # Each disk image is named for the computer it's for, Trailmix-<version>-macos-<arch>.dmg (the app's updater picks
         # its own by that name), and has a copy with a fixed name, Trailmix-macos-<arch>.dmg, so a link to
         # releases/latest/download/... always works ("latest" skips pre-releases: the last promoted version).
         # Also under the names from before there were other platforms (Trailmix-<version>-arm64.dmg, Trailmix-arm64.dmg):
         # apps from then look for those, and links to them are out there. The Windows installer,
-        # Trailmix-<version>-windows-x64.exe (+ .sha256, + the fixed name), comes along when its build passed.
+        # Trailmix-<version>-windows-x64.exe (+ .sha256, + the fixed name), comes along when its build passed (and
+        # PUBLISH_WINDOWS is on).
         # --target makes the tag on this commit when the run was started with "Release it" (a tag made with this
         # workflow's token doesn't start another run, so it isn't built twice).
         run: |
@@ -217,7 +222,9 @@ jobs:
           shasum -a 256 "Trailmix-$V-arm64.dmg" >"Trailmix-$V-arm64.dmg.sha256"
           cp Trailmix-macos-arm64.dmg Trailmix-arm64.dmg
           WINDOWS=()
-          if [ -f "Trailmix-$V-windows-x64.exe" ]; then
+          if [ "$PUBLISH_WINDOWS" != 1 ]; then
+            echo "Windows installer built and tested, not published yet (PUBLISH_WINDOWS)"
+          elif [ -f "Trailmix-$V-windows-x64.exe" ]; then
             cp "Trailmix-$V-windows-x64.exe" Trailmix-windows-x64.exe
             WINDOWS=("Trailmix-$V-windows-x64.exe" "Trailmix-$V-windows-x64.exe.sha256" Trailmix-windows-x64.exe)
           else
