@@ -303,7 +303,7 @@ impl Model {
             "lockdown": updater.as_ref().map(|u| u.lockdown()),
             "update": updater.as_ref().map(|u| u.report()),
             "call_app": self.call_app(),
-            "platform": "windows-x64",
+            "platform": if cfg!(target_arch = "aarch64") { "windows-arm64" } else { "windows-x64" },
             "capabilities": capabilities,
         })
     }
