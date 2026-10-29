@@ -100,7 +100,7 @@ def test_notes_go_to_the_cloud_by_role_and_cost_nothing_extra(fresh_db, monkeypa
 def test_a_refusal_shows_the_servers_own_sentence(fresh_db, monkeypatch):
     refused = reply(402, {"error": {"message": "Your free hours are used up. Pick a plan to keep going."}}, "basic")
     monkeypatch.setattr(llm_engine.httpx, "post", lambda url, **kw: refused)
-    with pytest.raises(llm_engine.LLMError, match="^Your free hours are used up"):
+    with pytest.raises(llm_engine.LLMError, match=r"^Your free hours are used up"):
         llm_engine.generate("trailmix", cfg(), "q")
 
 
@@ -217,7 +217,7 @@ def test_with_your_own_key_clips_go_inline_to_the_speech_model_and_are_the_trans
     assert url == "https://generativelanguage.googleapis.com/v1beta/interactions" and headers["x-goog-api-key"] == "AIza-k"
     assert body["model"] == "gemini-3.5-transcribe" and body["input"][0]["data"] == "b2dn"  # the clip itself, no upload
     assert "diarization_mode" not in body["generation_config"]["transcription_config"]["mode"]
-    assert [(l["speaker"], l["text"]) for l in lines] == [("Them", "hello there")]
+    assert [(line["speaker"], line["text"]) for line in lines] == [("Them", "hello there")]
     session.finish()
     saved = json.loads(db.get_meeting(session.meeting_id)["live_json"])
     assert saved["complete"] and saved["engine"] == "gemini" and saved["covered"]["system"] == int(9.5 * SR)
@@ -225,7 +225,7 @@ def test_with_your_own_key_clips_go_inline_to_the_speech_model_and_are_the_trans
     assert (used["kind"], used["engine"], used["seconds"]) == ("transcript", "gemini", 9.5)
     assert used["cost"] == pytest.approx(9.5 / 60 * 0.005, abs=1e-4)  # priced per minute, rounded
 
-    segments, labeled, duration = pipeline._finish_live(db.get_meeting(session.meeting_id), own)
+    segments, _labeled, duration = pipeline._finish_live(db.get_meeting(session.meeting_id), own)
     assert len(sent) == 2 and duration == 12  # after Stop, only the last 2.5 s went to Google
     assert segments[-1]["start"] == pytest.approx(9.5 + 0.2)
     assert sum(u["seconds"] for u in db.usage_since("2000-01-01")) == pytest.approx(12)
@@ -283,7 +283,7 @@ def test_a_clip_comes_back_as_timed_lines(fresh_db, monkeypatch):
         200, {"candidates": [{"content": {"parts": [{"text": turns}]}}]}))
     monkeypatch.setattr(transcribe_gemini, "encode", lambda audio: b"ogg")
     lines = transcribe_gemini.transcribe_clip(np.zeros(6 * SR, dtype=np.float32), "tmc_x", None, "transcribe_chunk")
-    assert [(round(l["start"]), l["text"]) for l in lines] == [(1, "Morning all"), (4, "shall we start")]
+    assert [(round(line["start"]), line["text"]) for line in lines] == [(1, "Morning all"), (4, "shall we start")]
 
 
 def test_trailmix_cloud_is_only_offered_once_this_copy_knows_where_it_is(monkeypatch):

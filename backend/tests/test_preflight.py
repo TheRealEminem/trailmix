@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,7 +27,7 @@ def fresh_db(tmp_path, monkeypatch):
 def pasted(minutes: int) -> int:
     """An imported transcript about this many minutes long (about 1,000 characters a minute)."""
     segments = [{"start": i * 60, "end": i * 60 + 59, "speaker": "Them", "text": "word " * 196} for i in range(minutes)]
-    return importer.save_imported("Planning", datetime.now(timezone.utc), segments, "paste", None, None)
+    return importer.save_imported("Planning", datetime.now(UTC), segments, "paste", None, None)
 
 
 def test_an_import_waits_for_a_choice_when_asked_to(fresh_db):

@@ -65,7 +65,7 @@ async def _retire_idle():
 
 @app.on_event("startup")
 async def _start():
-    asyncio.create_task(_retire_idle())
+    app.state.retire_idle = asyncio.create_task(_retire_idle())  # kept, or the task could be collected mid-way
 
 
 @app.middleware("http")

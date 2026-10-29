@@ -15,7 +15,7 @@ decided with what's still open, so "What's been decided?" needs a cloud AI or a 
 after the last question. Lockdown mode keeps it on this computer: only AI running here is asked.
 """
 import json
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 import psutil
 
@@ -305,8 +305,8 @@ def ask(session: "live.LiveSession", m: dict, cfg: dict, kind: str, text: str = 
         _learn(model, sent["gemini"], usage)
         db.log_usage(session.meeting_id, "catch up", "gemini", model, 0, spent)
     entry = {"q": KINDS.get(kind, question), "a": reply.strip(), "provider": used, "label": llm_engine.label(used, cfg),
-             "at": datetime.now(timezone.utc).isoformat(), "live": True, "kind": kind, "t": round(session.duration, 1)}
+             "at": datetime.now(UTC).isoformat(), "live": True, "kind": kind, "t": round(session.duration, 1)}
     fresh = db.get_meeting(session.meeting_id) or m  # another question may have been saved meanwhile
     saved = json.loads(fresh["qa_json"]) if fresh.get("qa_json") else []
-    db.update_meeting(session.meeting_id, qa_json=(saved + [entry])[-HISTORY:])
+    db.update_meeting(session.meeting_id, qa_json=([*saved, entry])[-HISTORY:])
     return entry

@@ -3,6 +3,7 @@ import pytest
 import gemini_batch
 import gemini_client
 import transcribe_gemini
+from typing import ClassVar
 
 
 def test_your_own_key_goes_to_google_signed_with_the_key():
@@ -34,7 +35,7 @@ def test_every_module_sends_to_the_same_place(monkeypatch):
 
     class Reply:
         status_code, text, content = 200, "{}", b"{}"
-        headers = {}
+        headers: ClassVar[dict] = {}
 
         def json(self):
             return {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}

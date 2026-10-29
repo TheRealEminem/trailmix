@@ -10,7 +10,7 @@ import hashlib
 import json
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 import numpy as np
 
@@ -154,11 +154,11 @@ def _check(cfg: dict) -> int:
         if now["state"] == "succeeded" and not job["applied"]:
             outcome = (_apply_transcripts if job["kind"] == "transcripts" else _apply_notes)(job, now["results"] or {}, cfg)
             db.update_batch_job(job["id"], state="succeeded", applied=1, result_json=json.dumps(outcome),
-                                finished_at=datetime.now(timezone.utc).isoformat())
+                                finished_at=datetime.now(UTC).isoformat())
         elif now["state"] in ("failed", "cancelled", "expired"):
             _delete_files(json.loads(job["items_json"]).values(), gemini_client.credential(cfg))
             db.update_batch_job(job["id"], state=now["state"], error=now.get("error"),
-                                finished_at=datetime.now(timezone.utc).isoformat())
+                                finished_at=datetime.now(UTC).isoformat())
         elif now["state"] != job["state"]:
             db.update_batch_job(job["id"], state=now["state"])
     return changed
@@ -171,9 +171,9 @@ def cancel(job_id: int, cfg: dict) -> None:
     try:
         gemini_batch.cancel(job["name"], gemini_client.credential(cfg))
     except gemini_batch.BatchError as e:
-        raise NotReady(str(e))
+        raise NotReady(str(e)) from e
     _delete_files(json.loads(job["items_json"]).values(), gemini_client.credential(cfg))
-    db.update_batch_job(job_id, state="cancelled", finished_at=datetime.now(timezone.utc).isoformat())
+    db.update_batch_job(job_id, state="cancelled", finished_at=datetime.now(UTC).isoformat())
 
 
 # ── Transcripts redone by a general model (economy), at half price ──────────

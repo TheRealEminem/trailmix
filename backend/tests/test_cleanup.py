@@ -16,7 +16,7 @@ def test_keeps_ordinary_speech():
 
 def test_drops_decoding_loops():
     loop = [seg(18.5 + i * 0.12, 18.5 + i * 0.12 + 0.11, "I have a really good one!") for i in range(8)]
-    kept = cleanup.drop_hallucinations([seg(17.5, 18.6, "I have a really good one!")] + loop)
+    kept = cleanup.drop_hallucinations([seg(17.5, 18.6, "I have a really good one!"), *loop])
     assert texts(kept) == ["I have a really good one!"]
 
 

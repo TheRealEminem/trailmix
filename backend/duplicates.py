@@ -17,7 +17,7 @@ import re
 import statistics
 import threading
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 import database as db
 import meeting_text
@@ -206,13 +206,13 @@ def merge(a_id: int, b_id: int, score_: float | None = None) -> int:
                   "before": {"version": before, "summary": keep.get("summary"), "summary_provider": keep.get("summary_provider"),
                              "summary_model": keep.get("summary_model"), "title": keep["title"],
                              "title_auto": keep.get("title_auto"), "workspace_id": keep.get("workspace_id")},
-                  "offset": shift, "score": score_, "at": datetime.now(timezone.utc).isoformat()}
+                  "offset": shift, "score": score_, "at": datetime.now(UTC).isoformat()}
         merged = json.loads(keep["merged_json"]) if keep.get("merged_json") else []
         if keep.get("ask_first") and changes.get("summary"):
             changes["ask_first"] = 0  # it has notes now: nothing to choose
         if keep["status"] in ("ready_summarize", "error") and (changes.get("summary") or keep.get("summary")):
             changes["status"] = "done"
-        db.update_meeting(keep["id"], why=why, merged_json=merged + [record], duplicate_of=None, **changes)
+        db.update_meeting(keep["id"], why=why, merged_json=[*merged, record], duplicate_of=None, **changes)
         if "summary" in changes:
             db.replace_tasks(keep["id"], meeting_text.action_items(changes["summary"]))
         db.delete_meeting(gone["id"])
@@ -258,7 +258,7 @@ def unmerge(meeting_id: int) -> int:
         apart = json.loads(m["not_duplicate_json"]) if m.get("not_duplicate_json") else []
         db.update_meeting(meeting_id, why="the merge was undone", merged_json=merged or None, title=before["title"],
                           title_auto=before.get("title_auto") or 0, workspace_id=before.get("workspace_id"),
-                          not_duplicate_json=apart + [back], **notes)
+                          not_duplicate_json=[*apart, back], **notes)
         db.replace_tasks(meeting_id, meeting_text.action_items(before["summary"]) if before["summary"] else [])
     pipeline.reexport(meeting_id)
     return back
@@ -270,7 +270,7 @@ def keep_apart(a_id: int, b_id: int) -> None:
         m = db.get_meeting(x)
         if m:
             apart = json.loads(m["not_duplicate_json"]) if m.get("not_duplicate_json") else []
-            db.update_meeting(x, not_duplicate_json=list(dict.fromkeys(apart + [y])),
+            db.update_meeting(x, not_duplicate_json=list(dict.fromkeys([*apart, y])),
                               duplicate_of=None if m.get("duplicate_of") == y else m.get("duplicate_of"))
 
 

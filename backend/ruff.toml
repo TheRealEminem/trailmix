@@ -1,0 +1,15 @@
+# Lint for the backend: `ruff check backend` from the repository root (also in CI, .github/workflows/test.yml).
+# A modest set: mistakes and outdated idioms, not style. Lines are long here on purpose (comments in prose), so
+# the line-length rule is off; the typographic quotes and dashes in strings and comments are deliberate too.
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = ["E", "F", "W", "B", "UP", "SIM", "RUF"]
+ignore = [
+    "E501",    # line too long
+    "RUF001", "RUF002", "RUF003",  # typographic characters in strings, docstrings and comments
+    "B008",    # function calls as argument defaults: FastAPI's File() and Form() are exactly that
+    "E731",    # a one-line helper assigned as a lambda reads fine
+    "SIM905",  # a word list as "a b c".split() reads better than a list literal
+]
