@@ -267,6 +267,12 @@ def count_meetings() -> int:
 
 
 def main(argv: list[str]) -> int:
+    # The console's code page can't show everything the app and its logs print: never fail over that.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     if len(argv) < 2:
         print(__doc__, file=sys.stderr)
         return 2
@@ -407,7 +413,7 @@ def main(argv: list[str]) -> int:
             raise Failure("the engine didn't stop")
 
         if previous:
-            log(f"Going back to {old_version} the way you would: Settings → Updates → Go back")
+            log(f"Going back to {old_version} the way you would: Settings > Updates > Go back")
             # The stand-in now lists both versions, as GitHub does, plus a newer release built only for other
             # computers, which the updater has to pass over rather than offer.
             old_files = publish(feed, previous, f"Trailmix-{old_version}-windows-{arch}.exe")

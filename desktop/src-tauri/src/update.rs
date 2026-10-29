@@ -236,10 +236,6 @@ impl Updater {
         });
     }
 
-    pub fn beta(&self) -> bool {
-        self.lock().saved.beta
-    }
-
     pub fn set_beta(self: &Arc<Self>, on: bool) {
         {
             let mut inner = self.lock();
