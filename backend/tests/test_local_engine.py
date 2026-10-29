@@ -89,5 +89,17 @@ def test_whisper_cpp_leaves_a_meeting_room(monkeypatch):
     whispercpp_engine.run(np.zeros(1600, dtype=np.float32), "m", None, "en", meeting=True)
     whispercpp_engine.run(np.zeros(1600, dtype=np.float32), "m", None, "en")
     assert [c["n_threads"] for c in calls] == [4, 8]
+    assert calls[0]["temperature_inc"] == 0.0 and not calls[0]["abort_callback"]()  # no retries; time to finish
+    assert "abort_callback" not in calls[1]  # after the meeting: no limits
+
+
+def test_a_meeting_chunk_has_a_deadline(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(whispercpp_engine.time, "monotonic", lambda: now[0])
+    stop = whispercpp_engine._meeting_limits(5.0)["abort_callback"]  # a 5 s chunk: 15 s at least
+    now[0] += 14
+    assert not stop()
+    now[0] += 2
+    assert stop()
     monkeypatch.setattr(whispercpp_engine, "_cores", lambda: 1)
     assert whispercpp_engine._threads(meeting=True) == 1
