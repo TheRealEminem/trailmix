@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { api, inApp, revealInFinder } from "../api";
 import type { Connection, Connections, GranolaNote, ImportJob, ServiceInfo, SyncStart } from "../api";
 import { formatLongDate, formatTime, tildePath } from "../format";
+import { platformWords } from "../platform";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -540,7 +541,7 @@ function ConnectFolder({
       </p>
       {suggestions.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-hint text-ink-soft">
-          Found on this Mac:
+          Found on {platformWords().thisComputer}:
           {suggestions.map((s) => (
             <button
               key={s.path}

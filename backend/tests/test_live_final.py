@@ -7,6 +7,7 @@ import audio_store as store
 import database as db
 import live
 import pipeline
+import platform_words
 import resources
 
 SR = store.SAMPLE_RATE
@@ -122,7 +123,7 @@ def test_memory_gate_lets_macos_swap_unless_it_is_dire(monkeypatch):
     state["pressure"], state["disk"] = 1, 0.05
     assert "disk free" in resources.check(5, "The summary model")
     state["disk"] = 0.5
-    assert "more than this Mac can spare" in resources.check(15, "The summary model")
+    assert f"more than {platform_words.this_computer()} can spare" in resources.check(15, "The summary model")
 
 
 def test_cuts_land_at_pauses_or_between_words():

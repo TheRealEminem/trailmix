@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { api } from "../api";
 import type { Health, Preflight, ProviderId, TranscribeEngine } from "../api";
 import { shortModel } from "../format";
+import { cap, platformWords } from "../platform";
 import { useBigSpend } from "../spend";
 import { AlertIcon, ChevronDownIcon, CloudIcon, LaptopIcon, LinesIcon, SparkleIcon } from "./icons";
 import { Segmented, Select, Spinner, Switch, TemplateSelect } from "./ui";
@@ -263,7 +264,7 @@ export function PreflightSheet({
                   {engine === "local" ? (
                     <>
                       <PlanLine>
-                        Free, on this Mac: {tx.plan.minutes} min of audio with {shortModel(tx.plan.model)}.
+                        Free, on {platformWords().thisComputer}: {tx.plan.minutes} min of audio with {shortModel(tx.plan.model)}.
                       </PlanLine>
                       <PlanLine tone={(tx.plan.ram_needed_gb ?? 0) > tx.plan.ram_free_gb ? "warn" : "plain"}>
                         Needs about {gb(tx.plan.ram_needed_gb ?? 0)} of memory; {gb(tx.plan.ram_free_gb)} is free now.
@@ -299,7 +300,7 @@ export function PreflightSheet({
                     value={where(!!pickedOption?.local)}
                     onChange={(v) => pickKind(v === "here")}
                     options={[
-                      { id: "here", label: "On this Mac", icon: <LaptopIcon size={14} /> },
+                      { id: "here", label: `On ${platformWords().thisComputer}`, icon: <LaptopIcon size={14} /> },
                       { id: "cloud", label: "In the cloud", icon: <CloudIcon size={14} /> },
                     ]}
                   />
@@ -320,7 +321,7 @@ export function PreflightSheet({
                       .map((o) => ({
                         value: o.provider,
                         label: o.label,
-                        hint: o.ready ? (o.local ? "On this Mac" : "Cloud") : "Not set up yet",
+                        hint: o.ready ? (o.local ? `On ${platformWords().thisComputer}` : "Cloud") : "Not set up yet",
                       }))}
                   />
                   <ModelSelect provider={provider} value={model} onChange={setModel} />
@@ -331,7 +332,7 @@ export function PreflightSheet({
                       {single
                         ? `Too long for ${shortModel(plan.model)} to read at once, so it reads the transcript in ${maxParts} parts, then writes them up`
                         : `${split} of these ${split === 1 ? "is" : "are"} too long for ${shortModel(plan.model)} to read at once: read in parts, then written up`}
-                      : about {plan.calls} requests in all{plan.local ? ", one after another on this Mac" : ""}.
+                      : about {plan.calls} requests in all{plan.local ? `, one after another on ${platformWords().thisComputer}` : ""}.
                     </PlanLine>
                   ) : (
                     <PlanLine>
@@ -343,7 +344,10 @@ export function PreflightSheet({
                     <>
                       <PlanLine tone={short ? "warn" : "plain"}>
                         Free. Needs about {gb(plan.ram_needed_gb ?? 0)} of memory; {gb(plan.ram_free_gb)} is free now
-                        {short ? ", so macOS will swap and your Mac may feel slow until it's done" : ""}.
+                        {short
+                          ? `, so ${platformWords().osName} will swap and ${platformWords().yourComputer} may feel slow until it's done`
+                          : ""}
+                        .
                       </PlanLine>
                       {data.recording && <PlanLine tone="warn">A recording is running: this waits until it ends.</PlanLine>}
                     </>
@@ -445,8 +449,14 @@ export function AISwitch({
       .catch((e: Error) => setError(e.message));
   };
 
+  const w = platformWords();
   const engines: { id: TranscribeEngine; label: string; ready: boolean; why: string }[] = [
-    { id: "local", label: "This Mac", ready: tx.local_available, why: "Transcribing on this Mac needs a Mac with MLX" },
+    {
+      id: "local",
+      label: cap(w.thisComputer),
+      ready: tx.local_available,
+      why: w.os === "macos" ? "Transcribing on this Mac needs a Mac with MLX" : `Transcribing on ${w.thisComputer} needs whisper.cpp installed`,
+    },
     { id: "gemini", label: "Google", ready: tx.gemini_ready, why: "Add a Google API key in Settings → Transcription (and Lockdown off)" },
     { id: "remote", label: "Endpoint", ready: tx.remote_ready, why: "Set a transcription endpoint in Settings → Transcription" },
     ...(health.cloud?.available || tx.engine === "trailmix"
@@ -481,7 +491,7 @@ export function AISwitch({
       >
         <span className="flex min-w-0 items-center gap-2">
           <span className="text-forest">{notes.local ? <LaptopIcon size={15} /> : <CloudIcon size={15} />}</span>
-          <span className="shrink-0 font-medium">{notes.local ? "AI on this Mac" : "Cloud AI"}</span>
+          <span className="shrink-0 font-medium">{notes.local ? `AI on ${w.thisComputer}` : "Cloud AI"}</span>
           <span className="min-w-0 truncate text-ink-soft">· {shortModel(notes.model || notes.label)}</span>
         </span>
         <ChevronDownIcon size={16} className={`shrink-0 text-ink-faint transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
@@ -528,7 +538,7 @@ export function AISwitch({
             value={where(notes.local)}
             onChange={(v) => pickKind(v === "here")}
             options={[
-              { id: "here", label: "This Mac", icon: <LaptopIcon size={13} /> },
+              { id: "here", label: cap(w.thisComputer), icon: <LaptopIcon size={13} /> },
               { id: "cloud", label: "Cloud", icon: <CloudIcon size={13} /> },
             ]}
           />

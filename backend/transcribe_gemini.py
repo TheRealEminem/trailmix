@@ -26,6 +26,7 @@ import httpx
 import numpy as np
 
 import gemini_client
+import platform_words
 import vad
 
 SR = 16000
@@ -87,7 +88,8 @@ def _request(method: str, url: str, api_key: str, retries: int = 3, **kw) -> htt
             if r.status_code == 409 and '"level"' in r.text:
                 raise BasicLevel(cloud.error_text(r))
             if r.status_code in (401, 402, 403):
-                raise GeminiError("This Mac is signed out of Trailmix Cloud; sign in again (Settings → AI providers)"
+                raise GeminiError(f"{platform_words.cap(platform_words.this_computer())} is signed out of Trailmix "
+                                  "Cloud; sign in again (Settings → AI providers)"
                                   if r.status_code == 401 else cloud.error_text(r))
         if r.status_code in (401, 403) or (r.status_code == 400 and "API_KEY_INVALID" in r.text):
             raise GeminiError("Google didn't accept the API key (Settings → Transcription)")

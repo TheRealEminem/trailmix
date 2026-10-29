@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 import httpx
 
 import database as db
+import platform_words
 import settings
 
 TIMEOUT = httpx.Timeout(15, connect=3)
@@ -45,7 +46,8 @@ class Traverse:
     name = "Traverse"
     blurb = "Your projects and tasks app. A task becomes a Traverse task, with a link back to its meeting."
     fields = [
-        Field("traverse_url", "Address", "Where Traverse is running. On this Mac it's usually http://127.0.0.1:8793.",
+        Field("traverse_url", "Address",
+              f"Where Traverse is running. On {platform_words.this_computer()} it's usually http://127.0.0.1:8793.",
               "url", "http://127.0.0.1:8793"),
         Field("traverse_api_key", "Access token",
               "Only if Traverse asks for a sign-in: its access token (TRAVERSE_ACCESS_TOKEN where it runs).", "secret"),

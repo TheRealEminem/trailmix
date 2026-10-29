@@ -1,3 +1,5 @@
+import { parseOS, platformWords, setServerPlatform } from "./platform";
+
 export type MeetingStatus =
   | "recording"
   | "queued"
@@ -583,6 +585,8 @@ export interface Health {
     live_model: string | null;
     url: string | null;
     local_available: boolean;
+    /** the speech engine installed here: "MLX", "whisper.cpp" (null when neither; missing from older servers) */
+    local_engine?: string | null;
     /** the accurate model transcribes while recording, so the live transcript is the final one */
     live_final: boolean;
     /** A Google API key is saved and Lockdown is off: "Label speakers" (Gemini) can be used */
@@ -607,6 +611,8 @@ export interface Health {
   audio_retention_days: number;
   auth: boolean;
   recording: boolean;
+  /** The server's OS: "macos", "windows", "linux" (missing from older servers) */
+  os?: string;
 }
 
 export interface MyNote {
@@ -807,16 +813,14 @@ const MISSING_CAPABILITY: Record<RecorderCapability, string> = {
   sound_check: "The sound check isn't",
 };
 
-const PLATFORM_NAMES: Record<string, string> = { macos: "macOS", windows: "Windows", linux: "Linux" };
-
 /** Can the menu bar recorder do this? Older Mac apps don't send a list; the server fills in the Mac set. */
 export const hasCapability = (n: NativeRecorder | null, c: RecorderCapability) =>
   !!n?.capabilities?.includes(c);
 
 /** Why a control is missing: "Call reminders aren't available on Windows yet." */
 export const missingCapabilityReason = (n: NativeRecorder | null, c: RecorderCapability) => {
-  const os = PLATFORM_NAMES[(n?.platform ?? "").split("-")[0]] ?? "this computer";
-  return `${MISSING_CAPABILITY[c]} available on ${os} yet.`;
+  const os = parseOS(n?.platform);
+  return `${MISSING_CAPABILITY[c]} available on ${os === "unknown" ? "this computer" : platformWords(os).osName} yet.`;
 };
 
 /** What Trailmix.app's updater is doing (only the full app updates itself). */
@@ -986,7 +990,11 @@ export const api = {
   logout: () => request<{ ok: true }>("/logout", json("POST")),
   shutdown: () => request<{ ok: true }>("/shutdown", json("POST")),
 
-  health: () => request<Health>("/health"),
+  health: () =>
+    request<Health>("/health").then((h) => {
+      setServerPlatform(h.os, h.transcription.local_engine);
+      return h;
+    }),
   system: () => request<SystemInfo>("/system"),
   speechModels: () => request<SpeechModels>("/models"),
   downloadSpeechModels: () => request<SpeechModels>("/models/download", json("POST")),

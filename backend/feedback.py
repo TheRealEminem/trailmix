@@ -21,6 +21,7 @@ from urllib.parse import quote
 import archive
 import database as db
 import llm_engine
+import platform_words
 import resources
 
 REPO = "TheRealEminem/trailmix"
@@ -56,7 +57,7 @@ _PATTERNS: list[tuple[re.Pattern, str]] = [
 # the speaker and what they said go together. App lines like "Status: Transcribing" are short and kept.
 _APP_LABELS = ("Error", "Warning", "Status", "Model", "Duration", "Version", "Engine", "Note", "Hint", "Info",
                "Debug", "Title", "Summary", "Transcript", "Problem", "Reason", "Fix", "Tip", "Meeting URL",
-               "User report", "Authorization", "Active token", "Workspace", "Notes AI", "Trailmix", "macOS", "Mac")
+               "User report", "Authorization", "Active token", "Workspace", "Notes AI", "Trailmix", "OS", *platform_words.ALL_LABELS)
 _SAID = re.compile(
     r"(?m)^(?:\[[\d:]+\][ \t]*)?"                          # an optional [12:34]
     r"(?!(?:" + "|".join(re.escape(w) for w in _APP_LABELS) + r")[ \t]*:)"  # not the app's own "Status:" etc.
@@ -168,10 +169,12 @@ def _log_tail() -> list[str]:
 
 def diagnostics(cfg: dict, meeting_id: int | None) -> dict:
     device = resources.device_advice()
+    w = platform_words.words()
     out = {
         "Trailmix": archive.APP_VERSION,
-        "macOS": platform.mac_ver()[0] or platform.platform(),
-        "Mac": f"{device['chip'] or platform.machine()}, {device['ram_gb']} GB memory, {device['disk_free_gb']} GB free",
+        w["os_name"] if w["os"] != "unknown" else "OS": platform_words.os_version(),
+        platform_words.cap(w["computer"]): f"{device['chip'] or platform.processor() or platform.machine()}, "
+                                           f"{device['ram_gb']} GB memory, {device['disk_free_gb']} GB free",
         "Transcription": f"{cfg['transcribe_engine']}, final transcript while recording: {'on' if cfg.get('live_final') else 'off'}",
         "Notes AI": f"{cfg['summary_provider']} ({llm_engine.model_for(cfg['summary_provider'], cfg) or 'none'})",
         "Meetings": db.count_meetings(),
@@ -207,7 +210,8 @@ def prepare(description: str, screen: str, page: str, include_screen: bool, incl
         if logs:
             clean_logs, _ = scrub(logs, names)
             parts.append(f"<details><summary>Recent errors in the log</summary>\n\n```\n{clean_logs}\n```\n</details>")
-    parts.append(f"<sub>Sent from Trailmix {archive.APP_VERSION}. Personal information was removed on the sender's Mac"
+    parts.append(f"<sub>Sent from Trailmix {archive.APP_VERSION}. Personal information was removed on the sender's "
+                 f"{platform_words.words()['computer']}"
                  f"{f' (patterns, known names, and {model})' if model else ' (patterns and known names)'}, "
                  "and they checked it before sending.</sub>")
     body = "\n\n".join(parts)

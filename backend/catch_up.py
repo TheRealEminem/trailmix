@@ -25,6 +25,7 @@ import live
 import live_notes
 import llm_engine
 import meeting_text
+import platform_words
 import pricing
 import resources
 import settings
@@ -104,7 +105,7 @@ def _setup(pid: str, cfg: dict) -> dict:
     if not llm_engine.runs_here(pid, cfg):
         return out
     if pid != "ollama":
-        return {**out, "warning": ("This AI runs on this Mac next to your call and the live transcript, which may slow "
+        return {**out, "warning": (f"This AI runs on {platform_words.this_computer()} next to your call and the live transcript, which may slow "
                                    "down for a few seconds while it answers.")}
     chosen = llm_engine.model_for("ollama", cfg)
     tags = {m["name"]: m for m in llm_engine._ollama_tags(cfg)}
@@ -125,7 +126,7 @@ def _setup(pid: str, cfg: dict) -> dict:
 
 
 def _basic(model: str, why: str = "") -> str:
-    return (f"Basic and private: {model}, a small model on this Mac, answers{' ' + why if why else ''}. "
+    return (f"Basic and private: {model}, a small model on {platform_words.this_computer()}, answers{' ' + why if why else ''}. "
             f'"{KINDS["decided"]}" needs a cloud AI or a bigger model.')
 
 

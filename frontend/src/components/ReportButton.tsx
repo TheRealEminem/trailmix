@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { ProblemReport } from "../api";
+import { platformWords } from "../platform";
 import { screenText } from "../screenText";
 import { CloseIcon, CopyIcon, ReportIcon } from "./icons";
 import { Spinner, Switch } from "./ui";
@@ -116,7 +117,7 @@ export default function ReportButton({ page, meetingId }: { page: string; meetin
                 <p className="mt-1 text-hint leading-relaxed text-ink-soft">
                   {report
                     ? "This is everything that will be posted, publicly, on GitHub. Change anything you like."
-                    : "Personal information is removed on your Mac before you see the report, and nothing is sent until you post it on GitHub yourself."}
+                    : `Personal information is removed on ${platformWords().yourComputer} before you see the report, and nothing is sent until you post it on GitHub yourself.`}
                 </p>
               </div>
               <button onClick={close} className="icon-btn h-8 w-8 shrink-0" aria-label="Close">
@@ -144,7 +145,7 @@ export default function ReportButton({ page, meetingId }: { page: string; meetin
                   />
                   <Toggle
                     label="Diagnostics"
-                    hint="Trailmix version, your Mac and the models in use, this meeting's status, and recent errors."
+                    hint={`Trailmix version, ${platformWords().yourComputer} and the models in use, this meeting's status, and recent errors.`}
                     checked={withDiagnostics}
                     onChange={setWithDiagnostics}
                   />
@@ -184,7 +185,7 @@ export default function ReportButton({ page, meetingId }: { page: string; meetin
                 />
                 <p className="mt-2 text-hint text-ink-soft">
                   {report.model
-                    ? `Checked by ${report.model} on your Mac, plus patterns and the names Trailmix knows.`
+                    ? `Checked by ${report.model} on ${platformWords().yourComputer}, plus patterns and the names Trailmix knows.`
                     : "Checked with patterns and the names Trailmix knows (no local AI model was available), so read it carefully."}{" "}
                   Posting needs a free GitHub account.
                 </p>

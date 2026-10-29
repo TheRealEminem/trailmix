@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import { api } from "../api";
 import type { CatchUpEntry, CatchUpKind, CatchUpPlan } from "../api";
 import { formatDuration } from "../format";
+import { platformWords } from "../platform";
 import { useBigSpend } from "../spend";
 import { AlertIcon, ArrowUpIcon, CompassIcon, SparkleIcon } from "./icons";
 import { Spinner } from "./ui";
@@ -27,7 +28,7 @@ function money(c: number | null | undefined, local: boolean) {
 
 /** "on this Mac", or what a question costs when that's worth saying (else nothing: Settings → Usage keeps the tally). */
 function priceNote(plan: CatchUpPlan, big: boolean) {
-  if (plan.local) return "on this Mac";
+  if (plan.local) return `on ${platformWords().thisComputer}`;
   const each = big ? money(plan.cost, false) : null;
   return each ? `about ${each} a question` : null;
 }
