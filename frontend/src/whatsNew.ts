@@ -9,6 +9,20 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.19.1",
+    items: [
+      {
+        title: "Google transcripts are ready when you stop",
+        body: "With your own Google key and live captions on, the transcript you keep is now made while you talk, so it's ready seconds after Stop instead of minutes, and it costs about a third as much. Captions trail speech by 10 to 15 seconds, and speakers are You and Them. With captions off, the whole recording is still transcribed afterwards, telling the speakers apart.",
+        where: "Settings → Transcription",
+      },
+      {
+        title: "Calls stay smooth on smaller Macs",
+        body: "Transcribing on this computer during a meeting now uses half the processor, leaving room for the call; a transcript made after the meeting still uses all of it.",
+      },
+    ],
+  },
+  {
     version: "0.19.0",
     items: [
       {
