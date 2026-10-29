@@ -14,6 +14,7 @@ use crate::audio::apps::{self, AudioApp};
 use crate::model::{Connection, Model, Phase, Snapshot};
 use crate::prefs::{MeetingSource, Prefs};
 use crate::server::{self, Bundled, Server};
+use crate::update::Updater;
 use crate::window;
 
 pub struct AppState {
@@ -36,24 +37,61 @@ struct Tray {
     source: String,
 }
 
-/// Sets everything up for a normal run: the model and server, the hidden window, the tray; then opens
-/// the window (TRAILMIX_NO_OPEN set: says so instead, for tests).
-pub fn launch(app: &AppHandle) -> tauri::Result<()> {
+/// Sets everything up for a normal run: the model and server, the updater, the hidden window, the tray;
+/// then opens the window (TRAILMIX_NO_OPEN set: says so instead, for tests). Opened at login, it only
+/// starts the engine: the tray icon is there, and the window opens when you click it.
+pub fn launch(app: &AppHandle, at_login: bool) -> tauri::Result<()> {
     let data = server::data_dir();
     let _ = std::fs::create_dir_all(&data);
     let resources = app.path().resource_dir().unwrap_or_default();
     let server = Bundled::locate(&resources).map(Server::new);
     let prefs = Prefs::load(&data);
-    let model = Model::new(prefs, server.clone(), app.package_info().version.to_string(), None);
+    let version = app.package_info().version.to_string();
+    let model = Model::new(prefs, server.clone(), version.clone(), None);
+    let exe = std::env::current_exe().unwrap_or_default();
+    let updater = (server.is_some() && Updater::enabled_for(&exe)).then(|| Updater::new(version, data.clone(), exe));
     app.manage(AppState::new(model.clone(), server));
     window::create(app)?;
+    if let Some(updater) = &updater {
+        let weak = Arc::downgrade(&model);
+        updater.set_busy(move || weak.upgrade().map(|m| m.recording_anywhere()).unwrap_or(false));
+        let handle = app.clone();
+        updater.set_quit(move || quit(&handle));
+        model.set_updater(updater.clone());
+    }
     build_tray(app, &model)?;
     let handle = app.clone();
     model.observe(move || refresh_tray(&handle));
+    if let Some(updater) = &updater {
+        // The tray offers the update once there is one (and stops offering it once it's under way).
+        let handle = app.clone();
+        let shown: Mutex<Option<String>> = Mutex::new(None);
+        updater.observe(move || {
+            let Some(state) = handle.try_state::<AppState>() else { return };
+            let now = state.model.updater().and_then(|u| u.available());
+            let mut last = shown.lock().unwrap_or_else(|e| e.into_inner());
+            if *last != now {
+                *last = now;
+                drop(last);
+                let (handle, model) = (handle.clone(), state.model.clone());
+                thread::spawn(move || rebuild_menu(&handle, &model, None));
+            }
+        });
+        updater.begin();
+    }
     model.begin();
     start_ticker(app.clone());
     let handle = app.clone();
-    thread::spawn(move || open_trailmix(&handle, None));
+    if at_login {
+        let model = model.clone();
+        thread::spawn(move || {
+            if let Err(problem) = model.start_server_if_needed() {
+                eprintln!("Couldn't start Trailmix: {problem}");
+            }
+        });
+    } else {
+        thread::spawn(move || open_trailmix(&handle, None));
+    }
     Ok(())
 }
 
@@ -197,7 +235,17 @@ fn make_menu(app: &AppHandle, model: &Arc<Model>, apps: &[AudioApp]) -> tauri::R
 
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&status, &sep1, &record, &sources, &sep2, &open, &quit])?;
+    let update = match model.updater().and_then(|u| u.available()) {
+        Some(version) => Some(MenuItem::with_id(app, "update", format!("Update to Trailmix {version}"), true, None::<&str>)?),
+        None => None,
+    };
+    let mut items: Vec<&dyn IsMenuItem<Wry>> = vec![&status, &sep1, &record, &sources, &sep2];
+    if let Some(update) = &update {
+        items.push(update);
+    }
+    items.push(&open);
+    items.push(&quit);
+    let menu = Menu::with_items(app, &items)?;
     Ok((menu, status, record))
 }
 
@@ -235,6 +283,11 @@ fn on_menu(app: &AppHandle, id: &str) {
             thread::spawn(move || open_trailmix(&app, None));
         }
         "quit" => quit(app),
+        "update" => {
+            if let Some(updater) = model.updater() {
+                updater.install();
+            }
+        }
         other => {
             if let Some(source) = other.strip_prefix("source:") {
                 model.set_source(MeetingSource::parse(source));

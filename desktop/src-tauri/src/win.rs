@@ -193,3 +193,216 @@ pub fn ctrl_break(pid: u32) -> bool {
         sent
     }
 }
+
+// MARK: Processes by path, the registry and version resources (the updater and open at login)
+
+const SYNCHRONIZE: u32 = 0x0010_0000;
+const PROCESS_TERMINATE: u32 = 0x0001;
+const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+const WAIT_OBJECT_0: u32 = 0;
+const REG_SZ: u32 = 1;
+const RRF_RT_REG_SZ: u32 = 0x0000_0002;
+const RRF_RT_REG_BINARY: u32 = 0x0000_0008;
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+    fn WaitForSingleObject(handle: *mut c_void, millis: u32) -> u32;
+    fn TerminateProcess(process: *mut c_void, code: u32) -> i32;
+    fn QueryFullProcessImageNameW(process: *mut c_void, flags: u32, name: *mut u16, size: *mut u32) -> i32;
+}
+
+#[link(name = "advapi32")]
+extern "system" {
+    fn RegSetKeyValueW(key: *mut c_void, subkey: *const u16, value: *const u16, kind: u32, data: *const c_void, len: u32) -> i32;
+    fn RegDeleteKeyValueW(key: *mut c_void, subkey: *const u16, value: *const u16) -> i32;
+    fn RegGetValueW(key: *mut c_void, subkey: *const u16, value: *const u16, flags: u32, kind: *mut u32, data: *mut c_void, len: *mut u32) -> i32;
+}
+
+#[link(name = "version")]
+extern "system" {
+    fn GetFileVersionInfoSizeW(path: *const u16, handle: *mut u32) -> u32;
+    fn GetFileVersionInfoW(path: *const u16, handle: u32, len: u32, data: *mut c_void) -> i32;
+    fn VerQueryValueW(block: *const c_void, sub_block: *const u16, buffer: *mut *mut c_void, len: *mut u32) -> i32;
+}
+
+fn wide(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+fn wide_path(path: &std::path::Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    path.as_os_str().encode_wide().chain(std::iter::once(0)).collect()
+}
+
+/// HKEY_CURRENT_USER: ((HKEY)(ULONG_PTR)((LONG)0x80000001)), sign-extended on 64-bit Windows.
+fn hkcu() -> *mut c_void {
+    0x8000_0001u32 as i32 as isize as *mut c_void
+}
+
+/// Waits for a process to end. True once it has (or it was already gone); false if it's still running.
+pub fn wait_for_exit(pid: u32, timeout: std::time::Duration) -> bool {
+    unsafe {
+        let handle = OpenProcess(SYNCHRONIZE, 0, pid);
+        if handle.is_null() {
+            return true; // gone already (or never there)
+        }
+        let millis = timeout.as_millis().min(0xFFFF_FFFE) as u32;
+        let done = WaitForSingleObject(handle, millis) == WAIT_OBJECT_0;
+        CloseHandle(handle);
+        done
+    }
+}
+
+/// The full path of a running process's executable.
+pub fn process_path(pid: u32) -> Option<std::path::PathBuf> {
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return None;
+        }
+        let mut buffer = vec![0u16; 1024];
+        let mut size = buffer.len() as u32;
+        let ok = QueryFullProcessImageNameW(handle, 0, buffer.as_mut_ptr(), &mut size) != 0;
+        CloseHandle(handle);
+        if !ok {
+            return None;
+        }
+        Some(std::path::PathBuf::from(String::from_utf16_lossy(&buffer[..size as usize])))
+    }
+}
+
+/// The processes running from inside a folder (the install's own Python, ffmpeg…), other than this one.
+pub fn processes_in(folder: &std::path::Path) -> Vec<u32> {
+    // Compared in full, long form (a short C:\Users\RUNNER~1\... and its long name are the same folder).
+    let normal = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()).to_string_lossy().to_lowercase();
+    let folder = normal(folder).trim_end_matches('\\').to_string() + "\\";
+    let me = std::process::id();
+    processes()
+        .into_iter()
+        .filter(|p| p.pid != me && p.pid != 0)
+        .filter(|p| process_path(p.pid).map(|path| normal(&path).starts_with(&folder)).unwrap_or(false))
+        .map(|p| p.pid)
+        .collect()
+}
+
+pub fn terminate(pid: u32) -> bool {
+    unsafe {
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let ok = TerminateProcess(handle, 1) != 0;
+        CloseHandle(handle);
+        ok
+    }
+}
+
+/// A text value under HKEY_CURRENT_USER, if it's there.
+pub fn reg_get_string(subkey: &str, value: &str) -> Option<String> {
+    let (subkey, value) = (wide(subkey), wide(value));
+    unsafe {
+        let mut len: u32 = 0;
+        let found = RegGetValueW(hkcu(), subkey.as_ptr(), value.as_ptr(), RRF_RT_REG_SZ, std::ptr::null_mut(), std::ptr::null_mut(), &mut len);
+        if found != 0 {
+            return None;
+        }
+        let mut buffer = vec![0u16; (len as usize / 2) + 1];
+        let mut len = (buffer.len() * 2) as u32;
+        let read = RegGetValueW(
+            hkcu(),
+            subkey.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            buffer.as_mut_ptr() as *mut c_void,
+            &mut len,
+        );
+        if read != 0 {
+            return None;
+        }
+        let end = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
+        Some(String::from_utf16_lossy(&buffer[..end]))
+    }
+}
+
+/// A binary value under HKEY_CURRENT_USER, if it's there.
+pub fn reg_get_binary(subkey: &str, value: &str) -> Option<Vec<u8>> {
+    let (subkey, value) = (wide(subkey), wide(value));
+    unsafe {
+        let mut len: u32 = 0;
+        let found = RegGetValueW(hkcu(), subkey.as_ptr(), value.as_ptr(), RRF_RT_REG_BINARY, std::ptr::null_mut(), std::ptr::null_mut(), &mut len);
+        if found != 0 {
+            return None;
+        }
+        let mut buffer = vec![0u8; len as usize];
+        let read = RegGetValueW(
+            hkcu(),
+            subkey.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_BINARY,
+            std::ptr::null_mut(),
+            buffer.as_mut_ptr() as *mut c_void,
+            &mut len,
+        );
+        if read != 0 {
+            return None;
+        }
+        buffer.truncate(len as usize);
+        Some(buffer)
+    }
+}
+
+/// Sets a text value under HKEY_CURRENT_USER (making the key if needed).
+pub fn reg_set_string(subkey: &str, value: &str, data: &str) -> bool {
+    let (subkey, value, data) = (wide(subkey), wide(value), wide(data));
+    unsafe { RegSetKeyValueW(hkcu(), subkey.as_ptr(), value.as_ptr(), REG_SZ, data.as_ptr() as *const c_void, (data.len() * 2) as u32) == 0 }
+}
+
+/// Removes a value under HKEY_CURRENT_USER. True if it's gone (or wasn't there).
+pub fn reg_delete(subkey: &str, value: &str) -> bool {
+    let (subkey, value) = (wide(subkey), wide(value));
+    let status = unsafe { RegDeleteKeyValueW(hkcu(), subkey.as_ptr(), value.as_ptr()) };
+    status == 0 || status == 2 // ERROR_FILE_NOT_FOUND
+}
+
+/// A string from a file's version resource ("ProductName", "ProductVersion"…), in whichever language it has.
+pub fn version_string(file: &std::path::Path, name: &str) -> Option<String> {
+    let path = wide_path(file);
+    unsafe {
+        let mut ignored: u32 = 0;
+        let size = GetFileVersionInfoSizeW(path.as_ptr(), &mut ignored);
+        if size == 0 {
+            return None;
+        }
+        let mut block = vec![0u8; size as usize];
+        if GetFileVersionInfoW(path.as_ptr(), 0, size, block.as_mut_ptr() as *mut c_void) == 0 {
+            return None;
+        }
+        let base = block.as_ptr() as *const c_void;
+        let mut languages: Vec<String> = Vec::new();
+        let mut pointer: *mut c_void = std::ptr::null_mut();
+        let mut len: u32 = 0;
+        let translation = wide("\\VarFileInfo\\Translation");
+        if VerQueryValueW(base, translation.as_ptr(), &mut pointer, &mut len) != 0 && !pointer.is_null() {
+            let pairs = std::slice::from_raw_parts(pointer as *const u16, (len / 2) as usize);
+            for pair in pairs.chunks(2) {
+                if pair.len() == 2 {
+                    languages.push(format!("{:04x}{:04x}", pair[0], pair[1]));
+                }
+            }
+        }
+        languages.extend(["040904b0".to_string(), "040904e4".to_string(), "04090000".to_string()]);
+        for language in languages {
+            let query = wide(&format!("\\StringFileInfo\\{language}\\{name}"));
+            let mut pointer: *mut c_void = std::ptr::null_mut();
+            let mut len: u32 = 0;
+            if VerQueryValueW(base, query.as_ptr(), &mut pointer, &mut len) != 0 && !pointer.is_null() && len > 0 {
+                let chars = std::slice::from_raw_parts(pointer as *const u16, len as usize);
+                let end = chars.iter().position(|&c| c == 0).unwrap_or(chars.len());
+                return Some(String::from_utf16_lossy(&chars[..end]).trim().to_string());
+            }
+        }
+        None
+    }
+}

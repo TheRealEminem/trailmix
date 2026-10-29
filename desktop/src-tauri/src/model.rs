@@ -11,8 +11,10 @@ use tungstenite::Message;
 
 use crate::audio;
 use crate::client::{set_read_timeout, timed_out, Client, DraftLine, LiveRecording, ServerError, Socket};
+use crate::login;
 use crate::prefs::{MeetingSource, Prefs};
 use crate::server::Server;
+use crate::update::Updater;
 use crate::wire::{AudioSource, Sink, Streamer, MEETING, MIC};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +100,8 @@ pub struct Model {
     server: Option<Arc<Server>>,
     make_sources: Mutex<MakeSources>,
     observers: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
+    /// The updater, for an installed Trailmix (not a development build or a test).
+    updater: Mutex<Option<Arc<Updater>>>,
     pub version: String,
     machine: String,
     /// Tests point the model at a throwaway server instead of the one in Settings.
@@ -147,6 +151,7 @@ impl Model {
             server,
             make_sources: Mutex::new(Box::new(audio::live_sources)),
             observers: Mutex::new(Vec::new()),
+            updater: Mutex::new(None),
             version,
             machine: std::env::var("COMPUTERNAME").unwrap_or_default(),
             server_override,
@@ -232,13 +237,34 @@ impl Model {
         thread::Builder::new().name("trailmix-recorder".into()).spawn(move || model.recorder_loop()).expect("thread");
     }
 
-    /// Which build of the recorder this is, and what it can do: the web app hides what's missing.
+    /// Which build of the recorder this is, and what it can do: the web app hides what's missing. (An
+    /// installed Trailmix also opens at login and updates itself: `recorder_info` adds those.)
     pub fn capabilities() -> Vec<&'static str> {
         let mut caps = vec!["system_audio"];
         if audio::wasapi::process_loopback_supported() {
             caps.push("per_app_audio");
         }
         caps
+    }
+
+    pub fn set_updater(&self, updater: Arc<Updater>) {
+        *self.updater.lock().unwrap_or_else(|e| e.into_inner()) = Some(updater);
+    }
+
+    pub fn updater(&self) -> Option<Arc<Updater>> {
+        self.updater.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// This Trailmix.exe, when it's the installed app (with its own engine): the one open at login starts.
+    fn installed_exe(&self) -> Option<std::path::PathBuf> {
+        self.server.as_ref()?;
+        std::env::current_exe().ok()
+    }
+
+    /// Recording here or in the Trailmix window: updating now would cut it short.
+    pub fn recording_anywhere(&self) -> bool {
+        let s = self.lock();
+        s.phase != Phase::Idle || s.other.is_some()
     }
 
     /// What this recorder would record, for the server (RecorderCheckIn in main.py).
@@ -253,6 +279,16 @@ impl Model {
             MeetingSource::None => "Your mic only (in person)".to_string(),
             MeetingSource::App(exe) => audio::apps::display_name(&exe),
         };
+        let mut capabilities = Self::capabilities();
+        let installed = self.installed_exe();
+        let open_at_login = installed.as_deref().map(login::enabled);
+        if open_at_login.is_some() {
+            capabilities.push("open_at_login");
+        }
+        let updater = self.updater();
+        if updater.is_some() {
+            capabilities.push("auto_update");
+        }
         json!({
             "mic": mic,
             "source": source,
@@ -262,13 +298,13 @@ impl Model {
             "sound_check": null,
             "shortcut_record": "",
             "shortcut_mark": "",
-            "open_at_login": null,
+            "open_at_login": open_at_login,
             "call_reminders": null,
-            "lockdown": null,
-            "update": null,
+            "lockdown": updater.as_ref().map(|u| u.lockdown()),
+            "update": updater.as_ref().map(|u| u.report()),
             "call_app": self.call_app(),
             "platform": "windows-x64",
-            "capabilities": Self::capabilities(),
+            "capabilities": capabilities,
         })
     }
 
@@ -302,15 +338,38 @@ impl Model {
         name
     }
 
-    /// Carries out what the window asked for. Updates, call reminders, open at login and the sound check
-    /// aren't on Windows yet (their capability flags are off, so the window doesn't ask).
+    /// Carries out what the window asked for. Call reminders and the sound check aren't on Windows yet
+    /// (their capability flags are off, so the window doesn't ask).
     fn perform(self: &Arc<Self>, commands: &[String]) {
+        let updater = self.updater();
         for command in commands {
-            if command == "start" {
-                let s = self.lock();
-                if s.phase == Phase::Idle && s.other.is_none() {
-                    drop(s);
-                    self.start();
+            match command.as_str() {
+                "start" => {
+                    let s = self.lock();
+                    if s.phase == Phase::Idle && s.other.is_none() {
+                        drop(s);
+                        self.start();
+                    }
+                }
+                "open-at-login" | "no-open-at-login" => {
+                    if let Some(exe) = self.installed_exe() {
+                        login::set(&exe, command == "open-at-login");
+                        self.check_in_soon();
+                    }
+                }
+                _ => {
+                    let Some(updater) = &updater else { continue };
+                    match command.as_str() {
+                        "update" => updater.install(),
+                        "check-update" => updater.check_soon(true),
+                        "go-back" => updater.go_back(),
+                        "unskip-update" => updater.set_skipped(None),
+                        "beta-updates" => updater.set_beta(true),
+                        "no-beta-updates" => updater.set_beta(false),
+                        "lockdown" => updater.set_lockdown(true),
+                        "no-lockdown" => updater.set_lockdown(false),
+                        _ => {}
+                    }
                 }
             }
         }
