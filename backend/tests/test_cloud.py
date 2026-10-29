@@ -179,7 +179,7 @@ def test_at_the_pro_level_clips_cut_at_pauses_are_the_captions_and_the_transcrip
 
     monkeypatch.setattr(live.transcribe_gemini, "transcribe_clip", transcribe_clip)
     session = session_for(cfg())
-    assert session.cloud_live and session.final and session.polls_drafts
+    assert session.near_live and session.final and session.polls_drafts
     session.write(bytes([0]) + speech(5).tobytes())
     assert session.draft_step() == []  # too short to send: clips are at least 8 s
     session.write(bytes([0]) + speech(7, pause_at=4).tobytes())
@@ -194,9 +194,61 @@ def test_at_the_pro_level_clips_cut_at_pauses_are_the_captions_and_the_transcrip
     assert db.usage_since("2000-01-01")[0]["kind"] == "live captions"
 
 
+def test_with_your_own_key_clips_go_inline_to_the_speech_model_and_are_the_transcript(session_for, monkeypatch):
+    import pipeline
+
+    sent = []
+
+    def request(method, url, headers=None, json=None, **kw):
+        sent.append((url, headers, json))
+        said = [{"type": "word_info", "text": w, "start_offset": f"{a}s", "end_offset": f"{a + 0.3}s"}
+                for w, a in (("hello", 0.2), ("there", 0.6))]
+        return httpx.Response(200, json={"steps": [{"content": [{"text": "hello there", "annotations": said}]}]},
+                              request=httpx.Request(method, url))
+
+    monkeypatch.setattr(transcribe_gemini.httpx, "request", request)
+    monkeypatch.setattr(transcribe_gemini, "encode", lambda audio: b"ogg")
+    own = {**settings.DEFAULTS, "transcribe_engine": "gemini", "gemini_api_key": "AIza-k"}
+    session = session_for(own)
+    assert session.near_live and session.final and session.polls_drafts and session.captions_off_reason is None
+    session.write(bytes([1]) + speech(12, pause_at=9).tobytes())
+    lines = session.draft_step()
+    url, headers, body = sent[0]
+    assert url == "https://generativelanguage.googleapis.com/v1beta/interactions" and headers["x-goog-api-key"] == "AIza-k"
+    assert body["model"] == "gemini-3.5-transcribe" and body["input"][0]["data"] == "b2dn"  # the clip itself, no upload
+    assert "diarization_mode" not in body["generation_config"]["transcription_config"]["mode"]
+    assert [(l["speaker"], l["text"]) for l in lines] == [("Them", "hello there")]
+    session.finish()
+    saved = json.loads(db.get_meeting(session.meeting_id)["live_json"])
+    assert saved["complete"] and saved["engine"] == "gemini" and saved["covered"]["system"] == int(9.5 * SR)
+    [used] = db.usage_since("2000-01-01")
+    assert (used["kind"], used["engine"], used["seconds"]) == ("transcript", "gemini", 9.5)
+    assert used["cost"] == pytest.approx(9.5 / 60 * 0.005, abs=1e-4)  # priced per minute, rounded
+
+    segments, labeled, duration = pipeline._finish_live(db.get_meeting(session.meeting_id), own)
+    assert len(sent) == 2 and duration == 12  # after Stop, only the last 2.5 s went to Google
+    assert segments[-1]["start"] == pytest.approx(9.5 + 0.2)
+    assert sum(u["seconds"] for u in db.usage_since("2000-01-01")) == pytest.approx(12)
+
+
+def test_the_economy_model_transcribes_each_clip_through_a_general_model(session_for, monkeypatch):
+    clips = []
+
+    def transcribe_clip(audio, cred, language, model, context="", usage=None, tags=None):
+        clips.append((cred, model, tags))
+        return [{"start": 0.0, "end": 1.0, "text": "hello there"}]
+
+    monkeypatch.setattr(live.transcribe_gemini, "transcribe_clip", transcribe_clip)
+    session = session_for({**settings.DEFAULTS, "transcribe_engine": "gemini", "gemini_api_key": "AIza-k",
+                           "gemini_transcribe_model": "gemini-3.5-flash-lite"})
+    session.write(bytes([0]) + speech(12, pause_at=9).tobytes())
+    assert session.draft_step()[0]["text"] == "hello there"
+    assert clips == [("AIza-k", "gemini-3.5-flash-lite", None)]  # Google isn't told which meeting it is
+
+
 def test_at_the_basic_level_nothing_is_sent_while_recording(session_for):
     session = session_for(cfg(account=USED_UP))
-    assert not session.cloud_live and not session.final and not session.polls_drafts
+    assert not session.near_live and not session.final and not session.polls_drafts
     session.write(bytes([0]) + speech(20, pause_at=10).tobytes())
     assert session.draft_step() == [] and session._pending == {0: [], 1: []}
     assert "live hours are used" in session.captions_off_reason

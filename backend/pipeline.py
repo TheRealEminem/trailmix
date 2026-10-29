@@ -360,6 +360,7 @@ def _finish_live(m: dict, cfg: dict) -> tuple[list[dict], bool, float] | None:
         return None
     local = cfg["transcribe_engine"] == "local"
     folder = store.track_dir(m)
+    sent, used = 0.0, {}  # the tail's audio sent to Google with your own key, and the tokens a general model reported
     try:
         tracks, per_track = [], {}
         duration = 0.0
@@ -381,17 +382,18 @@ def _finish_live(m: dict, cfg: dict) -> tuple[list[dict], bool, float] | None:
             for a, b in vad.speech_regions(tail):
                 if local:
                     found = local_engine.transcribe_final(tail[a:b], questions.vocabulary_prompt()[:300] or None)
-                elif cfg["transcribe_engine"] == "trailmix":
-                    cred = gemini_client.credential(cfg, "trailmix")
-                    found = transcribe_gemini.transcribe_clip(
-                        tail[a:b], cred, local_engine.LANGUAGE, "transcribe_chunk",
-                        tags=gemini_client.meeting_headers(cred, m["id"], _side(name)))
+                elif cfg["transcribe_engine"] in ("gemini", "trailmix"):
+                    found = live.transcribe_clip(cfg, tail[a:b], m["id"], _side(name), usage=used)
+                    sent += (b - a) / store.SAMPLE_RATE
                 else:
                     found = transcribe_remote.transcribe(tail[a:b], cfg["transcribe_url"], cfg["transcribe_api_key"],
                                                          cfg["transcribe_model"], local_engine.LANGUAGE)
                 start = off + a / store.SAMPLE_RATE
                 segs += [{**seg, "start": seg["start"] + start, "end": seg["end"] + start} for seg in found]
             per_track[name] = segs
+        if sent and cfg["transcribe_engine"] == "gemini":
+            model = cfg["gemini_transcribe_model"]
+            db.log_usage(m["id"], "transcript", "gemini", model, sent, pricing.transcript_cost(model, sent, used))
         return _label(per_track, tracks), "system" in tracks and "mic" in tracks, duration
     except Exception:
         log.exception("Couldn't finish the live transcript of meeting %s; transcribing it all instead", m["id"])
