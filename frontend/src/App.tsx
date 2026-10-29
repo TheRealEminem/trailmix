@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { AUTH_EVENT, api, inApp, quitApp } from "./api";
 import type {
   Bookmark,
@@ -27,13 +27,11 @@ import MeetingView from "./components/MeetingView";
 import type { Tab } from "./components/MeetingView";
 import { savedMicId } from "./components/MicPicker";
 import Recorder from "./components/Recorder";
-import Settings from "./components/Settings";
-import ImportPanel from "./components/ImportPanel";
 import ModelsBanner from "./components/ModelsBanner";
 import UpdateBanner from "./components/UpdateBanner";
 import StatsNotice from "./components/StatsNotice";
 import WhatsNew from "./components/WhatsNew";
-import Welcome, { needsSetup } from "./components/Welcome";
+import { needsSetup } from "./setup";
 import WorkspacesTip from "./components/WorkspacesTip";
 import Sidebar from "./components/Sidebar";
 import type { View } from "./components/Sidebar";
@@ -51,6 +49,11 @@ import {
 import type { ToastState } from "./components/ui";
 import { EventsContext, useEvents } from "./events";
 import { useTheme } from "./theme";
+
+// The big screens you may never open in a sitting come in their own files, fetched the first time they're shown.
+const Settings = lazy(() => import("./components/Settings"));
+const ImportPanel = lazy(() => import("./components/ImportPanel"));
+const Welcome = lazy(() => import("./components/Welcome"));
 
 const POLL_MS = 2000;
 const DRAFT_POLL_MS = 700; // while the open meeting's notes are being written, so they come in smoothly
@@ -85,6 +88,16 @@ function usePref(
     [key],
   );
   return [value, set];
+}
+
+/** While a screen's code is on its way (a moment, once). */
+function PageLoading() {
+  return (
+    <div className="space-y-4 pt-2" aria-label="Loading">
+      <Skeleton className="h-9 w-2/3" />
+      <Skeleton className="h-64 w-full rounded-xl" />
+    </div>
+  );
 }
 
 /** True when the sidebar sits beside the content rather than in a drawer. */
@@ -236,7 +249,7 @@ export default function App() {
     } catch {
       setBackendDown(true);
     }
-  }, []);
+  }, [refreshWorkspaces]);
 
   const refreshSelected = useCallback(
     async (id: number) => {
@@ -851,6 +864,7 @@ export default function App() {
             </div>
           )}
           {view === "settings" ? (
+            <Suspense fallback={<PageLoading />}>
             <Settings
               health={health}
               native={native}
@@ -866,6 +880,7 @@ export default function App() {
                 void api.logout().then(() => setAuthState("needed"))
               }
             />
+            </Suspense>
           ) : view === "tasks" ? (
             <TasksView
               workspace={workspace}
@@ -875,6 +890,7 @@ export default function App() {
               onToast={setToast}
             />
           ) : view === "import" ? (
+            <Suspense fallback={<PageLoading />}>
             <ImportPanel
               onImported={() => {
                 setJustImported(true);
@@ -883,6 +899,7 @@ export default function App() {
               onOpenMeeting={openMeeting}
               onError={fail}
             />
+            </Suspense>
           ) : view === "ask" ? (
             <div>
               <PageHeader
@@ -1056,13 +1073,15 @@ export default function App() {
       {confirmDialog}
       {/* Out of the way while a call is being recorded (say, started from the menu bar); back after. */}
       {welcome && !rec && !remote && (
-        <Welcome
-          health={health}
-          native={native}
-          dusk={theme.dusk}
-          onChanged={() => void refreshHealth()}
-          onDone={() => setWelcome(false)}
-        />
+        <Suspense fallback={null}>
+          <Welcome
+            health={health}
+            native={native}
+            dusk={theme.dusk}
+            onChanged={() => void refreshHealth()}
+            onDone={() => setWelcome(false)}
+          />
+        </Suspense>
       )}
       {preflightIds && (
         <PreflightSheet
