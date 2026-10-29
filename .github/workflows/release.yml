@@ -167,6 +167,34 @@ jobs:
       - name: "Smoke test: a fresh install"
         shell: pwsh
         run: python scripts/smoke-test-windows.py (Get-Item dist/Trailmix-*-windows-x64.exe).FullName
+      # As for the Mac: the current release's installer, cached so these tests don't add to its download count.
+      - name: Which release is current
+        id: stable
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName 2>/dev/null || echo none)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: previous/Trailmix-windows-x64.exe
+          key: current-release-windows-x64-${{ steps.stable.outputs.tag }}
+      - name: "Smoke test: updating from the current release"
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Until a release has a Windows installer, this same build is made again as version 0.0.1 and updated from,
+        # so the updater (Update now, then Go back) is still tried end to end.
+        run: |
+          mkdir -p previous
+          OLD=previous/Trailmix-windows-x64.exe
+          [ -f "$OLD" ] || gh release download --repo "$GITHUB_REPOSITORY" --pattern Trailmix-windows-x64.exe --dir previous || true
+          if [ ! -f "$OLD" ]; then
+            echo "No release has a Windows installer yet: building this one again as 0.0.1 to update from"
+            rm -rf desktop/src-tauri/target/release/bundle/nsis  # (else the build could pick up the first installer)
+            TRAILMIX_VERSION=0.0.1 TRAILMIX_OUT=previous/build python scripts/build-windows.py
+            OLD=$(ls previous/build/Trailmix-*-windows-x64.exe)
+          fi
+          python scripts/smoke-test-windows.py dist/Trailmix-*-windows-x64.exe "$OLD"
       - uses: actions/upload-artifact@v4
         with:
           name: Trailmix-windows-x64

@@ -32,6 +32,7 @@
       "../../build/windows/VERSION": "VERSION"
     },
     "windows": {
+      "allowDowngrades": true,
       "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
       "nsis": {
         "installMode": "currentUser",
