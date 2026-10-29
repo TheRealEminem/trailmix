@@ -2,9 +2,10 @@
 """The release gate on Windows (scripts/smoke-test.sh is the Mac's): installs the built installer silently
 into a temporary folder, checks the app brings its engine up and takes it down with it, then starts the
 engine inside the install the way the app does and runs the checks shared with the Mac (scripts/smoke_test.py),
-the shell's own self-test (audio files standing in for the mic and the meeting: hotkey-style start and stop,
-marks, the live draft, Record pressed in the window, a transcript made while recording) and a look at its
-window, and last uninstalls it. Nothing touches your real Trailmix data.
+the shell's own self-test (audio files standing in for the mic and the meeting: start and stop with the global
+shortcut, marks, the live draft, the call reminder's cards driven by a stand-in Zoom, Record pressed in the window,
+a transcript made while recording) and a look at its window, and last uninstalls it. Nothing touches your real
+Trailmix data. (The self-test registers Trailmix's shortcuts, so quit Trailmix before running this on your own PC.)
 
   python scripts/smoke-test-windows.py dist/Trailmix-0.19.0-windows-x64.exe     (or -windows-arm64.exe, on an ARM PC)
   python scripts/smoke-test-windows.py dist/Trailmix-0.19.0-windows-x64.exe previous/Trailmix-0.18.0-windows-x64.exe
@@ -414,12 +415,15 @@ def main(argv: list[str]) -> int:
         smoke_test.transcribe(URL, str(them), ["login", "Wednesday", "pricing"])
         smoke_test.meetings(URL)
 
-        log("The shell's self-test (audio files stand in for the mic and the meeting)")
-        done = subprocess.run([str(exe), "--self-test", URL, str(me), str(them)], env=env, capture_output=True, text=True,
-                              timeout=1500, encoding="utf-8", errors="replace")
+        log("The shell's self-test (audio files stand in for the mic and the meeting, a stand-in Zoom for a call)")
+        done = subprocess.run([str(exe), "--self-test", URL, str(me), str(them), f"--shots={root}"], env=env, capture_output=True,
+                              text=True, timeout=1500, encoding="utf-8", errors="replace")
         print(done.stdout)
         if done.stderr.strip():
             print(done.stderr[-4000:], file=sys.stderr)
+        for card in ("smoke-reminder.png", "smoke-reminder-stop.png"):  # the call reminder's cards, kept with the build to look at
+            if (root / card).is_file():
+                shutil.copy2(root / card, installer.parent / card)
         if done.returncode != 0:
             raise Failure(f"the shell's self-test failed (exit {done.returncode})")
         if f"windows-{arch})" not in done.stdout:

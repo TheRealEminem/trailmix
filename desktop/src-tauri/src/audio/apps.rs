@@ -45,7 +45,7 @@ const KNOWN_NAMES: &[(&str, &str)] = &[
     ("vlc.exe", "VLC"),
 ];
 
-fn call_app_name(exe: &str) -> Option<&'static str> {
+pub fn call_app_name(exe: &str) -> Option<&'static str> {
     CALL_APPS.iter().find(|(e, _)| *e == exe).map(|(_, n)| *n)
 }
 

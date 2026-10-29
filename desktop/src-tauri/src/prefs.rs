@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::hotkeys::Shortcut;
+
 pub const DEFAULT_SERVER: &str = "http://127.0.0.1:8765";
 
 /// Where the meeting's other side comes from.
@@ -41,13 +43,30 @@ pub struct Prefs {
     pub source: String,
     pub live_draft: bool,
     pub token: String,
+    /// Start / stop and Mark moment, from any app.
+    pub shortcut_record: Shortcut,
+    pub shortcut_mark: Shortcut,
+    /// "Zoom call started. Record it?"
+    pub call_reminders: bool,
+    /// The apps you said not to ask about ("Zoom", "a call in Chrome").
+    pub muted_call_apps: Vec<String>,
     #[serde(skip)]
     path: PathBuf,
 }
 
 impl Default for Prefs {
     fn default() -> Prefs {
-        Prefs { server: DEFAULT_SERVER.into(), source: "all".into(), live_draft: true, token: String::new(), path: PathBuf::new() }
+        Prefs {
+            server: DEFAULT_SERVER.into(),
+            source: "all".into(),
+            live_draft: true,
+            token: String::new(),
+            shortcut_record: Shortcut::RECORD_DEFAULT,
+            shortcut_mark: Shortcut::MARK_DEFAULT,
+            call_reminders: true,
+            muted_call_apps: Vec::new(),
+            path: PathBuf::new(),
+        }
     }
 }
 
@@ -130,5 +149,21 @@ mod tests {
         assert_eq!(prefs.server, DEFAULT_SERVER);
         assert!(prefs.live_draft);
         assert_eq!(prefs.meeting_source(), MeetingSource::None);
+        assert_eq!(prefs.shortcut_record, Shortcut::RECORD_DEFAULT);
+        assert_eq!(prefs.shortcut_mark, Shortcut::MARK_DEFAULT);
+        assert!(prefs.call_reminders);
+        assert!(prefs.muted_call_apps.is_empty());
+    }
+
+    #[test]
+    fn shortcuts_and_reminders_are_remembered() {
+        let mut prefs = Prefs::default();
+        prefs.shortcut_record = Shortcut { key: 0x78, mods: 0 };
+        prefs.call_reminders = false;
+        prefs.muted_call_apps.push("Zoom".into());
+        let back: Prefs = serde_json::from_str(&serde_json::to_string(&prefs).unwrap()).unwrap();
+        assert_eq!(back.shortcut_record.display(), "F9");
+        assert!(!back.call_reminders);
+        assert_eq!(back.muted_call_apps, vec!["Zoom".to_string()]);
     }
 }

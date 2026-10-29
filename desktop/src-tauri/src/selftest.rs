@@ -1,12 +1,15 @@
 //! Checks the shell without a microphone or any audio device (SelfTest.swift): audio files stand in for
-//! the mic and the meeting, and everything else is the real thing (model, recorder socket, audio socket,
-//! window, server).
+//! the mic and the meeting, a stand-in for Windows' microphone records for a call app, and everything else
+//! is the real thing (model, shortcuts, reminder card, recorder socket, audio socket, window, server).
 //!
-//!   Trailmix.exe --self-test http://127.0.0.1:8797 me.wav them.wav [--no-window]
+//!   Trailmix.exe --self-test http://127.0.0.1:8797 me.wav them.wav [--no-window] [--shots=<folder>]
 //!   Trailmix.exe --window-test http://127.0.0.1:8765/#meeting-2 window.png [seconds]
 //!   Trailmix.exe --list-audio
+//!
+//! The self-test registers the real shortcuts, so quit Trailmix first if it's running on this PC.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -16,8 +19,13 @@ use tauri::{AppHandle, Manager};
 
 use crate::app::AppState;
 use crate::audio;
+use crate::card::{self, Target};
+use crate::gui::{self, WS_EX_NOACTIVATE, WS_EX_TOPMOST};
+use crate::hotkeys::{self, Shortcut, MARK, MOD_ALT, MOD_CONTROL, MOD_SHIFT, RECORD};
 use crate::model::{Connection, Model, Phase, Sources};
 use crate::prefs::{tidy_url, Prefs};
+use crate::reminder::{self, Reminder};
+use crate::win;
 use crate::window;
 use crate::wire::{AudioSource, FileSource, MEETING, MIC};
 
@@ -34,6 +42,15 @@ pub fn list_audio() {
     println!("Apps connected to audio:");
     for app in audio::apps::current() {
         println!("  {} [{} pid {}]{}", app.name, app.exe, app.pid, if app.playing { "  playing" } else { "" });
+    }
+    println!("Apps that have used the microphone (the ones using it now marked):");
+    for entry in reminder::mic_entries(reminder::CONSENT_STORE) {
+        let call = entry.call_name().map(|c| format!("  [{c}]")).unwrap_or_default();
+        println!("  {}{}{}", entry.key, if entry.in_use() { "  IN USE" } else { "" }, call);
+    }
+    for (what, shortcut) in [("Start / stop", Shortcut::RECORD_DEFAULT), ("Mark moment", Shortcut::MARK_DEFAULT)] {
+        let free = if hotkeys::is_free(shortcut) { "free" } else { "taken (by Trailmix, or another app)" };
+        println!("{what} shortcut {}: {free}", shortcut.display());
     }
     println!("Recorder capabilities: {}", Model::capabilities().join(", "));
 }
@@ -78,17 +95,18 @@ fn args_after<'a>(args: &'a [String], flag: &str) -> Vec<&'a String> {
     args.iter().skip_while(|a| *a != flag).skip(1).filter(|a| !a.starts_with("--")).collect()
 }
 
-/// --self-test <server> <mic audio> [<meeting audio>] [--no-window]
+/// --self-test <server> <mic audio> [<meeting audio>] [--no-window] [--shots=<folder>]
 pub fn run(app: AppHandle, args: Vec<String>) {
     let rest = args_after(&args, "--self-test");
     if rest.len() < 2 {
-        println!("usage: --self-test <server> <mic audio> [<meeting audio>] [--no-window]");
+        println!("usage: --self-test <server> <mic audio> [<meeting audio>] [--no-window] [--shots=<folder>]");
         std::process::exit(2);
     }
     let server = tidy_url(rest[0]);
     let me = PathBuf::from(rest[1]);
     let them = rest.get(2).map(PathBuf::from);
     let no_window = args.iter().any(|a| a == "--no-window");
+    let shots = args.iter().find_map(|a| a.strip_prefix("--shots=")).map(PathBuf::from);
 
     let model = Model::new(Prefs::default(), None, app.package_info().version.to_string(), Some(server.clone()));
     model.set_make_sources(Box::new(move |_| {
@@ -109,7 +127,9 @@ pub fn run(app: AppHandle, args: Vec<String>) {
 
     thread::spawn(move || {
         let mut t = Test { failures: 0 };
+        shortcuts(&mut t, &model);
         check(&mut t, &model, &server);
+        reminders(&mut t, &model, shots.as_deref());
         if !no_window {
             window_record(&mut t, &app, &model, &server);
         }
@@ -118,25 +138,65 @@ pub fn run(app: AppHandle, args: Vec<String>) {
     });
 }
 
+/// The shortcuts registered the way the app registers them (HotKeys.swift's register), and a taken one noticed.
+fn shortcuts(t: &mut Test, model: &Arc<Model>) {
+    println!("0. The shortcuts");
+    let pressed = model.clone();
+    t.expect(hotkeys::start(move |id| hotkeys::act(&pressed, id, false)), "the shortcut thread is up");
+    let prefs = model.prefs();
+    let taken = hotkeys::apply(model);
+    t.expect(
+        taken.is_empty(),
+        &format!(
+            "registered {} and {}{}",
+            prefs.shortcut_record.display(),
+            prefs.shortcut_mark.display(),
+            if taken.is_empty() { "" } else { " (FAILED: taken by another app; is Trailmix running?)" }
+        ),
+    );
+    t.expect(!hotkeys::is_free(prefs.shortcut_record), "another app can't have it now (so a taken shortcut is noticed)");
+    let spare = Shortcut { key: 0x87, mods: MOD_CONTROL | MOD_ALT | MOD_SHIFT };
+    t.expect(hotkeys::is_free(spare), &format!("{} is free (so a free one reads as free)", spare.display()));
+}
+
+/// Presses a shortcut: typed on the keyboard, if Windows takes keystrokes here; else handed to the shortcut
+/// thread the way Windows hands it a press. Says which.
+fn press(id: i32, shortcut: Shortcut) -> Option<&'static str> {
+    let before = hotkeys::PRESSES.load(Ordering::SeqCst);
+    let arrived = || hotkeys::PRESSES.load(Ordering::SeqCst) > before;
+    if hotkeys::type_keys(shortcut) && wait_until(2.0, &arrived) {
+        return Some("typed on the keyboard");
+    }
+    if hotkeys::post_press(id) && wait_until(2.0, &arrived) {
+        return Some("handed to the shortcut thread, as Windows does (no keyboard input here)");
+    }
+    None
+}
+
 fn check(t: &mut Test, model: &Arc<Model>, base: &str) {
     model.poll();
     let online = wait_until(5.0, || model.snapshot().connection == Connection::Online);
     t.expect(online, &format!("reaches the server ({:?})", model.snapshot().connection));
+    let prefs = model.prefs();
+    let (record, mark) = (prefs.shortcut_record, prefs.shortcut_mark);
 
-    println!("1. Record starts a recording");
-    model.toggle();
+    println!("1. The start/stop shortcut ({}) starts a recording", record.display());
+    let how = press(RECORD, record);
+    t.expect(how.is_some(), &format!("pressed: {}", how.unwrap_or("it never arrived")));
     let recording = wait_until(20.0, || model.snapshot().phase == Phase::Recording);
     t.expect(recording, &format!("recording ({})", model.snapshot().error.unwrap_or_else(|| "no error".into())));
     let first = model.snapshot().meeting_id;
     thread::sleep(Duration::from_secs(5));
-    println!("2. Mark flags a moment");
-    model.mark_moment();
+    println!("2. The mark shortcut ({}) flags a moment", mark.display());
+    let how = press(MARK, mark);
+    t.expect(how.is_some(), &format!("pressed: {}", how.unwrap_or("it never arrived")));
     t.expect(wait_until(5.0, || !model.snapshot().marks.is_empty()), &format!("server confirmed the mark: {:?}", model.snapshot().marks));
     let draft = wait_until(25.0, || !model.snapshot().drafts.is_empty());
     let first_line = model.snapshot().drafts.first().map(|d| d.text.chars().take(60).collect::<String>()).unwrap_or_else(|| "none".into());
     t.expect(draft, &format!("live draft arrived: {first_line}"));
-    println!("3. Stop stops it");
-    model.toggle();
+    println!("3. The start/stop shortcut stops it");
+    let how = press(RECORD, record);
+    t.expect(how.is_some(), &format!("pressed: {}", how.unwrap_or("it never arrived")));
     t.expect(wait_until(15.0, || model.snapshot().phase == Phase::Idle), "stopped cleanly");
     let snap = model.snapshot();
     t.expect(snap.last_meeting_id == first && snap.error.is_none(), &format!("meeting {} saved, no error", first.unwrap_or(-1)));
@@ -164,6 +224,17 @@ fn check(t: &mut Test, model: &Arc<Model>, base: &str) {
             status.get("platform").and_then(|v| v.as_str()).unwrap_or("?")
         ),
     );
+    let capabilities: Vec<&str> =
+        status.get("capabilities").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|c| c.as_str()).collect()).unwrap_or_default();
+    t.expect(
+        capabilities.contains(&"hotkeys") && capabilities.contains(&"call_reminder"),
+        &format!("it offers the shortcuts and call reminders ({})", capabilities.join(", ")),
+    );
+    let shown = status.get("shortcut_record").and_then(|v| v.as_str()).unwrap_or("");
+    t.expect(
+        shown == record.display() && status.get("call_reminders").and_then(|v| v.as_bool()) == Some(true),
+        &format!("the window is told the shortcut ({shown}) and that reminders are on"),
+    );
     let pressed = post(&format!("{base}/api/recorder/start"));
     t.expect(pressed == Some(202), "Record pressed in the window");
     model.check_in();
@@ -173,11 +244,152 @@ fn check(t: &mut Test, model: &Arc<Model>, base: &str) {
     t.expect(wait_until(15.0, || model.snapshot().phase == Phase::Idle), "stopped cleanly");
 }
 
+/// A stand-in for Windows' microphone records (the ConsentStore), so a "call" can start and end on cue.
+const STAND_IN: &str = "Software\\Trailmix\\SelfTest\\ConsentStore\\microphone";
+const STAND_IN_ROOT: &str = "Software\\Trailmix\\SelfTest";
+
+fn zoom_call(on: bool) {
+    let key = format!("{STAND_IN}\\NonPackaged\\C:#Program Files#Zoom#bin#Zoom.exe");
+    let now = win::filetime_now();
+    win::reg_set_qword(&key, "LastUsedTimeStart", now);
+    win::reg_set_qword(&key, "LastUsedTimeStop", if on { 0 } else { now + 1 });
+}
+
+/// Waits for a card whose title starts so.
+fn card_titled(seconds: f64, title: &str) -> Option<card::Shown> {
+    let mut found = None;
+    wait_until(seconds, || {
+        found = card::current().filter(|c| c.title.starts_with(title));
+        found.is_some()
+    });
+    found
+}
+
+/// Clicks a card's button: with the real mouse if Windows takes it here, else by handing the card the
+/// click. Says which (None: the card didn't go).
+fn click(id: u64, target: Target) -> Option<&'static str> {
+    let gone = || card::current().map(|c| c.id != id).unwrap_or(true);
+    if card::press(id, target, true) && wait_until(3.0, &gone) {
+        return Some("clicked with the mouse");
+    }
+    if card::press(id, target, false) && wait_until(3.0, &gone) {
+        return Some("clicked (handed the click: no mouse input here)");
+    }
+    None
+}
+
+fn shot(t: &mut Test, shots: Option<&Path>, name: &str) {
+    let Some(folder) = shots else { return };
+    let path = folder.join(name);
+    t.expect(card::save_png(&path), &format!("saved {}", path.display()));
+}
+
+/// CallReminder.swift's card, driven by a stand-in Zoom "taking the mic": asked to record, the card's
+/// Record records; the call ending asks to stop, and Stop recording stops; Don't ask for Zoom sticks; and
+/// with reminders off nothing asks. The card must never take the focus.
+fn reminders(t: &mut Test, model: &Arc<Model>, shots: Option<&Path>) {
+    println!("6. A call app taking the mic brings up the reminder");
+    let own = reminder::mic_entries(reminder::CONSENT_STORE);
+    println!("      (this PC's own records: {} apps, {} using the mic now)", own.len(), own.iter().filter(|e| e.in_use()).count());
+    win::reg_delete_tree(STAND_IN_ROOT);
+    let now = win::filetime_now();
+    let teams = format!("{STAND_IN}\\MSTeams_8wekyb3d8bbwe"); // used the mic, done now
+    win::reg_set_qword(&teams, "LastUsedTimeStart", now - 50_000_000);
+    win::reg_set_qword(&teams, "LastUsedTimeStop", now - 10_000_000);
+    let trailmix = format!("{STAND_IN}\\NonPackaged\\C:#Program Files#Trailmix#Trailmix.exe"); // ourselves: never a call
+    win::reg_set_qword(&trailmix, "LastUsedTimeStart", now);
+    win::reg_set_qword(&trailmix, "LastUsedTimeStop", 0);
+    zoom_call(true);
+    let entries = reminder::mic_entries(STAND_IN);
+    let using = reminder::call_using_mic(&entries, None);
+    t.expect(entries.len() == 3 && using.as_deref() == Some("Zoom"), &format!("reads who's using the mic: {} entries, {:?}", entries.len(), using));
+
+    let watcher = Reminder::new(model.clone(), STAND_IN, Duration::from_millis(500), Duration::from_secs(4), false, false);
+    let before = gui::foreground();
+    watcher.begin();
+    let Some(asked) = card_titled(8.0, "Zoom call started") else {
+        t.expect(false, &format!("the card asks: Zoom call started (it shows {:?})", card::current().map(|c| c.title)));
+        watcher.stop();
+        win::reg_delete_tree(STAND_IN_ROOT);
+        return;
+    };
+    t.expect(true, "the card asks: Zoom call started");
+    t.expect(
+        asked.visible && asked.ex_style & WS_EX_TOPMOST != 0 && asked.ex_style & WS_EX_NOACTIVATE != 0,
+        "it's on top of everything, and can't be activated",
+    );
+    thread::sleep(Duration::from_millis(500));
+    let after = gui::foreground();
+    t.expect(after != asked.hwnd, &format!("the call keeps the focus (in front: {before:#x}, then {after:#x}; the card is {:#x})", asked.hwnd));
+    shot(t, shots, "smoke-reminder.png");
+    let how = click(asked.id, Target::Button(0));
+    t.expect(how.is_some(), &format!("Record: {}", how.unwrap_or("the card didn't take the click")));
+    t.expect(
+        wait_until(20.0, || model.snapshot().phase == Phase::Recording),
+        &format!("the card's Record started a recording ({})", model.snapshot().error.unwrap_or_else(|| "no error".into())),
+    );
+    t.expect(gui::foreground() != asked.hwnd, "clicking it didn't take the focus either");
+
+    println!("7. The call ending asks to stop the recording");
+    thread::sleep(Duration::from_secs(2));
+    zoom_call(false);
+    match card_titled(15.0, "The call seems to have ended") {
+        Some(ended) => {
+            t.expect(true, "the card asks: The call seems to have ended");
+            shot(t, shots, "smoke-reminder-stop.png");
+            let how = click(ended.id, Target::Button(0));
+            t.expect(how.is_some(), &format!("Stop recording: {}", how.unwrap_or("the card didn't take the click")));
+            t.expect(wait_until(15.0, || model.snapshot().phase == Phase::Idle), "the card's Stop recording stopped it");
+        }
+        None => t.expect(false, &format!("the card asks: The call seems to have ended (it shows {:?})", card::current().map(|c| c.title))),
+    }
+    if model.snapshot().phase == Phase::Recording {
+        model.stop();
+        wait_until(15.0, || model.snapshot().phase == Phase::Idle);
+    }
+
+    println!("8. Don't ask for Zoom");
+    thread::sleep(Duration::from_millis(1500)); // the call is over: the next one is asked about again
+    zoom_call(true);
+    match card_titled(8.0, "Zoom call started") {
+        Some(again) => {
+            t.expect(true, "the next call is asked about again");
+            let how = click(again.id, Target::Link);
+            t.expect(how.is_some(), &format!("Don't ask for Zoom: {}", how.unwrap_or("the card didn't take the click")));
+            t.expect(
+                wait_until(3.0, || model.prefs().muted_call_apps.iter().any(|a| a == "Zoom")),
+                &format!("Zoom is left alone from now on ({:?})", model.prefs().muted_call_apps),
+            );
+        }
+        None => t.expect(false, "the next call is asked about again"),
+    }
+    zoom_call(false);
+    thread::sleep(Duration::from_millis(1500));
+    zoom_call(true);
+    let asked_again = card_titled(3.0, "Zoom").is_some();
+    t.expect(!asked_again, "and its next call isn't asked about");
+
+    println!("9. With reminders off, nothing asks");
+    model.update_prefs(|prefs| {
+        prefs.muted_call_apps.clear();
+        prefs.call_reminders = false;
+    });
+    zoom_call(false);
+    thread::sleep(Duration::from_millis(1500));
+    zoom_call(true);
+    let asked_anyway = card_titled(3.0, "Zoom").is_some();
+    t.expect(!asked_anyway, "no card");
+    model.update_prefs(|prefs| prefs.call_reminders = true);
+
+    watcher.stop();
+    win::reg_delete_tree(STAND_IN_ROOT);
+}
+
 /// The real Trailmix window and page, the way you use them: Record clicked in the window; the recording
 /// must go through the recorder, never the page's own capture. Then the transcript (made while
 /// recording) must arrive.
 fn window_record(t: &mut Test, app: &AppHandle, model: &Arc<Model>, base: &str) {
-    println!("6. Record in the real window");
+    println!("10. Record in the real window");
     let _ = minreq::put(format!("{base}/api/settings"))
         .with_header("Content-Type", "application/json")
         .with_body(r#"{"live_final": true}"#)

@@ -30,5 +30,20 @@ or empty `build/windows/{python,backend,ui,bin}` folders and a `build/windows/VE
 and as an update from the current release (until there's a Windows release, from the same build made as 0.0.1), then
 going back to it.
 
-Not yet on Windows (their capability flags are off, so the web app hides them): hotkeys, call reminders, the sound
-check.
+- `hotkeys.rs` is the global shortcuts (`HotKeys.swift`): `RegisterHotKey` on a thread of its own, Ctrl+Alt+Shift+R
+  to start and stop and Ctrl+Alt+Shift+M to mark a moment, changed in the tray menu's Settings (a card that takes
+  the next key press). A shortcut another app has is refused and the old one kept. A press while the window isn't in
+  front shows a short note in the corner ("Recording", "Moment marked").
+- `reminder.rs` is the call reminder (`CallReminder.swift`): every 3 seconds it reads which apps are using the mic
+  from Windows' privacy records (`HKCU\...\CapabilityAccessManager\ConsentStore\microphone`, Store apps and
+  `NonPackaged` programs; `LastUsedTimeStop` is 0 while in use) and asks "Zoom call started. Record it?"; once a
+  recorded call has let go of the mic and the speakers for a minute, "The call seems to have ended". `card.rs`
+  draws those cards (plain Win32 and GDI, bottom right, always on top, `WS_EX_NOACTIVATE` so they never take the
+  focus from the call).
+- `selftest.rs` also presses the shortcuts (typed with `SendInput` where there's a desktop, else handed to the
+  shortcut thread as Windows would) and drives the reminder with a stand-in Zoom in a test registry key
+  (`HKCU\Software\Trailmix\SelfTest`, removed afterwards), clicking the cards' buttons; `--shots=<folder>` saves
+  pictures of the cards. It registers the real shortcuts, so quit Trailmix before running it on your own PC.
+
+Not yet on Windows (its capability flag is off, so the web app hides it): the sound check. The web app's sound check
+walks you through the macOS permission prompts and System Settings; on Windows it would need its own wording.
