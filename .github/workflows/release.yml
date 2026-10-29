@@ -1,7 +1,7 @@
-# Builds the Mac app for Apple silicon and for Intel Macs and the Windows installer, tries each end to end on its own
-# kind of computer, and publishes them as a *pre-release* (a beta).
+# Builds the Mac app for Apple silicon and for Intel Macs and the Windows installers for x64 and ARM PCs, tries each end
+# to end on its own kind of computer, and publishes them as a *pre-release* (a beta).
 #   git tag v0.1.0 && git push --tags      -> builds, tests, publishes Trailmix-0.1.0-macos-{arm64,x86_64}.dmg (and,
-#                                             once PUBLISH_WINDOWS is on, Trailmix-0.1.0-windows-x64.exe) as a pre-release
+#                                             with PUBLISH_WINDOWS on, Trailmix-0.1.0-windows-x64.exe; -arm64.exe too with PUBLISH_WINDOWS_ARM64) as a pre-release
 #   Actions tab -> "Build Mac app" -> Run   -> builds and tests it, keeps it as a downloadable artifact only
 #     ... on main, with "Release it" ticked -> tags main as v<VERSION> and publishes it, as a pushed tag would
 #     ... and "To everyone" ticked too      -> also promotes it right away (scripts/promote.sh), skipping the beta days
@@ -135,7 +135,17 @@ jobs:
   # tried as a fresh install by scripts/smoke-test-windows.py. A failure here never holds up the Mac release.
   windows:
     needs: version
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false   # an ARM failure mustn't stop the x64 build, or the other way round
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm   # GitHub's free ARM runner (whisper.cpp is compiled there: it has no ARM wheel)
+    runs-on: ${{ matrix.runner }}
+    env:
+      TRAILMIX_ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -151,6 +161,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri
+          key: ${{ matrix.arch }}
       - name: Build the installer
         shell: pwsh
         env:
@@ -166,7 +177,7 @@ jobs:
           key: hf-whispercpp-tiny-windows
       - name: "Smoke test: a fresh install"
         shell: pwsh
-        run: python scripts/smoke-test-windows.py (Get-Item dist/Trailmix-*-windows-x64.exe).FullName
+        run: python scripts/smoke-test-windows.py (Get-Item "dist/Trailmix-*-windows-$env:TRAILMIX_ARCH.exe").FullName
       # As for the Mac: the current release's installer, cached so these tests don't add to its download count.
       - name: Which release is current
         id: stable
@@ -176,8 +187,8 @@ jobs:
         run: echo "tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName 2>/dev/null || echo none)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
         with:
-          path: previous/Trailmix-windows-x64.exe
-          key: current-release-windows-x64-${{ steps.stable.outputs.tag }}
+          path: previous/Trailmix-windows-${{ matrix.arch }}.exe
+          key: current-release-windows-${{ matrix.arch }}-${{ steps.stable.outputs.tag }}
       - name: "Smoke test: updating from the current release"
         shell: bash
         env:
@@ -186,18 +197,18 @@ jobs:
         # so the updater (Update now, then Go back) is still tried end to end.
         run: |
           mkdir -p previous
-          OLD=previous/Trailmix-windows-x64.exe
-          [ -f "$OLD" ] || gh release download --repo "$GITHUB_REPOSITORY" --pattern Trailmix-windows-x64.exe --dir previous || true
+          OLD="previous/Trailmix-windows-$TRAILMIX_ARCH.exe"
+          [ -f "$OLD" ] || gh release download --repo "$GITHUB_REPOSITORY" --pattern "Trailmix-windows-$TRAILMIX_ARCH.exe" --dir previous || true
           if [ ! -f "$OLD" ]; then
-            echo "No release has a Windows installer yet: building this one again as 0.0.1 to update from"
-            rm -rf desktop/src-tauri/target/release/bundle/nsis  # (else the build could pick up the first installer)
+            echo "No release has a Windows installer for $TRAILMIX_ARCH yet: building this one again as 0.0.1 to update from"
+            rm -rf desktop/src-tauri/target/*/release/bundle/nsis  # (else the build could pick up the first installer)
             TRAILMIX_VERSION=0.0.1 TRAILMIX_OUT=previous/build python scripts/build-windows.py
-            OLD=$(ls previous/build/Trailmix-*-windows-x64.exe)
+            OLD=$(ls previous/build/Trailmix-*-windows-"$TRAILMIX_ARCH".exe)
           fi
-          python scripts/smoke-test-windows.py dist/Trailmix-*-windows-x64.exe "$OLD"
+          python scripts/smoke-test-windows.py dist/Trailmix-*-windows-"$TRAILMIX_ARCH".exe "$OLD"
       - uses: actions/upload-artifact@v4
         with:
-          name: Trailmix-windows-x64
+          name: Trailmix-windows-${{ matrix.arch }}
           path: |
             dist/*.exe
             dist/*.sha256
@@ -205,7 +216,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: failed-Trailmix-windows-x64
+          name: failed-Trailmix-windows-${{ matrix.arch }}
           path: dist/*
 
   publish:
@@ -227,13 +238,16 @@ jobs:
           # On since the Windows app updates itself (0.19.3). "0" keeps the installer out of releases (it's still built,
           # smoke-tested and kept as this run's Trailmix-windows-x64 artifact).
           PUBLISH_WINDOWS: "1"
+          # The ARM installer is built and smoke-tested on GitHub's ARM runner but not yet tried on an ARM PC: off until
+          # it has been (it's kept as this run's Trailmix-windows-arm64 artifact). Needs PUBLISH_WINDOWS on too.
+          PUBLISH_WINDOWS_ARM64: "0"
         # Each disk image is named for the computer it's for, Trailmix-<version>-macos-<arch>.dmg (the app's updater picks
         # its own by that name), and has a copy with a fixed name, Trailmix-macos-<arch>.dmg, so a link to
         # releases/latest/download/... always works ("latest" skips pre-releases: the last promoted version).
         # Also under the names from before there were other platforms (Trailmix-<version>-arm64.dmg, Trailmix-arm64.dmg):
-        # apps from then look for those, and links to them are out there. The Windows installer,
-        # Trailmix-<version>-windows-x64.exe (+ .sha256, + the fixed name), comes along when its build passed (and
-        # PUBLISH_WINDOWS is on).
+        # apps from then look for those, and links to them are out there. Each Windows installer,
+        # Trailmix-<version>-windows-<arch>.exe (+ .sha256, + the fixed name Trailmix-windows-<arch>.exe), comes along
+        # when its build passed (and its switch is on).
         # --target makes the tag on this commit when the run was started with "Release it" (a tag made with this
         # workflow's token doesn't start another run, so it isn't built twice).
         run: |
@@ -249,14 +263,16 @@ jobs:
           shasum -a 256 "Trailmix-$V-arm64.dmg" >"Trailmix-$V-arm64.dmg.sha256"
           cp Trailmix-macos-arm64.dmg Trailmix-arm64.dmg
           WINDOWS=()
-          if [ "$PUBLISH_WINDOWS" != 1 ]; then
-            echo "Windows installer built and tested, not published yet (PUBLISH_WINDOWS)"
-          elif [ -f "Trailmix-$V-windows-x64.exe" ]; then
-            cp "Trailmix-$V-windows-x64.exe" Trailmix-windows-x64.exe
-            WINDOWS=("Trailmix-$V-windows-x64.exe" "Trailmix-$V-windows-x64.exe.sha256" Trailmix-windows-x64.exe)
-          else
-            echo "::warning::The Windows build didn't pass: this release has no Windows installer"
-          fi
+          for arch in x64 arm64; do
+            if [ "$PUBLISH_WINDOWS" != 1 ] || { [ "$arch" = arm64 ] && [ "$PUBLISH_WINDOWS_ARM64" != 1 ]; }; then
+              echo "Windows $arch installer built and tested, not published (PUBLISH_WINDOWS, PUBLISH_WINDOWS_ARM64)"
+            elif [ -f "Trailmix-$V-windows-$arch.exe" ]; then
+              cp "Trailmix-$V-windows-$arch.exe" "Trailmix-windows-$arch.exe"
+              WINDOWS+=("Trailmix-$V-windows-$arch.exe" "Trailmix-$V-windows-$arch.exe.sha256" "Trailmix-windows-$arch.exe")
+            else
+              echo "::warning::The Windows $arch build didn't pass: this release has no installer for those PCs"
+            fi
+          done
           gh release create "$TAG" Trailmix-"$V"-macos-*.dmg Trailmix-"$V"-macos-*.dmg.sha256 Trailmix-macos-*.dmg \
             "Trailmix-$V-arm64.dmg" "Trailmix-$V-arm64.dmg.sha256" Trailmix-arm64.dmg ${WINDOWS[@]+"${WINDOWS[@]}"} \
             --target "$GITHUB_SHA" --title "Trailmix ${TAG#v}" --generate-notes --prerelease

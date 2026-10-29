@@ -6,7 +6,7 @@ the shell's own self-test (audio files standing in for the mic and the meeting: 
 marks, the live draft, Record pressed in the window, a transcript made while recording) and a look at its
 window, and last uninstalls it. Nothing touches your real Trailmix data.
 
-  python scripts/smoke-test-windows.py dist/Trailmix-0.19.0-windows-x64.exe
+  python scripts/smoke-test-windows.py dist/Trailmix-0.19.0-windows-x64.exe     (or -windows-arm64.exe, on an ARM PC)
   python scripts/smoke-test-windows.py dist/Trailmix-0.19.0-windows-x64.exe previous/Trailmix-0.18.0-windows-x64.exe
 
 With a previous installer it first installs that one and lets its own updater install the new one from a
@@ -45,8 +45,33 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 APPROVED_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
 
 
+MACHINES = {"x64": 0x8664, "arm64": 0xAA64}  # PE header machine types
+
+
 class Failure(Exception):
     pass
+
+
+def pe_machine(path: Path) -> int:
+    with open(path, "rb") as f:
+        head = f.read(4096)
+    pe = int.from_bytes(head[0x3C:0x40], "little")
+    return int.from_bytes(head[pe + 4:pe + 6], "little")
+
+
+def check_arch(install: Path, arch: str) -> None:
+    """The parts that run are built for this arch: an x64 one in the ARM installer would still pass every other
+    check here (Windows on ARM emulates x64), only slowly."""
+    site = install / "python" / "Lib" / "site-packages"
+    if not list(site.glob("_pywhispercpp*.pyd")):
+        raise Failure("the install has no whisper.cpp")
+    parts = [install / "Trailmix.exe", install / "python" / "python.exe", install / "bin" / "ffmpeg.exe",
+             *(install / "python").glob("python3*.dll"), *site.glob("_pywhispercpp*.pyd"),
+             *site.glob("*.dll")]  # (whisper.cpp's, and the runtime DLLs bundled with it)
+    wrong = [str(p.relative_to(install)) for p in parts if pe_machine(p) != MACHINES[arch]]
+    if wrong:
+        raise Failure(f"not built for {arch}: {', '.join(wrong)}")
+    print(f"built for {arch}: {len(parts)} binaries checked")
 
 
 def log(text: str) -> None:
@@ -313,10 +338,10 @@ def main(argv: list[str]) -> int:
     processes: list[subprocess.Popen] = []
     exe = install / "Trailmix.exe"
     new_version = old_version = ""
+    arch = arch_of(installer)
     try:
         if previous:
             new_version = installer_version(installer)
-            arch = arch_of(installer)
             log(f"Installing the previous version from {previous.name} silently into {install}")
             install_silently(previous, install)
             old_version = app_version(exe) or installer_version(previous)
@@ -366,6 +391,7 @@ def main(argv: list[str]) -> int:
             if not part.exists():
                 raise Failure(f"the install has no {part.relative_to(install)}")
         print(f"installed: {sum(p.stat().st_size for p in install.rglob('*') if p.is_file()) / 1e6:.0f} MB")
+        check_arch(install, arch)
 
         log("The app starts its engine, and takes it down with it")
         app_env = {**env, "TRAILMIX_SERVER_URL": APP_URL, "TRAILMIX_DATA_DIR": str(app_data)}
@@ -396,6 +422,8 @@ def main(argv: list[str]) -> int:
             print(done.stderr[-4000:], file=sys.stderr)
         if done.returncode != 0:
             raise Failure(f"the shell's self-test failed (exit {done.returncode})")
+        if f"windows-{arch})" not in done.stdout:
+            raise Failure(f"the app doesn't say it's windows-{arch}")
 
         log("The window shows the web app")
         shot = root / "window.png"
@@ -404,8 +432,9 @@ def main(argv: list[str]) -> int:
         print(done.stdout.strip())
         if done.returncode != 0 or not shot.is_file() or shot.stat().st_size < 1000:
             raise Failure("the window didn't show the web app")
-        shutil.copy2(shot, installer.parent / "smoke-window.png")  # kept with the build, to look at
-        print(f"saved {installer.parent / 'smoke-window.png'}")
+        kept = installer.parent / f"smoke-window-{arch}.png"
+        shutil.copy2(shot, kept)  # kept with the build, to look at
+        print(f"saved {kept}")
 
         meetings_before = count_meetings()
         kill_tree(engine)
