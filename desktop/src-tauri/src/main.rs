@@ -6,10 +6,14 @@
 
 mod app;
 mod audio;
+mod card;
 mod client;
+mod gui;
+mod hotkeys;
 mod login;
 mod model;
 mod prefs;
+mod reminder;
 mod selftest;
 mod server;
 mod update;

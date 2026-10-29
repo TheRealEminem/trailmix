@@ -406,3 +406,114 @@ pub fn version_string(file: &std::path::Path, name: &str) -> Option<String> {
         None
     }
 }
+
+// MARK: More of the registry (which apps are using the microphone, the light or dark theme)
+
+const KEY_READ: u32 = 0x0002_0019;
+const REG_QWORD: u32 = 11;
+const RRF_RT_REG_DWORD: u32 = 0x0000_0010;
+const RRF_RT_REG_QWORD: u32 = 0x0000_0040;
+const ERROR_NO_MORE_ITEMS: i32 = 259;
+
+#[link(name = "advapi32")]
+extern "system" {
+    fn RegOpenKeyExW(key: *mut c_void, subkey: *const u16, options: u32, access: u32, result: *mut *mut c_void) -> i32;
+    fn RegEnumKeyExW(
+        key: *mut c_void,
+        index: u32,
+        name: *mut u16,
+        name_len: *mut u32,
+        reserved: *mut u32,
+        class: *mut u16,
+        class_len: *mut u32,
+        written: *mut u64,
+    ) -> i32;
+    fn RegCloseKey(key: *mut c_void) -> i32;
+    fn RegDeleteTreeW(key: *mut c_void, subkey: *const u16) -> i32;
+}
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetSystemTimeAsFileTime(time: *mut u64);
+}
+
+/// The names of the keys under a key in HKEY_CURRENT_USER (none if it isn't there).
+pub fn reg_subkeys(subkey: &str) -> Vec<String> {
+    let subkey = wide(subkey);
+    let mut out = Vec::new();
+    unsafe {
+        let mut key: *mut c_void = std::ptr::null_mut();
+        if RegOpenKeyExW(hkcu(), subkey.as_ptr(), 0, KEY_READ, &mut key) != 0 {
+            return out;
+        }
+        let mut index = 0;
+        while index < 10_000 {
+            let mut name = [0u16; 512];
+            let mut len = name.len() as u32;
+            let status = RegEnumKeyExW(
+                key,
+                index,
+                name.as_mut_ptr(),
+                &mut len,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            );
+            if status == ERROR_NO_MORE_ITEMS {
+                break;
+            }
+            if status == 0 {
+                out.push(String::from_utf16_lossy(&name[..len as usize]));
+            }
+            index += 1;
+        }
+        RegCloseKey(key);
+    }
+    out
+}
+
+fn reg_get_number(subkey: &str, value: &str, flags: u32) -> Option<u64> {
+    let (subkey, value) = (wide(subkey), wide(value));
+    let mut data: u64 = 0;
+    let mut len: u32 = if flags == RRF_RT_REG_QWORD { 8 } else { 4 };
+    let status = unsafe {
+        RegGetValueW(hkcu(), subkey.as_ptr(), value.as_ptr(), flags, std::ptr::null_mut(), &mut data as *mut u64 as *mut c_void, &mut len)
+    };
+    (status == 0).then_some(data)
+}
+
+/// A 64-bit number under HKEY_CURRENT_USER, if it's there.
+pub fn reg_get_qword(subkey: &str, value: &str) -> Option<u64> {
+    reg_get_number(subkey, value, RRF_RT_REG_QWORD)
+}
+
+/// A 32-bit number under HKEY_CURRENT_USER, if it's there.
+pub fn reg_get_dword(subkey: &str, value: &str) -> Option<u32> {
+    reg_get_number(subkey, value, RRF_RT_REG_DWORD).map(|n| n as u32)
+}
+
+/// Sets a 64-bit number under HKEY_CURRENT_USER (making the key if needed). For the self-test.
+pub fn reg_set_qword(subkey: &str, value: &str, data: u64) -> bool {
+    let (subkey, value) = (wide(subkey), wide(value));
+    unsafe { RegSetKeyValueW(hkcu(), subkey.as_ptr(), value.as_ptr(), REG_QWORD, &data as *const u64 as *const c_void, 8) == 0 }
+}
+
+/// Removes a key under HKEY_CURRENT_USER and everything in it. For the self-test.
+pub fn reg_delete_tree(subkey: &str) -> bool {
+    let subkey = wide(subkey);
+    let status = unsafe { RegDeleteTreeW(hkcu(), subkey.as_ptr()) };
+    status == 0 || status == 2
+}
+
+/// Now, as a FILETIME (100 ns steps since 1601), the way the registry keeps times.
+pub fn filetime_now() -> u64 {
+    let mut time: u64 = 0;
+    unsafe { GetSystemTimeAsFileTime(&mut time) };
+    time
+}
+
+/// Whether apps are asked to look dark (Settings > Personalization > Colors).
+pub fn dark_mode() -> bool {
+    reg_get_dword("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", "AppsUseLightTheme") == Some(0)
+}
