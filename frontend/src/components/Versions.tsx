@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { Comparison, HistoryEntry, TranscribeEngine, TranscriptVersion, Trial, TrialEstimate } from "../api";
 import type { Health, Meeting } from "../api";
+import { localEngineLabel } from "../platform";
 import { useBigSpend } from "../spend";
 import { ClockIcon, RefreshIcon } from "./icons";
 import { Select, Spinner, useConfirm } from "./ui";
@@ -23,9 +24,9 @@ const FIELD_NAMES: Record<string, string> = {
   audio_deleted: "Audio deleted",
 };
 
-const ENGINES: { value: TranscribeEngine; label: string }[] = [
+const engines = (): { value: TranscribeEngine; label: string }[] => [
   { value: "gemini", label: "Google Gemini (labels speakers)" },
-  { value: "local", label: "This Mac (MLX Whisper)" },
+  { value: "local", label: localEngineLabel(true) },
   { value: "remote", label: "Remote endpoint" },
 ];
 
@@ -326,7 +327,7 @@ export default function Versions({
                     size="sm"
                     value={engine}
                     onChange={(v) => setEngine(v as TranscribeEngine)}
-                    options={ENGINES}
+                    options={engines()}
                     className="w-60"
                   />
                   {engine !== "local" && (

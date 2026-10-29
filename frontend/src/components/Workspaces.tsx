@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { OrganizeJob, OrganizeKind, Workspace, WorkspaceColor, WorkspaceFilter } from "../api";
+import { macKeyboard } from "../platform";
 import { PlusIcon } from "./icons";
 import { Select, Spinner } from "./ui";
 
@@ -53,7 +54,7 @@ export function WorkspaceSwitcher({
     ...workspaces.map((w, i) => ({
       value: String(w.id),
       label: w.name,
-      hint: count(w.meetings) + (i < 9 ? ` · ⌃${i + 1}` : ""),
+      hint: count(w.meetings) + (i < 9 ? ` · ${macKeyboard() ? "⌃" : "Ctrl+"}${i + 1}` : ""),
       icon: <WorkspaceDot color={w.color} />,
     })),
     ...(workspaces.length ? [{ value: "none", label: "Default", hint: count(unsorted) + " · not in another workspace", icon: <WorkspaceDot color={undefined} /> }] : []),

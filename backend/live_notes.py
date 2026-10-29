@@ -30,6 +30,7 @@ import database as db
 import live
 import llm_engine
 import meeting_text
+import platform_words
 import questions
 import resources
 import settings
@@ -104,7 +105,8 @@ def decide(cfg: dict) -> dict:
     if off:
         return {**out, "on": False, "reason": f"Off: {off[0].lower()}{off[1:]}."}
     if not local:
-        return {**out, "on": True, "reason": f"On: {name} writes them, so nothing extra runs on this Mac."}
+        return {**out, "on": True, "reason": f"On: {name} writes them, so nothing extra runs on "
+                                             f"{platform_words.this_computer()}."}
     size = f"about {model_gb:.0f} GB" if model_gb else "several GB"
     if choice == "auto" and ram < BIG_RAM_GB:
         return {**out, "on": False, "reason": (
@@ -114,7 +116,7 @@ def decide(cfg: dict) -> dict:
     if ram < BIG_RAM_GB:
         warning = (f"The notes model ({size}) runs alongside your call every ten minutes. With {ram:.0f} GB of "
                    "memory, your call app or the live transcript may slow down while it does.")
-    reason = ("On: the notes model runs on this Mac every ten minutes during a meeting, and lets go of its memory "
+    reason = (f"On: the notes model runs on {platform_words.this_computer()} every ten minutes during a meeting, and lets go of its memory "
               "in between.")
     return {**out, "on": True, "reason": reason, "warning": warning}
 

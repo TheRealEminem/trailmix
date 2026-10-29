@@ -10,6 +10,7 @@ import psutil
 import database as db
 import llm_engine
 import local_engine
+import platform_words
 import settings
 
 GB = 1024**3
@@ -86,11 +87,13 @@ def check(required_gb: float, what: str) -> str | None:
         return None
     what = what.lower()
     if required_gb > total - 2:
-        return (f"Waiting for memory: {what} needs about {required_gb:.1f} GB, more than this Mac can spare. "
+        return (f"Waiting for memory: {what} needs about {required_gb:.1f} GB, more than "
+                f"{platform_words.this_computer()} can spare. "
                 "Pick a smaller model in Settings, or proceed anyway.")
     if _disk_free_share() < SWAP_DISK_FREE:
         return (f"Waiting for memory: {available:.1f} GB is free and {what} needs about {needed:.1f} GB, and with "
-                f"under {SWAP_DISK_FREE:.0%} of the disk free macOS has little room to swap. "
+                f"under {SWAP_DISK_FREE:.0%} of the disk free {platform_words.words()['os_name']} has little room "
+                "to swap. "
                 "Free up some disk space or close some apps, or proceed anyway.")
     if memory_pressure() >= 4:
         return (f"Waiting for memory: macOS reports critical memory pressure and {what} needs about {needed:.1f} GB. "
@@ -132,7 +135,8 @@ def device_advice() -> dict:
     if free < 8 or share < SWAP_DISK_FREE:
         verdict = "cloud"
         notes.append(f"Only {free:.0f} GB of disk is free. The speech models need about 1.7 GB and a local notes model "
-                     "2 to 9 GB, and macOS needs room to swap. Free up space, or use a cloud AI for notes.")
+                     f"2 to 9 GB, and {platform_words.words()['os_name']} needs room to swap. Free up space, or use a "
+                     "cloud AI for notes.")
     elif free < 20:
         notes.append(f"{free:.0f} GB of disk free: enough, but keep an eye on it (recordings use about 20 MB an hour).")
     return {"verdict": verdict, "chip": name, "ram_gb": round(ram), "disk_free_gb": round(free), "notes": notes}

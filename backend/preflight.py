@@ -13,6 +13,7 @@ import cloud
 import gemini_client
 import llm_engine
 import local_engine
+import platform_words
 import pricing
 import settings
 import transcribe_gemini
@@ -47,7 +48,8 @@ def engine_problem(engine: str, cfg: dict) -> str | None:
         if settings.locked(cfg) and not settings.on_this_computer(cfg["transcribe_url"]):
             return f"{settings.LOCKDOWN}, so recordings can't go to a transcription server elsewhere"
     elif not local_engine.available():
-        return "Transcribing on this computer needs MLX (Apple silicon) or whisper.cpp"
+        return (f"Transcribing on {platform_words.this_computer()} needs "
+                + ("MLX (Apple silicon) or whisper.cpp" if platform_words.os_id() == "macos" else "whisper.cpp"))
     return None
 
 
@@ -63,7 +65,7 @@ def transcribe_models(engine: str, cfg: dict) -> list[dict]:
         return [{"id": cfg["transcribe_model"], "label": cfg["transcribe_model"]}]
     if engine == "trailmix":
         return [{"id": "transcribe", "label": "Picked by Trailmix Cloud for your plan"}]
-    return [{"id": local_engine.model_label(local_engine.FINAL_MODEL), "label": "Whisper, on this Mac"}]
+    return [{"id": local_engine.model_label(local_engine.FINAL_MODEL), "label": f"Whisper, on {platform_words.this_computer()}"}]
 
 
 def transcript_chars(m: dict) -> int:
@@ -121,7 +123,7 @@ def transcribe_plan(meetings: list[dict], engine: str, model: str, cfg: dict) ->
     }
 
 
-ENGINE_LABELS = {"local": "This Mac", "gemini": "Google Gemini", "remote": "Your endpoint", "trailmix": "Trailmix Cloud"}
+ENGINE_LABELS = {"local": platform_words.cap(platform_words.this_computer()), "gemini": "Google Gemini", "remote": "Your endpoint", "trailmix": "Trailmix Cloud"}
 
 
 def preflight(meetings: list[dict], cfg: dict, engine: str | None = None, transcribe_model: str | None = None,

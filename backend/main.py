@@ -50,6 +50,7 @@ import local_engine
 import models
 import ollama_setup
 import pipeline
+import platform_words
 import preflight
 import recorder
 import resources
@@ -520,7 +521,7 @@ def recorder_start():
     if live.active_count():
         raise HTTPException(409, "Trailmix is already recording")
     if not recorder.request("start"):
-        raise HTTPException(409, "The menu bar recorder isn't running")
+        raise HTTPException(409, f"The {platform_words.words()['recorder_name']} isn't running")
     return {"ok": True}
 
 
@@ -788,7 +789,7 @@ def ollama_pull(body: PullRequest):
 def recorder_open_at_login(body: OpenAtLogin):
     """Start Trailmix (and its menu bar recorder) when you log in to your Mac, or stop doing so."""
     if not recorder.request("open-at-login" if body.on else "no-open-at-login"):
-        raise HTTPException(409, "The menu bar recorder isn't running")
+        raise HTTPException(409, f"The {platform_words.words()['recorder_name']} isn't running")
     return {"ok": True}
 
 
@@ -796,7 +797,7 @@ def recorder_open_at_login(body: OpenAtLogin):
 def recorder_call_reminders(body: OpenAtLogin):
     """"Zoom call started. Record it?": on (which also forgets the apps you said not to ask about) or off."""
     if not recorder.request("call-reminders" if body.on else "no-call-reminders"):
-        raise HTTPException(409, "The menu bar recorder isn't running")
+        raise HTTPException(409, f"The {platform_words.words()['recorder_name']} isn't running")
     return {"ok": True}
 
 
@@ -806,7 +807,7 @@ def recorder_update():
     if live.active_count():
         raise HTTPException(409, "Finish the recording first, then update")
     if not recorder.request("update"):
-        raise HTTPException(409, "The menu bar recorder isn't running")
+        raise HTTPException(409, f"The {platform_words.words()['recorder_name']} isn't running")
     return {"ok": True}
 
 
@@ -814,7 +815,7 @@ def recorder_update():
 def recorder_beta_updates(body: OpenAtLogin):
     """Beta updates: offer pre-releases (new versions being tried out before everyone gets them)."""
     if not recorder.request("beta-updates" if body.on else "no-beta-updates"):
-        raise HTTPException(409, "The menu bar recorder isn't running")
+        raise HTTPException(409, f"The {platform_words.words()['recorder_name']} isn't running")
     return {"ok": True}
 
 
@@ -822,7 +823,7 @@ def recorder_beta_updates(body: OpenAtLogin):
 def recorder_check_update():
     """Ask Trailmix.app to look for a new version now (the answer arrives with its next check-in)."""
     if not recorder.request("check-update"):
-        raise HTTPException(409, "The menu bar recorder isn't running")
+        raise HTTPException(409, f"The {platform_words.words()['recorder_name']} isn't running")
     return {"ok": True}
 
 
@@ -833,7 +834,7 @@ def recorder_go_back():
     if live.active_count():
         raise HTTPException(409, "Finish the recording first, then go back")
     if not recorder.request("go-back"):
-        raise HTTPException(409, "The menu bar recorder isn't running")
+        raise HTTPException(409, f"The {platform_words.words()['recorder_name']} isn't running")
     return {"ok": True}
 
 
@@ -841,7 +842,7 @@ def recorder_go_back():
 def recorder_unskip_update():
     """Offer the version you went back from again."""
     if not recorder.request("unskip-update"):
-        raise HTTPException(409, "The menu bar recorder isn't running")
+        raise HTTPException(409, f"The {platform_words.words()['recorder_name']} isn't running")
     return {"ok": True}
 
 
@@ -851,7 +852,7 @@ def recorder_sound_check():
     if live.active_count():
         raise HTTPException(409, "Not while recording")
     if not recorder.request("sound-check"):
-        raise HTTPException(409, "The menu bar recorder isn't running")
+        raise HTTPException(409, f"The {platform_words.words()['recorder_name']} isn't running")
     return {"ok": True}
 
 
@@ -934,6 +935,7 @@ def health():
             if remote else (local_engine.FINAL_MODEL if cfg["live_final"] else local_engine.LIVE_MODEL),
             "url": cfg["transcribe_url"] if remote else None,
             "local_available": local_engine.available(),
+            "local_engine": local_engine.NAME,  # "MLX", "whisper.cpp", or None
             # the transcript made while recording is the final one (with Trailmix Cloud, at the Pro level)
             "live_final": (cfg["live_final"] and not gemini and not cloudy) or (cloudy and "live_captions" not in off),
             "gemini_ready": gemini_client.ready(cfg) and not settings.locked(cfg),  # Google can be used for speaker labels
@@ -951,6 +953,7 @@ def health():
         "audio_retention_days": store.retention_days(),
         "auth": auth.required(),
         "recording": live.active_count() > 0,
+        "os": platform_words.os_id(),  # the web app's words for this computer ("this Mac", "this PC") follow it
     }
 
 

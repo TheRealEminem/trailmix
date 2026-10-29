@@ -30,6 +30,7 @@ import database as db
 import file_import
 import live
 import llm_engine
+import platform_words
 import settings
 
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".webp", ".gif", ".tif", ".tiff", ".bmp"}
@@ -560,7 +561,8 @@ def _picture_text(pictures: list[Path], name: str, cfg: dict) -> str:
     if cfg["attachments_engine"] == "local":
         helper = helper_path()
         if not helper:
-            raise AttachmentError("Reading photos on this computer needs the Trailmix Mac app. Switch Settings → "
+            why = ("needs the Trailmix Mac app" if platform_words.os_id() == "macos" else "isn't available yet")
+            raise AttachmentError(f"Reading photos on {platform_words.this_computer()} {why}. Switch Settings → "
                                   "Attachments to your summary provider to have it read them")
         try:
             done = subprocess.run([helper, "--ocr", *map(str, pictures)], capture_output=True, text=True, timeout=300)

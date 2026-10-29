@@ -19,6 +19,7 @@ import httpx
 import database as db
 import gemini_client
 import meeting_text
+import platform_words
 import pricing
 import templates
 
@@ -302,7 +303,8 @@ def _from_cloud(r: httpx.Response) -> None:
 
 def _failed(url: str, r: httpx.Response) -> LLMError:
     if r.headers.get("x-trailmix-level"):  # Trailmix Cloud writes its refusals for people: show them as they are
-        return LLMError("This Mac is signed out of Trailmix Cloud; sign in again (Settings → AI providers)"
+        return LLMError(f"{platform_words.cap(platform_words.this_computer())} is signed out of Trailmix Cloud; "
+                        "sign in again (Settings → AI providers)"
                         if r.status_code == 401 else _error_text(r))
     return LLMError(f"{urlparse(url).netloc} returned {r.status_code}: {_error_text(r)}")
 

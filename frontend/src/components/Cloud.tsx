@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import type { CloudAccount, CloudLink, CloudStatus } from "../api";
+import { platformWords } from "../platform";
 import { CheckIcon } from "./icons";
 import { Spinner } from "./ui";
 
@@ -172,9 +173,9 @@ export default function CloudPanel({
     <div className="py-3.5">
       {intro && (
         <p className="text-hint leading-relaxed text-ink-soft">
-          Trailmix runs the AI for you: a transcript and notes for every meeting, on any Mac, with no keys to set up.
-          Start with 5 free hours of Pro: captions while you talk and catch-up when you zone out. Plans from $8 a month;
-          cancel any time and everything stays on this Mac.
+          Trailmix runs the AI for you: a transcript and notes for every meeting, on any {platformWords().computer}, with no keys to set
+          up. Start with 5 free hours of Pro: captions while you talk and catch-up when you zone out. Plans from $8 a
+          month; cancel any time and everything stays on {platformWords().thisComputer}.
         </p>
       )}
       {flow.state === "waiting" ? (

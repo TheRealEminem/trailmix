@@ -3,6 +3,7 @@ import { api } from "../api";
 import type { CloudAccount, Usage } from "../api";
 import { periodDate, planLine } from "./Cloud";
 import { setSpendWarn } from "../spend";
+import { platformWords } from "../platform";
 import { ChevronDownIcon } from "./icons";
 import { Collapse, ControlRow, Segmented, Select } from "./ui";
 
@@ -141,8 +142,8 @@ export default function UsagePanel({
         </div>
         <p className="mt-1 text-hint leading-[1.45] text-ink-soft">
           An estimate from published prices (as of {usage?.as_of ?? "…"}), not your bill.
-          {usage?.unpriced ? " Some work is counted in tokens only: its price isn't known." : ""} AI that runs on this Mac is
-          free and not counted.
+          {usage?.unpriced ? " Some work is counted in tokens only: its price isn't known." : ""} AI that runs on{" "}
+          {platformWords().thisComputer} is free and not counted.
         </p>
         {lines.length > 0 && (
           <button

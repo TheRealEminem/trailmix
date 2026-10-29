@@ -21,6 +21,7 @@ import type {
   Tracker,
 } from "../api";
 import { tildePath } from "../format";
+import { cap, localEngineLabel, platformWords } from "../platform";
 import { useBigSpend } from "../spend";
 import UsagePanel from "./Usage";
 import CloudPanel, { PLAN_NAMES } from "./Cloud";
@@ -277,8 +278,9 @@ const PROVIDER_META: Record<
 > = {
   ollama: {
     label: "Ollama",
-    blurb:
-      "Runs models on this Mac or any machine running Ollama. Nothing leaves your network.",
+    get blurb() {
+      return `Runs models on ${platformWords().thisComputer} or any machine running Ollama. Nothing leaves your network.`;
+    },
   },
   anthropic: {
     label: "Claude (Anthropic)",
@@ -558,9 +560,9 @@ function UpgradesSection({ organize, onChanged }: { organize: ReturnType<typeof 
   );
 }
 
-const TRIAL_ENGINES: { value: TranscribeEngine; label: string }[] = [
+const trialEngines = (): { value: TranscribeEngine; label: string }[] => [
   { value: "gemini", label: "Google Gemini" },
-  { value: "local", label: "This Mac (MLX Whisper)" },
+  { value: "local", label: localEngineLabel(true) },
   { value: "remote", label: "Remote endpoint" },
 ];
 
@@ -819,7 +821,7 @@ function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => 
             size="sm"
             value={engine}
             onChange={(v) => setEngine(v as TranscribeEngine)}
-            options={TRIAL_ENGINES}
+            options={trialEngines()}
             className="w-52"
           />
           {engine !== "local" && (
@@ -971,7 +973,7 @@ function PrivacySection({
       id="privacy"
       icon={<ShieldIcon size={16} />}
       title="Privacy"
-      blurb="Your meetings, notes and recordings stay on this Mac unless you send them somewhere yourself (a cloud AI you add, an export, a problem report)."
+      blurb={`Your meetings, notes and recordings stay on ${platformWords().thisComputer} unless you send them somewhere yourself (a cloud AI you add, an export, a problem report).`}
       delay={280}
     >
       <Row
@@ -1134,7 +1136,7 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
   else if (!u)
     status = native
       ? "This copy of Trailmix doesn't update itself (a development build)."
-      : "Open Trailmix.app to check for updates.";
+      : `Open ${platformWords().appName} to check for updates.`;
   else if (u.state === "available")
     status = (
       <span className="font-medium text-forest-deep">
@@ -1164,7 +1166,11 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
       id="updates"
       icon={<DownloadIcon size={16} />}
       title="Updates"
-      blurb="New versions install from here (or Help → Check for Updates…) in about a minute."
+      blurb={
+        platformWords().os === "macos"
+          ? "New versions install from here (or Help → Check for Updates…) in about a minute."
+          : "New versions install from here in about a minute."
+      }
       delay={260}
     >
       <Row
@@ -1245,7 +1251,7 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
         <SwitchRow
           icon={<SparkleIcon size={16} />}
           label="Beta updates"
-          hint="Get new versions a few days early, to try them out; they may have rough edges. A beta reaches everyone after 3 days unless someone reports it blocks them. Report problems with the button in the bottom corner: personal information is removed on your Mac, and you check the report before posting it on GitHub."
+          hint={`Get new versions a few days early, to try them out; they may have rough edges. A beta reaches everyone after 3 days unless someone reports it blocks them. Report problems with the button in the bottom corner: personal information is removed on ${platformWords().yourComputer}, and you check the report before posting it on GitHub.`}
           checked={beta ?? !!u.beta}
           onChange={(v) => {
             setBeta(v);
@@ -1460,7 +1466,7 @@ function ProviderCard({
             {local ? (
               <Row
                 label="Ollama URL"
-                hint="Another machine works too, e.g. your Mac over Tailscale."
+                hint={`Another machine works too, e.g. ${platformWords().yourComputer} over Tailscale.`}
               >
                 <TextField
                   label="Ollama URL"
@@ -1611,7 +1617,8 @@ const LIVE_NOTES_OPTIONS: { id: SettingsT["live_notes"]; label: string }[] = [
 
 /** Where the power stands right now, for a notes model on this Mac. */
 function powerLine(p: LiveNotesPlan["power"]): { text: string; paused: boolean } {
-  if (!p.battery) return { text: "This Mac runs on mains power, so battery isn't a concern.", paused: false };
+  if (!p.battery)
+    return { text: `${cap(platformWords().thisComputer)} runs on mains power, so battery isn't a concern.`, paused: false };
   if (p.plugged_in) return { text: `Right now: plugged in${p.percent !== null ? `, battery at ${p.percent}%` : ""}.`, paused: false };
   if (p.low_power) return { text: "Right now: Low Power Mode is on, so notes wait until it's off or you plug in.", paused: true };
   if (p.percent !== null && p.percent < 40)
@@ -1642,7 +1649,7 @@ function LiveNotesRow({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT>)
       <ControlRow
         icon={<LinesIcon size={16} />}
         label="Notes during the meeting"
-        hint="Every ten minutes, the notes AI writes notes on what was just said. You see them while you record, and a long meeting's final notes are ready sooner after you stop (about 3 minutes instead of 5 for a 45-minute meeting on a 16 GB Mac)."
+        hint={`Every ten minutes, the notes AI writes notes on what was just said. You see them while you record, and a long meeting's final notes are ready sooner after you stop (about 3 minutes instead of 5 for a 45-minute meeting on a 16 GB ${platformWords().computer}).`}
         className="!py-0"
       />
       <div className="ml-[52px] mt-3">
@@ -1665,8 +1672,10 @@ function LiveNotesRow({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT>)
           )}
           {plan.local && plan.on && (
             <p className="text-ink-soft">
-              To spare your battery and your call, it pauses on battery below 40%, in Low Power Mode, or when macOS
-              reports critical memory pressure. Anything it skips is written after the meeting, as usual.
+              {platformWords().os === "macos"
+                ? "To spare your battery and your call, it pauses on battery below 40%, in Low Power Mode, or when macOS reports critical memory pressure."
+                : "To spare your battery and your call, it pauses on battery below 40%."}{" "}
+              Anything it skips is written after the meeting, as usual.
             </p>
           )}
           {power && (
@@ -1843,7 +1852,7 @@ export default function Settings({
               { id: "dusk", label: "Dusk", icon: <MoonIcon size={16} /> },
               {
                 id: "system",
-                label: "Match Mac",
+                label: `Match ${{ macos: "Mac", windows: "Windows", linux: "Linux", unknown: "system" }[platformWords().os]}`,
                 icon: <LaptopIcon size={16} />,
               },
             ]}
@@ -1938,9 +1947,9 @@ export default function Settings({
           onChange={(v) => save({ auto_title: v })}
         />
         <p className="py-3.5 text-hint text-ink-soft">
-          Short on free memory, Trailmix carries on and lets macOS use swap. It
-          only waits (and asks) when that would be dire: under 10% of the disk
-          free, or macOS reporting critical memory pressure.
+          Short on free memory, Trailmix carries on and lets {platformWords().osName} use swap. It only waits (and
+          asks) when that would be dire: under 10% of the disk free
+          {platformWords().os === "macos" ? ", or macOS reporting critical memory pressure" : ""}.
         </p>
       </Section>
 
@@ -2039,7 +2048,9 @@ export default function Settings({
           label="Engine"
           hint={
             health && !health.transcription.local_available
-              ? "Local MLX isn't available on this machine."
+              ? platformWords().os === "macos"
+                ? "Local MLX isn't available on this machine."
+                : `Local transcription (whisper.cpp) isn't available on ${platformWords().thisComputer}.`
               : undefined
           }
         >
@@ -2048,7 +2059,7 @@ export default function Settings({
             value={s.transcribe_engine}
             onChange={(v) => void saveTranscription({ transcribe_engine: v })}
             options={[
-              { id: "local", label: "This Mac (MLX)" },
+              { id: "local", label: localEngineLabel() },
               { id: "remote", label: "Remote endpoint" },
               { id: "gemini", label: "Google Gemini" },
               ...(cloudOffered ? [{ id: "trailmix" as const, label: "Trailmix Cloud" }] : []),
@@ -2270,7 +2281,9 @@ export default function Settings({
               Nothing leaves this computer. Text in PDFs, PowerPoints and Word files is read here;{" "}
               {inApp
                 ? "photos and scanned pages are read with the Mac's own text recognition"
-                : "photos and scanned pages need the Trailmix Mac app to be read, so here only their name is searchable"}
+                : platformWords().os === "macos"
+                  ? "photos and scanned pages need the Trailmix Mac app to be read, so here only their name is searchable"
+                  : `photos and scanned pages can't be read on ${platformWords().thisComputer} yet, so only their name is searchable`}
               . The digest is written by your local model (Ollama, or your own server on this computer); without one,
               the text is still searchable but there's no digest. A Google Slides link is fetched from Google only if
               you tick it, and only when it's shared publicly.
@@ -2496,8 +2509,8 @@ export default function Settings({
             label="Quit Trailmix"
             hint={
               inApp
-                ? "Closes Trailmix, including the menu bar recorder."
-                : "Stops the background server. Open Trailmix.app to start it again."
+                ? `Closes Trailmix, including the ${platformWords().recorderName}.`
+                : `Stops the background server. Open ${platformWords().appName} to start it again.`
             }
           >
             <button
@@ -2682,7 +2695,7 @@ function ExportAllRow({ includeAudio }: { includeAudio: boolean }) {
             ? `Exporting ${job.done} of ${job.total}…`
             : job && (job.total ?? 0) > 0
               ? `Exported ${job.done} meeting${job.done === 1 ? "" : "s"}${job.errors?.length ? `, ${job.errors.length} failed: ${job.errors[0]}` : "."}`
-              : "Every meeting so far, with the settings above. Handy before reinstalling or moving to a new Mac."}
+              : `Every meeting so far, with the settings above. Handy before reinstalling or moving to a new ${platformWords().computer}.`}
         </div>
         {error && <div className="mt-1 text-hint text-trail-deep">{error}</div>}
       </div>

@@ -10,6 +10,7 @@ import type {
 import { hasCapability, missingCapabilityReason } from "../api";
 import type { ActiveRecording } from "../capture";
 import { formatDuration, formatLongDate, shortModel } from "../format";
+import { cap, platformWords } from "../platform";
 import {
   AlertIcon,
   ChevronDownIcon,
@@ -66,9 +67,10 @@ interface Props {
 
 const delay = (ms: number): CSSProperties => ({ animationDelay: `${ms}ms` });
 
-/** A tiny menu bar with a status item, for "recording in the menu bar helper". */
+/** A tiny menu bar with a status item, for "recording in the menu bar helper" (a taskbar at the bottom, off a Mac). */
 const MenuBarIcon = () => (
   <svg
+    className={platformWords().os === "macos" ? undefined : "-scale-y-100"}
     width="16"
     height="16"
     viewBox="0 0 16 16"
@@ -172,7 +174,7 @@ function EnginePicker({ health, onEngine }: { health: Health | null; onEngine: (
           ? "Google: live captions as you talk, then a transcript with the speakers told apart. Your audio is sent to Google."
           : engine === "remote"
             ? "Your own transcription server (change it in Settings → Transcription)."
-            : "This Mac: private and free, labels you and the other side of a call."
+            : `${cap(platformWords().thisComputer)}: private and free, labels you and the other side of a call.`
       }
     >
       <Segmented
@@ -181,7 +183,7 @@ function EnginePicker({ health, onEngine }: { health: Health | null; onEngine: (
         value={engine === "gemini" ? "gemini" : "local"}
         onChange={(v) => onEngine(v as "local" | "gemini")}
         options={[
-          { id: "local", label: "This Mac" },
+          { id: "local", label: cap(platformWords().thisComputer) },
           { id: "gemini", label: "Google" },
         ]}
       />
@@ -272,7 +274,7 @@ export default function Recorder(p: Props) {
               Can't reach the Trailmix backend
             </div>
             <div className="mt-0.5 leading-relaxed">
-              Open Trailmix.app, or run{" "}
+              Open {platformWords().appName}, or run{" "}
               <code className="rounded-xs bg-surface/70 px-1.5 py-0.5 font-mono text-meta">
                 ./trailmix
               </code>{" "}
@@ -294,7 +296,9 @@ export default function Recorder(p: Props) {
               label="Microphone"
               hint={
                 p.native.mic_allowed === false
-                  ? "Not allowed yet: turn it on in System Settings → Privacy & Security → Microphone."
+                  ? platformWords().os === "windows"
+                    ? "Not allowed yet: turn it on in Settings → Privacy & security → Microphone."
+                    : "Not allowed yet: turn it on in System Settings → Privacy & Security → Microphone."
                   : undefined
               }
             >
@@ -320,7 +324,7 @@ export default function Recorder(p: Props) {
             <EnginePicker health={p.health} onEngine={p.onEngine} />
             <p className="flex items-center gap-2 py-3 text-hint text-ink-soft">
               <MenuBarIcon />
-              Records with the Trailmix menu bar recorder
+              Records with the Trailmix {platformWords().recorderName}
               {p.native.machine ? ` on ${p.native.machine}` : ""}. Change
               these in its menu.
             </p>
@@ -470,7 +474,7 @@ function Notepad({ p }: { p: Props }) {
       <header className="animate-enter">
         <p className="eyebrow mb-2">
           {formatLongDate(new Date().toISOString())}
-          {v.helper ? " · recording in the menu bar helper" : ""}
+          {v.helper ? ` · recording in the ${platformWords().helperName}` : ""}
         </p>
         <h1 className="font-display text-[2rem] font-medium leading-tight tracking-[-0.02em] text-ink">
           {p.live?.title || "New meeting"}
@@ -618,7 +622,7 @@ function LiveTranscript({ p, v, seeked }: { p: Props; v: ReturnType<typeof liveV
               <MenuBarIcon />
             </span>
             <div>
-              <div className="text-label font-medium text-ink">Recording in the menu bar helper</div>
+              <div className="text-label font-medium text-ink">Recording in the {platformWords().helperName}</div>
               <div>{p.remote?.has_system ? "Your mic and the meeting's audio" : "Your mic"} · levels are shown in its menu</div>
             </div>
           </div>

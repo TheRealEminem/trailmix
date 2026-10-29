@@ -1,5 +1,6 @@
 import { useContext, useState } from "react";
 import { EventsContext } from "../events";
+import { platformWords } from "../platform";
 import { ChevronDownIcon } from "./icons";
 import { Collapse } from "./ui";
 
@@ -92,7 +93,7 @@ export default function SystemStatus() {
           </div>
           {ramLow && !dire && (
             <p className="mt-2.5 leading-snug text-sun-deep">
-              Under ~{transcribeNeeds.toFixed(1)} GB free: models still run, with macOS using swap, so they may be slower.
+              Under ~{transcribeNeeds.toFixed(1)} GB free: models still run, with {platformWords().osName} using swap, so they may be slower.
             </p>
           )}
           {dire && (

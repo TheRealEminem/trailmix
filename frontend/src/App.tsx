@@ -16,6 +16,7 @@ import type {
 import { startRecording } from "./capture";
 import type { ActiveRecording } from "./capture";
 import { formatDuration, tildePath } from "./format";
+import { platformWords, setRecorderPlatform } from "./platform";
 import { PreflightSheet } from "./components/AIChoice";
 import AskPanel from "./components/AskPanel";
 import { MenuIcon, MicIcon } from "./components/icons";
@@ -350,6 +351,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (events.recorder?.available) setRecorderPlatform(events.recorder.platform);
     setNative(events.recorder?.available ? events.recorder : null);
   }, [events.recorder]);
 
@@ -463,9 +465,8 @@ export default function App() {
           }
           await new Promise((r) => setTimeout(r, 400));
         }
-        fail(
-          "The menu bar recorder didn't start. Open its menu (the Trailmix icon at the top of the screen) to see why.",
-        );
+        const w = platformWords();
+        fail(`The ${w.recorderName} didn't start. Open its menu (the Trailmix icon ${w.trayWhere}) to see why.`);
       } catch (e) {
         fail(`Couldn't start recording: ${(e as Error).message}`);
       } finally {
@@ -507,7 +508,7 @@ export default function App() {
           if (!current) return;
           setToast({
             tone: "success",
-            text: "Recording stopped from the menu bar helper.",
+            text: `Recording stopped from the ${platformWords().helperName}.`,
           });
           void current.stop().then(() => finishRecording(current.meetingId));
         },
@@ -679,7 +680,7 @@ export default function App() {
     const ok = await confirm({
       title: "Quit Trailmix?",
       body: inApp
-        ? "The window, the menu bar recorder and the background server all stop. Meetings that are mid-way through processing pick up where they left off next time."
+        ? `The window, the ${platformWords().recorderName} and the background server all stop. Meetings that are mid-way through processing pick up where they left off next time.`
         : "The background server stops. Meetings that are mid-way through processing pick up where they left off next time.",
       confirmLabel: "Quit",
       tone: "danger",
@@ -704,8 +705,7 @@ export default function App() {
           </div>
           <h1 className="page-title mt-6">See you on the trail</h1>
           <p className="mt-2 text-body leading-relaxed text-ink-soft">
-            Trailmix has stopped. You can close this window; open Trailmix.app
-            to start it again.
+            Trailmix has stopped. You can close this window; open {platformWords().appName} to start it again.
           </p>
         </div>
       </div>

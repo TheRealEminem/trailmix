@@ -20,6 +20,7 @@ import uuid
 import httpx
 
 import gemini_client
+import platform_words
 import settings
 
 log = logging.getLogger("trailmix.cloud")
@@ -43,7 +44,8 @@ def _call(method: str, path: str, token: str | None = None, **kw) -> httpx.Respo
     except httpx.HTTPError as e:
         raise CloudError(f"Couldn't reach Trailmix Cloud: {e or type(e).__name__}") from e
     if r.status_code == 401:
-        raise CloudError("This Mac is signed out of Trailmix Cloud; sign in again")
+        raise CloudError(f"{platform_words.cap(platform_words.this_computer())} is signed out of Trailmix Cloud; "
+                         "sign in again")
     if r.status_code >= 400 and r.status_code not in (404, 410):
         raise CloudError(error_text(r))
     return r

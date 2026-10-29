@@ -6,6 +6,7 @@ import { dayGroup, formatDuration, formatTime } from "../format";
 import { ChatIcon, CheckSquareIcon, CloseIcon, DownloadIcon, MicIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons";
 import { AISwitch } from "./AIChoice";
 import { Logo } from "./illustrations";
+import { macKeyboard } from "../platform";
 import SystemStatus from "./SystemStatus";
 import { Pulse, Skeleton, Spinner, StatusChip } from "./ui";
 import { WorkspaceDot, WorkspaceSwitcher, inWorkspace } from "./Workspaces";
@@ -208,7 +209,7 @@ export default function Sidebar({
     if (last?.label === label) last.items.push(m);
     else groups.push({ label, items: [m] });
   }
-  const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+  const mac = macKeyboard();
 
   return (
     <aside

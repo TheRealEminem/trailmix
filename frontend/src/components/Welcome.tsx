@@ -25,6 +25,7 @@ import {
   UsersIcon,
   WaveIcon,
 } from "./icons";
+import { cap, platformWords } from "../platform";
 import { TRANSCRIBERS, transcriberFor } from "../transcribers";
 import type { Transcriber } from "../transcribers";
 import { Ambient, Logo, TrailScene } from "./illustrations";
@@ -645,7 +646,7 @@ function TranscribeStep({
           selected={mode === "local"}
           onSelect={() => setMode("local")}
           icon={<LaptopIcon size={18} />}
-          title="On this Mac"
+          title={`On ${platformWords().thisComputer}`}
           badge={cloudFits ? undefined : "Recommended"}
           body="Private and free. A one-time download of about 1.7 GB, and it tells you apart from the other side."
         />
@@ -655,10 +656,10 @@ function TranscribeStep({
           disabled={s.lockdown}
           icon={<CloudIcon size={18} />}
           title="A cloud service or your own server"
-          badge={cloudFits && !s.lockdown ? "Recommended for this Mac" : undefined}
+          badge={cloudFits && !s.lockdown ? `Recommended for ${platformWords().thisComputer}` : undefined}
           body={
             s.lockdown
-              ? "Lockdown mode is on, so recordings stay on this Mac."
+              ? `Lockdown mode is on, so recordings stay on ${platformWords().thisComputer}.`
               : "No download. Google, OpenAI or Groq with your own API key, or a server you run. Recordings are sent there."
           }
         >
@@ -763,8 +764,8 @@ function AiStep({
           badge={device?.verdict !== "local" && !s.lockdown ? "Easiest" : undefined}
           body={
             s.lockdown
-              ? "Lockdown mode is on, so everything stays on this Mac."
-              : "Trailmix runs it for you, on any Mac, with nothing to install or set up. Try 5 hours of Pro free (captions while you talk, catch-up when you zone out), then plans from $8 a month. Cancel any time; everything stays on this Mac."
+              ? `Lockdown mode is on, so everything stays on ${platformWords().thisComputer}.`
+              : `Trailmix runs it for you, on any ${platformWords().computer}, with nothing to install or set up. Try 5 hours of Pro free (captions while you talk, catch-up when you zone out), then plans from $8 a month. Cancel any time; everything stays on ${platformWords().thisComputer}.`
           }
         >
           <CloudPanel intro={false} onChange={(status) => setSignedIn(status.signed_in)} />
@@ -773,9 +774,9 @@ function AiStep({
           selected={mode === "local"}
           onSelect={() => setMode("local")}
           icon={<LaptopIcon size={18} />}
-          title="On this Mac"
+          title={`On ${platformWords().thisComputer}`}
           badge={device?.verdict === "local" ? "Recommended" : undefined}
-          body="Private and free: nothing leaves this computer. Needs a few GB of downloads and a recent Mac."
+          body={`Private and free: nothing leaves this computer. Needs a few GB of downloads and a recent ${platformWords().computer}.`}
         />
         <Choice
           selected={mode === "cloud"}
@@ -862,7 +863,7 @@ function NotesStep({
     >
       {device && (
         <p className="-mt-3 mb-4 text-hint text-ink-soft">
-          This Mac: {[device.chip, `${device.ram_gb} GB memory`, `${device.disk_free_gb} GB free`].filter(Boolean).join(" · ")}
+          {cap(platformWords().thisComputer)}: {[device.chip, `${device.ram_gb} GB memory`, `${device.disk_free_gb} GB free`].filter(Boolean).join(" · ")}
         </p>
       )}
       <div role="radiogroup" aria-label="Notes" className="space-y-3">
@@ -870,9 +871,9 @@ function NotesStep({
           selected={mode === "local"}
           onSelect={() => setMode("local")}
           icon={<LaptopIcon size={18} />}
-          title="On this Mac"
+          title={`On ${platformWords().thisComputer}`}
           badge={device?.verdict === "local" ? "Recommended" : undefined}
-          body="Private and free, with Ollama, an app that runs AI models on your Mac."
+          body={`Private and free, with Ollama, an app that runs AI models on ${platformWords().yourComputer}.`}
         >
           {device && device.verdict !== "local" && (
             <p className="mb-3 rounded-sm bg-sun-soft px-3 py-2 text-sun-deep">{device.notes.join(" ")}</p>
@@ -885,10 +886,10 @@ function NotesStep({
           disabled={s.lockdown}
           icon={<CloudIcon size={18} />}
           title="A cloud AI"
-          badge={device && device.verdict !== "local" && !s.lockdown ? "Recommended for this Mac" : undefined}
+          badge={device && device.verdict !== "local" && !s.lockdown ? `Recommended for ${platformWords().thisComputer}` : undefined}
           body={
             s.lockdown
-              ? "Lockdown mode is on, so everything stays on this Mac."
+              ? `Lockdown mode is on, so everything stays on ${platformWords().thisComputer}.`
               : "The best notes, from Claude, OpenAI, Gemini or DeepSeek, with your own API key. Transcripts are sent to them."
           }
         >
@@ -1023,7 +1024,7 @@ function OllamaSetup({ onReady }: { onReady: () => void }) {
           <button type="button" className="btn btn-sm btn-primary" onClick={() => run(() => api.pullOllamaModel())}>
             Download {o.recommended}
           </button>
-          <span>Writes good notes and suits this Mac.</span>
+          <span>Writes good notes and suits {platformWords().thisComputer}.</span>
         </div>
       )}
       {busy && <p className="mt-2 text-hint">You can carry on while it downloads.</p>}
@@ -1048,7 +1049,7 @@ function SoundStep({ native, onBack, next }: NavProps & { native: NativeRecorder
         <SoundCheck native={native} brief />
       ) : (
         <p className="flex items-center gap-2 text-ui text-ink-soft">
-          <Spinner /> Waiting for the menu bar recorder…
+          <Spinner /> Waiting for the {platformWords().recorderName}…
         </p>
       )}
     </Page>
@@ -1061,7 +1062,7 @@ function StatsStep({ s, onSaved, onBack, next }: NavProps & { s: Settings; onSav
     <Page
       icon={<ChartIcon size={20} />}
       title="Help Trailmix work on more computers"
-      sub="Trailmix is free. A few anonymous numbers, once a day, show which Macs and set-ups to support."
+      sub={`Trailmix is free. A few anonymous numbers, once a day, show which ${platformWords().computer}s and set-ups to support.`}
       onBack={onBack}
       onNext={async () => {
         onSaved(await api.putSettings({ share_stats: share, stats_notice_seen: true }));
@@ -1128,7 +1129,7 @@ function DoneStep({
   const first = s.your_name.trim().split(/\s+/)[0];
   const missing = speech?.local && s.transcribe_engine === "local" ? speech.models.filter((m) => !m.installed) : [];
   const current = missing.find((m) => m.downloading) ?? missing[0];
-  const engine = transcriberFor(s.transcribe_engine, s.transcribe_url)?.name ?? "On this Mac";
+  const engine = transcriberFor(s.transcribe_engine, s.transcribe_url)?.name ?? `On ${platformWords().thisComputer}`;
   const notes = health?.summary;
 
   return (
@@ -1177,7 +1178,7 @@ function DoneStep({
       {native && (
         <div className="mt-5 space-y-3 text-ui leading-relaxed text-ink-soft">
           <p>
-            Trailmix lives in your menu bar, so you can close this window and it keeps listening
+            Trailmix lives in your {platformWords().trayName}, so you can close this window and it keeps listening
             {!hasCapability(native, "hotkeys") ? null : native.shortcut_mark ? (
               <>
                 . Press <kbd className="kbd">{native.shortcut_mark}</kbd> during a call to flag a moment
