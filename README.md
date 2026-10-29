@@ -79,11 +79,12 @@ API key for a cloud provider. First use downloads the Whisper models (base ≈ 1
   small model drafts live and the accurate one runs after. Silero VAD, hallucination and echo cleanup.
 - The live model is loaded at startup, after each meeting's processing, and when a call app opens audio.
 - Each meeting records what transcribed it (`whisper-large-v3-turbo, while recording`).
-- **Google Gemini** (`gemini-3.5-transcribe`) as a third engine: tells the individual speakers apart (Speaker 1,
-  Speaker 2… on the other side of a call; your mic stays *You*), with **live captions** streaming from Google while
-  you record (`gemini-3.5-transcribe-live`). Audio is sent to Google, so Lockdown mode switches it off. Long
-  recordings go in overlapping chunks whose speaker labels are matched. The engine can be switched on the Recorder
-  card right before you press Record.
+- **Google Gemini** (`gemini-3.5-transcribe`) as a third engine. With **live captions** on, clips cut at pauses go to
+  Google as you talk (about 10–15 s behind speech) and are both the captions and the transcript you keep, *You* and
+  *Them* by track, so it's ready seconds after Stop. Without captions the whole recording is transcribed afterwards,
+  telling the individual speakers apart (Speaker 1, Speaker 2… on the other side of a call; your mic stays *You*), in
+  overlapping chunks whose speaker labels are matched. Audio is sent to Google, so Lockdown mode switches it off. The
+  engine can be switched on the Recorder card right before you press Record.
 - **Economy and batch.** Choosing the Economy quality (Gemini Flash-Lite) transcribes through a general model for
   about a quarter of the price, and it can run as a half-price **Batch** job; notes can be rewritten at half price
   the same way. Every paid action shows its estimated cost first, bulk runs go a few meetings at a time, and

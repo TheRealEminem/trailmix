@@ -253,7 +253,8 @@ CLIP_PROMPT = ("Transcribe this short stretch of a meeting verbatim{language}. I
 def transcribe_clip(audio: np.ndarray, api_key: str, language: str | None, model: str, context: str = "",
                     usage: dict | None = None, tags: dict | None = None) -> list[dict]:
     """[{start, end, text}] for a few seconds of one track, sent with the request instead of uploaded: the near-live
-    captions of Trailmix Cloud, where each clip is cut at a pause (live.py) and the captions are the transcript.
+    captions of Trailmix Cloud (or of a general model with your own key), where each clip is cut at a pause (live.py)
+    and the captions are the transcript.
     `tags`: which meeting and track it's from (gemini_client.meeting_headers)."""
     said = f" (the language is {language})" if language else ""
     hint = f"Names and terms that may come up, and what was just said before: {context.strip()}. " if context.strip() else ""
@@ -276,6 +277,20 @@ def transcribe_clip(audio: np.ndarray, api_key: str, language: str | None, model
     length = len(audio) / SR
     return [{"start": min(t["start"], length), "end": min(t["end"], length), "text": t["text"]}
             for t in parse_turns(text or "[]")]
+
+
+def transcribe_inline(audio: np.ndarray, api_key: str, language: str | None, model: str = MODEL,
+                      tags: dict | None = None) -> list[dict]:
+    """[{start, end, text}] for a few seconds of one track from gemini-3.5-transcribe, the audio sent with the request
+    rather than uploaded (one call, about a second and a half): the near-live transcript with your own Google key,
+    where each clip is cut at a pause (live.py). No speakers are told apart: a clip is too short to name them
+    consistently from one to the next, so each track is one side of the call."""
+    body = {"model": model,
+            "input": [{"type": "audio", "mime_type": "audio/ogg", "data": base64.b64encode(encode(audio)).decode()}],
+            "generation_config": _config(language, diarize=False)}
+    r = _request("POST", f"{gemini_client.base(api_key)}/v1beta/interactions", api_key, retries=1, timeout=30,
+                 json=body, headers=tags or {})
+    return [{"start": s["start"], "end": s["end"], "text": s["text"]} for s in group_words(parse_words(r.json()))]
 
 
 def call(file: dict, mime: str, api_key: str, language: str | None, diarize: bool, model: str = MODEL,
