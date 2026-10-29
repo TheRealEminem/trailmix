@@ -4,6 +4,7 @@ Runs on your Mac by default (everything local). The same app can run on a server
 and summaries at remote endpoints in Settings and set TRAILMIX_ACCESS_TOKEN (see docs/self-hosting.md).
 If frontend/dist exists, the UI is served from here too, so one process is the whole app.
 """
+import contextlib
 import asyncio
 import json
 import logging
@@ -16,7 +17,7 @@ import tempfile
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -549,7 +550,7 @@ def granola_notes():
     try:
         return {"notes": importer.granola_notes(_granola_key())}
     except importer.ImportError_ as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, str(e)) from e
 
 
 @app.post("/api/import/granola", status_code=202)
@@ -597,7 +598,7 @@ def set_import_source(name: str, body: SourceAuto):
         try:
             sources.check(name, cfg[src.key_setting])
         except importer.ImportError_ as e:
-            raise HTTPException(422, str(e))
+            raise HTTPException(422, str(e)) from e
     sources.set_auto(name, body.auto, body.start)
     if body.auto:
         sources.sync_soon(name)
@@ -648,7 +649,7 @@ def watch_folder(body: WatchFolder):
     try:
         added = watched.add(body.path, body.existing)
     except ValueError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
     threading.Thread(target=watched.scan_all, daemon=True, name="watch-first-look").start()
     return {**watched.status(), "added": added}
 
@@ -676,7 +677,7 @@ def import_text(body: TextImport):
     when = importer._parse_time(body.date) if body.date else None
     if when and when.tzinfo is None:
         when = when.astimezone()  # a plain date means local time
-    meeting_id = importer.save_imported(body.title.strip(), when or datetime.now(timezone.utc), segments, "paste", None, None)
+    meeting_id = importer.save_imported(body.title.strip(), when or datetime.now(UTC), segments, "paste", None, None)
     return {"id": meeting_id}
 
 
@@ -688,14 +689,14 @@ async def import_file(request: Request, name: str, modified: float = 0):
     what = file_import.kind(name)
     if not what:
         raise HTTPException(415, f"{name}: Trailmix can't import this kind of file")
-    when = datetime.fromtimestamp(modified / 1000, timezone.utc) if modified else datetime.now(timezone.utc)
+    when = datetime.fromtimestamp(modified / 1000, UTC) if modified else datetime.now(UTC)
     cfg = settings.get_all()
     if what == "transcript":
         data = await request.body()
         try:
             meeting_id = await run_in_threadpool(file_import.import_transcript, name, data, when, {cfg["your_name"]})
         except ValueError as e:
-            raise HTTPException(422, str(e))
+            raise HTTPException(422, str(e)) from e
         return {"kind": what, "id": meeting_id, "skipped": meeting_id is None}
     temp = file_import.temp_path(name)
     try:
@@ -708,7 +709,7 @@ async def import_file(request: Request, name: str, modified: float = 0):
     try:
         meeting_id = await run_in_threadpool(file_import.import_recording, name, temp, when)
     except ValueError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
     return {"kind": what, "id": meeting_id, "skipped": meeting_id is None}
 
 
@@ -974,7 +975,7 @@ def put_settings(body: SettingsPatch):
     try:
         return settings.update(body.model_dump())
     except ValueError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
 
 
 @app.get("/api/recording-laws")
@@ -989,7 +990,7 @@ def provider_models(pid: str):
     try:
         return {"models": llm_engine.list_models(pid, settings.get_all())}
     except llm_engine.LLMError as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, str(e)) from e
 
 
 @app.post("/api/providers/{pid}/test")
@@ -1002,7 +1003,7 @@ def provider_test(pid: str):
     try:
         return {"ok": True, "message": llm_engine.test(pid, cfg)}
     except llm_engine.LLMError as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, str(e)) from e
 
 
 # ── Trailmix Cloud ─────────────────────────────────────────────────────
@@ -1015,7 +1016,7 @@ def _cloud(fn, *args):
     try:
         return fn(*args)
     except cloud.CloudError as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, str(e)) from e
 
 
 @app.post("/api/cloud/link")
@@ -1059,13 +1060,13 @@ def transcription_test():
         try:
             return {"ok": True, "message": transcribe_gemini.check(gemini_client.credential(cfg))}
         except transcribe_gemini.GeminiError as e:
-            raise HTTPException(502, str(e))
+            raise HTTPException(502, str(e)) from e
     if cfg["transcribe_engine"] != "remote":
         return {"ok": True, "message": f"Local transcription ({local_engine.NAME + ' available' if local_engine.available() else 'not installed'})"}
     try:
         return {"ok": True, "message": transcribe_remote.check(cfg["transcribe_url"], cfg["transcribe_api_key"], cfg["transcribe_model"])}
     except transcribe_remote.RemoteError as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, str(e)) from e
 
 
 # ── Meetings ───────────────────────────────────────────────────────────
@@ -1246,7 +1247,7 @@ def add_my_note(meeting_id: int, body: MyNote):
     if not text:
         raise HTTPException(422, "Type something first")
     session = live.get(meeting_id)
-    notes = meeting_text.my_notes(m) + [{"t": round(session.duration, 1) if session else None, "text": text}]
+    notes = [*meeting_text.my_notes(m), {"t": round(session.duration, 1) if session else None, "text": text}]
     db.update_meeting(meeting_id, why="you edited your notes", my_notes_json=notes)
     return notes
 
@@ -1267,10 +1268,8 @@ async def mark_live(meeting_id: int, body: MarkRequest | None = None):
     session = _live_or_409(meeting_id)
     mark = await run_in_threadpool(session.mark, body.note if body else "")
     if session.notify:
-        try:
+        with contextlib.suppress(Exception):
             await session.notify({"type": "marked", **mark})  # so the recording app shows it too
-        except Exception:
-            pass
     return mark
 
 
@@ -1289,9 +1288,9 @@ def catch_up_ask(meeting_id: int, body: CatchUpRequest):
     try:
         return catch_up.ask(session, _get_or_404(meeting_id), settings.get_all(), body.kind, body.question[:2000])
     except catch_up.NotReady as e:
-        raise HTTPException(409, str(e))
+        raise HTTPException(409, str(e)) from e
     except llm_engine.LLMError as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, str(e)) from e
 
 
 @app.post("/api/meetings/{meeting_id}/stop", status_code=202)
@@ -1317,7 +1316,7 @@ def edit_meeting(meeting_id: int, body: MeetingPatch):
             raise HTTPException(422, "That isn't a date Trailmix can read")
         if when.tzinfo is None:
             when = when.astimezone()  # a plain date or time means local time
-        if not datetime(1990, 1, 1, tzinfo=timezone.utc) <= when <= datetime.now(timezone.utc) + timedelta(days=2):
+        if not datetime(1990, 1, 1, tzinfo=UTC) <= when <= datetime.now(UTC) + timedelta(days=2):
             raise HTTPException(422, "Pick a date that isn't in the future")
         fields["created_at"] = importer._iso(when)
         if not m.get("imported_at"):  # its audio's 30 days still count from when it came in, not the new date
@@ -1340,7 +1339,7 @@ def guess_date(meeting_id: int):
     try:
         return meeting_date.guess(m, cfg)
     except llm_engine.LLMError as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, str(e)) from e
 
 
 @app.put("/api/meetings/{meeting_id}/speakers")
@@ -1367,7 +1366,7 @@ def meeting_audio(meeting_id: int):
     try:
         path = store.playback_path(meeting)
     except RuntimeError as e:
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, str(e)) from e
     if not path:
         raise HTTPException(404, "No audio available for playback")
     return FileResponse(path, media_type="audio/ogg")
@@ -1482,7 +1481,7 @@ def apply_transcript_version(meeting_id: int, version_id: int, body: ApplyReques
     try:
         pipeline.apply_version(meeting_id, version_id, summarize=bool(body and body.summarize))
     except ValueError as e:
-        raise HTTPException(404, str(e))
+        raise HTTPException(404, str(e)) from e
     _reexport(meeting_id)
     return {"ok": True}
 
@@ -1518,9 +1517,9 @@ def _submit_transcript_batch(ids: list[int], body, cfg: dict) -> dict:
     try:
         return {"batch": True, **batch_jobs.submit_transcripts(ids, cfg, model, apply=body.apply)}
     except batch_jobs.NotReady as e:
-        raise HTTPException(409, str(e))
+        raise HTTPException(409, str(e)) from e
     except (gemini_batch.BatchError, transcribe_gemini.GeminiError) as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, str(e)) from e
 
 
 @app.get("/api/meetings/{meeting_id}/trial")
@@ -1692,7 +1691,7 @@ def unmerge(meeting_id: int):
     try:
         return {"id": duplicates.unmerge(meeting_id)}
     except ValueError as e:
-        raise HTTPException(409, str(e))
+        raise HTTPException(409, str(e)) from e
 
 
 @app.post("/api/meetings/{meeting_id}/ask")
@@ -1709,8 +1708,8 @@ def ask_meeting(meeting_id: int, body: Question):
         with llm_engine.purpose("questions", meeting_id):
             answer, used = llm_engine.ask(question, _meeting_context(meeting, cfg, question), cfg)
     except llm_engine.LLMError as e:
-        raise HTTPException(502, str(e))
-    entry = {"q": question, "a": answer, "provider": used, "at": datetime.now(timezone.utc).isoformat()}
+        raise HTTPException(502, str(e)) from e
+    entry = {"q": question, "a": answer, "provider": used, "at": datetime.now(UTC).isoformat()}
     history = (json.loads(meeting["qa_json"]) if meeting.get("qa_json") else []) + [entry]
     db.update_meeting(meeting_id, qa_json=history[-50:])
     return entry
@@ -1800,7 +1799,7 @@ def answer_question(question_id: int, body: AnswerRequest):
     try:
         meeting_id = questions.answer(question_id, body.value[:80])
     except KeyError:
-        raise HTTPException(404, "No such question")
+        raise HTTPException(404, "No such question") from None
     _reexport(meeting_id)
     return {"ok": True}
 
@@ -1961,7 +1960,7 @@ def trial_estimate(meeting_id: int, engine: str, model: str | None = None, mix_t
 @app.get("/api/usage")
 def usage(days: int = 30):
     """What the paid AI was asked to do in the last `days` days (audio minutes, tokens), and about what it cost."""
-    start = datetime.now(timezone.utc) - timedelta(days=days)
+    start = datetime.now(UTC) - timedelta(days=days)
     since = start.strftime("%Y-%m-%dT%H:%M:%S.") + f"{start.microsecond // 1000:03d}Z"  # as the database writes them
     rows = db.usage_since(since)
     return {"days": days, "rows": rows, "cost": round(sum(r["cost"] or 0 for r in rows), 4),
@@ -1992,9 +1991,9 @@ def upgrade_notes_batch(body: NotesBatchRequest):
     try:
         return batch_jobs.submit_notes(ids, cfg)
     except batch_jobs.NotReady as e:
-        raise HTTPException(409, str(e))
+        raise HTTPException(409, str(e)) from e
     except gemini_batch.BatchError as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, str(e)) from e
 
 
 @app.get("/api/batches")
@@ -2020,7 +2019,7 @@ def cancel_batch(job_id: int):
     try:
         batch_jobs.cancel(job_id, settings.get_all())
     except batch_jobs.NotReady as e:
-        raise HTTPException(409, str(e))
+        raise HTTPException(409, str(e)) from e
     return {"ok": True}
 
 
@@ -2123,7 +2122,7 @@ def retitle(meeting_id: int):
             title, _ = llm_engine.run_chain("auto", cfg, lambda pid: llm_engine.clean_title(
                 llm_engine.generate(pid, cfg, llm_engine.TITLE_PROMPT.format(summary=notes))))
     except llm_engine.LLMError as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, str(e)) from e
     if not title:
         raise HTTPException(502, "The AI didn't come up with a usable title; try again")
     db.update_meeting(meeting_id, why="a new title from its notes", title=title, title_auto=1)
@@ -2158,7 +2157,7 @@ def ask_everything(body: Question):
         with llm_engine.purpose("questions"):
             answer, used = llm_engine.ask(question, context, cfg, cite_meetings=True)
     except llm_engine.LLMError as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, str(e)) from e
     return {
         "answer": answer,
         "provider": used,
@@ -2234,7 +2233,7 @@ def finish_attachment(meeting_id: int, pending_id: str, body: AttachmentFinish):
         att_id = attachments.store(meeting_id, temp, body.name, body.searchable, body.shrink,
                                    attachments.made_earlier(temp))
     except attachments.AttachmentError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
     return attachments.present(db.get_attachment(att_id))
 
 
@@ -2258,7 +2257,7 @@ def add_attachment_link(meeting_id: int, body: AttachmentLink):
     try:
         att_id = attachments.add_link(meeting_id, body.url, body.name, body.searchable)
     except attachments.AttachmentError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
     return attachments.present(db.get_attachment(att_id))
 
 
@@ -2286,7 +2285,7 @@ def shrink_attachment(attachment_id: int):
     try:
         return attachments.present(attachments.shrink_existing(attachment_id))
     except attachments.AttachmentError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, str(e)) from e
 
 
 @app.post("/api/attachments/{attachment_id}/read")
@@ -2365,11 +2364,11 @@ def send_task(task_id: int, request: Request):
     try:
         ticket = trackers.send(task_id, str(request.base_url))
     except LookupError:
-        raise HTTPException(404, "Task not found")
+        raise HTTPException(404, "Task not found") from None
     except trackers.AlreadySent:
-        raise HTTPException(409, "This task was already sent")
+        raise HTTPException(409, "This task was already sent") from None
     except trackers.TrackerError as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, str(e)) from e
     _reexport(db.get_task(task_id)["meeting_id"])  # meeting.json carries the ticket
     return {"ticket": ticket}
 
@@ -2385,9 +2384,9 @@ def tracker_projects(tracker_id: str):
     try:
         return trackers.get(tracker_id).projects(settings.get_all())
     except KeyError:
-        raise HTTPException(404, "No such tracker")
+        raise HTTPException(404, "No such tracker") from None
     except trackers.TrackerError as e:
-        raise HTTPException(502, str(e))
+        raise HTTPException(502, str(e)) from e
 
 
 # ── Files ──────────────────────────────────────────────────────────────
@@ -2402,7 +2401,7 @@ def export_now(meeting_id: int):
         paths = exporter.export_meeting(meeting, settings.get_all())
     except OSError as e:
         db.update_meeting(meeting_id, export_error=f"Export failed: {e}")
-        raise HTTPException(500, f"Export failed: {e}")
+        raise HTTPException(500, f"Export failed: {e}") from e
     db.update_meeting(meeting_id, exported_paths=json.dumps(paths), export_error=None)
     return {"paths": paths}
 
@@ -2424,7 +2423,7 @@ def keep_forever(meeting_id: int, body: KeepRequest):
             db.update_meeting(meeting_id, exported_paths=json.dumps(paths), export_error=None)
         except OSError as e:
             db.update_meeting(meeting_id, export_error=f"Export failed: {e}")
-            raise HTTPException(500, f"Couldn't save it to the export folder: {e}")
+            raise HTTPException(500, f"Couldn't save it to the export folder: {e}") from e
     return _present(db.get_meeting(meeting_id))
 
 

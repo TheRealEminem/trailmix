@@ -1,4 +1,5 @@
 import math
+from typing import ClassVar
 
 import numpy as np
 
@@ -90,7 +91,7 @@ def test_a_bad_key_is_reported_in_plain_words(monkeypatch):
     class Reply:
         status_code = 400
         text = '{"error": {"code": 400, "message": "API key not valid.", "details": [{"reason": "API_KEY_INVALID"}]}}'
-        headers = {}
+        headers: ClassVar[dict] = {}
 
     monkeypatch.setattr(g.httpx, "request", lambda *a, **k: Reply())
     try:

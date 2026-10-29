@@ -14,8 +14,9 @@ from pathlib import Path
 # same speed. (Must be set before huggingface_hub is first imported.)
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
-import local_engine  # noqa: E402
-import settings  # noqa: E402
+import local_engine
+import settings
+import contextlib
 
 log = logging.getLogger("trailmix")
 
@@ -88,10 +89,8 @@ def _downloaded_bytes(repo: str) -> float:
     blobs = _hub_cache() / ("models--" + _split(repo)[0].replace("/", "--")) / "blobs"
     total = 0
     for f in blobs.glob("*"):
-        try:
+        with contextlib.suppress(OSError):
             total += f.stat().st_size
-        except OSError:
-            pass
     return total
 
 

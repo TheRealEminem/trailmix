@@ -331,7 +331,7 @@ def _anthropic(cfg: dict, prompt: str, system: str | None, on_text: OnText = Non
     model = cfg["anthropic_model"]
     content = [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                             "data": base64.b64encode(b).decode()}} for b in images or []]
-    content = content + [{"type": "text", "text": prompt}] if content else prompt
+    content = [*content, {"type": "text", "text": prompt}] if content else prompt
     params = {"model": model, "max_tokens": MAX_TOKENS, "messages": [{"role": "user", "content": content}]}
     if system:
         params["system"] = system
@@ -370,7 +370,7 @@ def _openai_compatible(base: str, key: str, model: str, prompt: str, system: str
                        on_text: OnText = None, images: list[bytes] | None = None, usage: dict | None = None) -> str:
     content = [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(b).decode()}"}}
                for b in images or []]
-    content = [{"type": "text", "text": prompt}] + content if content else prompt
+    content = [{"type": "text", "text": prompt}, *content] if content else prompt
     messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": content}]
     body: dict = {"model": model, "messages": messages}
     if pid == "openai":
@@ -740,10 +740,8 @@ def unload(pid: str, cfg: dict) -> None:
     """Lets a local Ollama model go right away instead of when its keep-alive runs out."""
     if pid != "ollama" or OLLAMA_KEEP_ALIVE != "0" or not cfg.get("ollama_url"):
         return
-    try:
+    with contextlib.suppress(httpx.HTTPError):
         httpx.post(f"{cfg['ollama_url']}/api/generate", json={"model": model_for("ollama", cfg), "keep_alive": 0}, timeout=10)
-    except httpx.HTTPError:
-        pass
 
 
 def summarize(transcript: str, cfg: dict, choice: str, template: str, moments: list[str],
@@ -773,7 +771,7 @@ def summarize(transcript: str, cfg: dict, choice: str, template: str, moments: l
                 system, prompt = templates.notes_prompt(part, i, len(parts), about)
                 show = None
                 if on_draft:
-                    show = lambda t, part=part: on_draft("\n\n".join(shown + [_draft_part(_stamps(part), t)]))
+                    show = lambda t, part=part: on_draft("\n\n".join([*shown, _draft_part(_stamps(part), t)]))
                 text = tidy(generate(pid, cfg, prompt, system=system, keep_alive=hold, on_text=show))
                 notes.append(f"{_span(part)}:\n{text}")
                 shown.append(_draft_part(_stamps(part), text))
@@ -817,10 +815,8 @@ def summarize(transcript: str, cfg: dict, choice: str, template: str, moments: l
             unload(pid, cfg)
         title = None
         if want_title:
-            try:
+            with contextlib.suppress(LLMError):
                 title = clean_title(generate(pid, cfg, TITLE_PROMPT.format(summary=summary), keep_alive=OLLAMA_KEEP_ALIVE))
-            except LLMError:
-                pass
         return summary, title
 
     (summary, title), used = run_chain(choice, cfg, run)

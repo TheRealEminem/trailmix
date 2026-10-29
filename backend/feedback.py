@@ -23,6 +23,7 @@ import database as db
 import llm_engine
 import platform_words
 import resources
+import contextlib
 
 REPO = "TheRealEminem/trailmix"
 LOG_LINES = 25
@@ -85,10 +86,8 @@ def known_names() -> list[str]:
     found: set[str] = set()
     with db.connect() as conn:
         for (names,) in conn.execute("SELECT speaker_names_json FROM meetings WHERE speaker_names_json IS NOT NULL"):
-            try:
+            with contextlib.suppress(ValueError):
                 people.update(v.strip() for v in json.loads(names).values() if isinstance(v, str) and v.strip())
-            except ValueError:
-                pass
         found.update(r[0] for r in conn.execute("SELECT name FROM workspaces"))
         found.update(r[0].strip() for r in conn.execute("SELECT title FROM meetings") if r[0] and len(r[0].strip()) > 3)
     # Each part of a person's name too ("Dana Whitfield" → "Dana", "Whitfield"), if it looks like a name.

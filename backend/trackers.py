@@ -12,13 +12,14 @@ sign-in is on. A task opens at <address>/#/tasks/t/<id>.
 """
 import threading
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 import httpx
 
 import database as db
 import platform_words
 import settings
+from typing import ClassVar
 
 TIMEOUT = httpx.Timeout(15, connect=3)
 _transport: httpx.BaseTransport | None = None     # tests put a pretend tracker here
@@ -45,7 +46,7 @@ class Traverse:
     id = "traverse"
     name = "Traverse"
     blurb = "Your projects and tasks app. A task becomes a Traverse task, with a link back to its meeting."
-    fields = [
+    fields: ClassVar[list[Field]] = [
         Field("traverse_url", "Address",
               f"Where Traverse is running. On {platform_words.this_computer()} it's usually http://127.0.0.1:8793.",
               "url", "http://127.0.0.1:8793"),
@@ -115,7 +116,7 @@ def get(tracker_id: str):
 def _note(meeting: dict, link: str) -> str:
     when = datetime.fromisoformat(meeting["created_at"].replace("Z", "+00:00"))
     if when.tzinfo is None:
-        when = when.replace(tzinfo=timezone.utc)
+        when = when.replace(tzinfo=UTC)
     local = when.astimezone()
     return f"From the meeting [{meeting['title']}]({link}) on {local.day} {local:%B %Y}, in Trailmix."
 
@@ -144,7 +145,7 @@ def send(task_id: int, trailmix_url: str) -> dict:
         meeting = db.get_meeting(task["meeting_id"])
         made = tracker.create(cfg, task["text"], _note(meeting, f"{trailmix_url.rstrip('/')}/#meeting-{meeting['id']}"))
         ticket = {"tracker": tracker.id, "name": tracker.name, "id": made["id"], "url": made["url"],
-                  "at": datetime.now(timezone.utc).isoformat()}
+                  "at": datetime.now(UTC).isoformat()}
         db.update_task(task_id, ticket=ticket)
         return ticket
     finally:

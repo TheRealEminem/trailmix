@@ -9,7 +9,7 @@ the recording when it's alongside).
 """
 import json
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 import attachments
@@ -60,7 +60,7 @@ def record(m: dict, audio: dict | None) -> dict:
         "attachments": attachments.records(m["id"]),
         "keep_audio": bool(m.get("keep_audio")),
         "workspace": (db.get_workspace(m["workspace_id"]) or {}).get("name") if m.get("workspace_id") else None,
-        "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "exported_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "app_version": APP_VERSION,
     }
 
