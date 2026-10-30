@@ -3,7 +3,7 @@
 into a temporary folder, checks the app brings its engine up and takes it down with it, then starts the
 engine inside the install the way the app does and runs the checks shared with the Mac (scripts/smoke_test.py),
 the shell's own self-test (audio files standing in for the mic and the meeting: start and stop with the global
-shortcut, marks, the live draft, the call reminder's cards driven by a stand-in Zoom, Record pressed in the window,
+shortcut, marks, the live draft, the sound check, the call reminder's cards driven by a stand-in Zoom, Record pressed in the window,
 a transcript made while recording) and a look at its window, and last uninstalls it. Nothing touches your real
 Trailmix data. (The self-test registers Trailmix's shortcuts, so quit Trailmix before running this on your own PC.)
 
@@ -428,6 +428,8 @@ def main(argv: list[str]) -> int:
             raise Failure(f"the shell's self-test failed (exit {done.returncode})")
         if f"windows-{arch})" not in done.stdout:
             raise Failure(f"the app doesn't say it's windows-{arch}")
+        if "ok    the sound check heard both sides" not in done.stdout:
+            raise Failure("the self-test didn't run the sound check")
 
         log("The window shows the web app")
         shot = root / "window.png"

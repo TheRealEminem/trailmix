@@ -52,6 +52,10 @@ pub fn com_init() {
 }
 
 fn explain(what: &str, e: windows::core::Error) -> String {
+    // E_ACCESSDENIED on the mic: its privacy switch is off (for every app, or for desktop apps).
+    if what == "use the microphone" && e.code().0 as u32 == 0x8007_0005 {
+        return format!("Couldn't {what}: {}", super::BLOCKED);
+    }
     format!("Couldn't {what} ({})", e.message().trim())
 }
 
