@@ -8,8 +8,10 @@ import sys
 import psutil
 
 import database as db
+import hardware
 import llm_engine
 import local_engine
+import model_ranks
 import platform_words
 import settings
 
@@ -102,34 +104,45 @@ def check(required_gb: float, what: str) -> str | None:
 
 
 def chip() -> str:
-    """e.g. "Apple M4" ("" where it can't be read)."""
-    if sys.platform != "darwin":
-        return ""
-    try:
-        return subprocess.run(["/usr/sbin/sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True,
-                              timeout=2).stdout.strip()
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
+    """e.g. "Apple M4", "AMD Ryzen 7 7840U w/ Radeon 780M Graphics" ("" where it can't be read)."""
+    return hardware.profile()["cpu"]
+
+
+def _model_size_b(model: str) -> float:
+    found = re.search(r":(\d+(?:\.\d+)?)b\b", model.lower())
+    return float(found.group(1)) if found else 0.0
+
+
+def _room_note(ram: float, gpu: str, model: str) -> str:
+    """What fits for notes, in words: the memory (or graphics card) and the model it suits."""
+    size = _model_size_b(model)
+    where = f"The {gpu} graphics card" if gpu else f"{ram:.0f} GB of memory"
+    if size >= 14:
+        return f"{where}: room for a larger local notes model ({model})."
+    kind = "small" if size and size < 6 else "mid-sized"
+    runs = f"runs a {kind} notes model ({model}) quickly" if gpu else f"runs everything locally with a {kind} notes model ({model})"
+    return f"{where} {runs}. Bigger models, or a cloud AI, write better notes."
 
 
 def device_advice() -> dict:
-    """What this Mac can comfortably do, for setup: {"verdict": "local" | "mixed" | "cloud", "chip", "ram_gb",
-    "disk_free_gb", "notes": [...]}. Local: everything runs well here. Mixed: transcribe here, but a cloud AI
-    will write notes better and faster. Cloud: also short on disk (or memory) for local models."""
+    """What this computer can comfortably do, for setup: {"verdict": "local" | "mixed" | "cloud", "chip", "gpu",
+    "ram_gb", "disk_free_gb", "notes_model", "notes": [...]}. Local: everything runs well here. Mixed: transcribe
+    here, but a cloud AI will write notes better and faster. Cloud: also short on disk (or memory) for local
+    models. `gpu` names a graphics card with memory of its own ("" if none); `notes_model` is the local notes model
+    to suggest (model_ranks.recommended_notes), and the notes say why."""
     vm = psutil.virtual_memory()
     usage = shutil.disk_usage(db.DATA_DIR)
     ram, free, share = vm.total / GB, usage.free / GB, usage.free / usage.total if usage.total else 1
-    name = chip()
+    hw = hardware.profile()
+    name, gpu = hw["cpu"], hardware.gpu_label(hw["gpus"])
+    suggest = model_ranks.recommended_notes(hw["ai_memory_gb"])["model"]
     notes, verdict = [], "local"
     if ram < 12:
         verdict = "mixed"
         notes.append(f"{ram:.0f} GB of memory is tight for a local AI writing notes next to your call apps. "
                      "Transcription still runs well here; a cloud AI (Claude, OpenAI or Gemini) will write better notes, faster.")
-    elif ram < 20:
-        notes.append(f"{ram:.0f} GB of memory runs everything locally with a small or mid-sized notes model "
-                     "(about 7B). Bigger models, or a cloud AI, write better notes.")
     else:
-        notes.append(f"{ram:.0f} GB of memory: room for a larger local notes model (14B or more).")
+        notes.append(_room_note(ram, gpu, suggest))
     if re.search(r"\bM1\b", name) and ram < 12:
         notes.append("An M1 with this much memory is slow with local notes models; a cloud AI is the better fit.")
     if free < 8 or share < SWAP_DISK_FREE:
@@ -139,4 +152,5 @@ def device_advice() -> dict:
                      "cloud AI for notes.")
     elif free < 20:
         notes.append(f"{free:.0f} GB of disk free: enough, but keep an eye on it (recordings use about 20 MB an hour).")
-    return {"verdict": verdict, "chip": name, "ram_gb": round(ram), "disk_free_gb": round(free), "notes": notes}
+    return {"verdict": verdict, "chip": name, "gpu": gpu, "ram_gb": round(ram), "disk_free_gb": round(free),
+            "notes_model": suggest, "notes": notes}

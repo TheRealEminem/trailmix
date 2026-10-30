@@ -88,8 +88,12 @@ export interface TrialRow extends Trial {
 export interface DeviceAdvice {
   verdict: "local" | "mixed" | "cloud";
   chip: string;
+  /** A graphics card with memory of its own, e.g. "NVIDIA GeForce RTX 4070 (12 GB)"; "" for none */
+  gpu: string;
   ram_gb: number;
   disk_free_gb: number;
+  /** The local notes model to suggest for this computer */
+  notes_model: string;
   notes: string[];
 }
 
@@ -957,6 +961,8 @@ export interface OllamaStatus {
   models: string[];
   using: string;
   recommended: string;
+  /** The suggested model's download, in GB */
+  recommended_gb: number | null;
   pull: { model: string; active: boolean; progress: number | null; status: string; error: string | null } | null;
 }
 
