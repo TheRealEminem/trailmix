@@ -9,6 +9,7 @@ import logging
 import math
 import os
 import platform
+import sys
 import threading
 import time
 import zlib
@@ -61,21 +62,26 @@ def _threads(meeting: bool = False) -> int:
     return max(1, min(8, _cores() // 2 if meeting else _cores()))
 
 
+# ggml's own libraries, in a whisper.cpp built with its backends as libraries of their own (the GPU builds, see
+# _ggml_folder).
+_GGML = ("ggml.dll", "ggml-base.dll") if sys.platform == "win32" else ("libggml.so", "libggml-base.so")
+
+
 def _ggml_folder() -> Path | None:
-    """Where the whisper.cpp built with its backends as DLLs of their own keeps them (the Windows x64 build: a CPU one
-    for each generation of x64 CPUs, and Vulkan for the GPU), next to the extension; None for the builds with them
-    built in (the wheels, the Mac's, ARM's), whose ggml has another name."""
+    """Where the whisper.cpp built with its backends as libraries of their own keeps them (the GPU builds for Windows
+    x64 and Linux: a CPU one for each generation of CPUs, and Vulkan for the GPU), next to the extension; None for
+    the builds with them built in (pywhispercpp's wheels, the Intel Mac's, Windows ARM's), which run on the CPU."""
     import _pywhispercpp
 
     folder = Path(_pywhispercpp.__file__).parent
-    return folder if (folder / "ggml.dll").is_file() and (folder / "ggml-base.dll").is_file() else None
+    return folder if all((folder / name).is_file() for name in _GGML) else None
 
 
 def _devices(folder: Path) -> list[tuple[str, str, int]]:
     """ggml's devices, as (name, description, type: 0 CPU, 1 GPU, 2 integrated GPU, 3 accelerator)."""
     import ctypes
 
-    ggml, base = ctypes.CDLL(str(folder / "ggml.dll")), ctypes.CDLL(str(folder / "ggml-base.dll"))
+    ggml, base = (ctypes.CDLL(str(folder / name)) for name in _GGML)
     ggml.ggml_backend_dev_count.restype = ctypes.c_size_t
     ggml.ggml_backend_dev_get.restype, ggml.ggml_backend_dev_get.argtypes = ctypes.c_void_p, [ctypes.c_size_t]
     for fn in (base.ggml_backend_dev_name, base.ggml_backend_dev_description):
@@ -90,8 +96,9 @@ def _devices(folder: Path) -> list[tuple[str, str, int]]:
 
 
 def _load_backends() -> None:
-    """Once: a whisper.cpp with its backends as DLLs has none until they're loaded, the best CPU one for this PC and
-    Vulkan where a graphics driver provides it (vulkan-1.dll; without one, or without a GPU, it's left out)."""
+    """Once: a whisper.cpp with its backends as libraries of their own has none until they're loaded: the best CPU
+    one for this computer, and Vulkan where a graphics driver provides it (vulkan-1.dll, libvulkan.so.1; without
+    one it doesn't load, and without a GPU it has no devices). whisper.cpp itself never loads them."""
     global _backends_loaded
     with _backends_lock:
         if _backends_loaded:
@@ -100,27 +107,56 @@ def _load_backends() -> None:
         if folder:
             import ctypes
 
-            ctypes.CDLL(str(folder / "ggml.dll")).ggml_backend_load_all_from_path(str(folder).encode())
+            ctypes.CDLL(str(folder / _GGML[0])).ggml_backend_load_all_from_path(str(folder).encode())
         _backends_loaded = True
     try:
-        log.info("whisper.cpp: %s", system_info())
+        _say(f"whisper.cpp {system_info()}")
     except Exception as e:  # (only the log's: never in the way of a transcript)
-        log.warning("whisper.cpp: couldn't say what it runs on: %s", e)
+        _say(f"whisper.cpp: couldn't say what it runs on: {e}")
+
+
+def _say(text: str) -> None:
+    """To the server log: through logging in the server, and on stderr in the transcription worker (which has no
+    logging set up; the server sends its stderr to the log)."""
+    if log.hasHandlers():
+        log.info(text)
+    else:
+        print(text, file=sys.stderr, flush=True)
+
+
+def describe(devices: list[tuple[str, str, int]]) -> str:
+    """What whisper.cpp runs on, in words, given ggml's devices: the first GPU it finds, as whisper.cpp picks one
+    (a graphics card, or the graphics built into the processor), else the CPU."""
+    for name, about, kind in devices:
+        if kind in (1, 2):
+            return f"the {'GPU' if kind == 1 else 'integrated GPU'} ({about.strip() or name})"
+    return "the CPU"
+
+
+def device() -> str:
+    """What whisper.cpp runs on, in words: "the GPU (NVIDIA GeForce RTX 3060)", "the integrated GPU (...)" or "the
+    CPU" (always, for the builds without GPU support). Never raises: it's for the log and for a tester."""
+    try:
+        _load_backends()
+        folder = _ggml_folder()
+        return describe(_devices(folder)) if folder else "the CPU"
+    except Exception as e:
+        return f"an unknown device (couldn't tell: {e})"
 
 
 def system_info() -> str:
-    """What whisper.cpp runs on (the first GPU it found, as it picks one, or the CPU) and what it has, for the log."""
+    """What whisper.cpp runs on (see device) and what it has, for the log: "on the CPU; devices: CPU (Intel(R)
+    Xeon(R) ...); WHISPER : ... CPU : SSE3 = 1 | ... AVX2 = 1 | ..."."""
     import _pywhispercpp
 
     _load_backends()
     info = " ".join(_pywhispercpp.whisper_print_system_info().split())
     folder = _ggml_folder()
     if not folder:
-        return info
+        return f"on the CPU; {info}"
     devices = _devices(folder)
-    gpus = [f"{name} ({about})" for name, about, kind in devices if kind in (1, 2)]
-    listed = ", ".join(f"{name} ({about})" for name, about, _ in devices) or "none"
-    return f"runs on {gpus[0] if gpus else 'the CPU'}; devices: {listed}; {info}"
+    listed = ", ".join(f"{name} ({about.strip()})" for name, about, _ in devices) or "none"
+    return f"on {describe(devices)}; devices: {listed}; {info}"
 
 
 def _load(model: str):
