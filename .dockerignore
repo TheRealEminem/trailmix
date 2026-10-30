@@ -5,3 +5,7 @@ frontend/dist
 backend/data
 Trailmix.app
 .git
+build
+**/target
+helper/.build
+*.app
