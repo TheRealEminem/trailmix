@@ -69,6 +69,9 @@ pub fn capabilities() -> Vec<&'static str> {
     if sound && session() != Session::None {
         caps.push("call_reminder");
     }
+    if sound {
+        caps.push("sound_check");
+    }
     caps
 }
 

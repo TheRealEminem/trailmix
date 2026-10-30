@@ -22,6 +22,7 @@ mod prefs;
 mod reminder;
 mod selftest;
 mod server;
+mod soundcheck;
 mod update;
 #[cfg(windows)]
 mod win;

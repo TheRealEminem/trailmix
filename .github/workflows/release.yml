@@ -238,9 +238,9 @@ jobs:
           # On since the Windows app updates itself (0.19.3). "0" keeps the installer out of releases (it's still built,
           # smoke-tested and kept as this run's Trailmix-windows-x64 artifact).
           PUBLISH_WINDOWS: "1"
-          # The ARM installer is built and smoke-tested on GitHub's ARM runner but not yet tried on an ARM PC: off until
-          # it has been (it's kept as this run's Trailmix-windows-arm64 artifact). Needs PUBLISH_WINDOWS on too.
-          PUBLISH_WINDOWS_ARM64: "0"
+          # The ARM installer (built and smoke-tested on GitHub's ARM runner). "0" keeps it out of releases (it's still
+          # kept as this run's Trailmix-windows-arm64 artifact). Needs PUBLISH_WINDOWS on too.
+          PUBLISH_WINDOWS_ARM64: "1"
         # Each disk image is named for the computer it's for, Trailmix-<version>-macos-<arch>.dmg (the app's updater picks
         # its own by that name), and has a copy with a fixed name, Trailmix-macos-<arch>.dmg, so a link to
         # releases/latest/download/... always works ("latest" skips pre-releases: the last promoted version).
