@@ -118,6 +118,18 @@ def recommended_notes(ai_memory_gb: float) -> dict:
     return max(fits, key=lambda e: float(e.get("min_gb") or 0)) if fits else min(entries, key=lambda e: float(e.get("min_gb") or 0))
 
 
+def speech_models(engine: str) -> list[dict]:
+    """The speech models the list offers for a local engine ("mlx", "whispercpp"): [{"id", "label", "size_gb",
+    "ram_gb", "speed"}], or [] to use the engine's own list."""
+    for source in (_load(), json.loads(BUILT_IN.read_text())):
+        entries = ((source.get("recommend") or {}).get("speech") or {}).get(engine)
+        if isinstance(entries, list):
+            good = [e for e in entries if isinstance(e, dict) and e.get("id") and e.get("label")]
+            if good:
+                return good
+    return []
+
+
 def speech_model(made_with: str | None) -> str | None:
     """The speech model in a transcript's note of how it was made: "whisper-large-v3-turbo, after the meeting" ->
     "whisper-large-v3-turbo"."""
