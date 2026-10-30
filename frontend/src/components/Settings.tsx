@@ -2395,7 +2395,9 @@ export default function Settings({
                 ? "photos and scanned pages are read with the Mac's own text recognition"
                 : platformWords().os === "macos"
                   ? "photos and scanned pages need the Trailmix Mac app to be read, so here only their name is searchable"
-                  : `photos and scanned pages can't be read on ${platformWords().thisComputer} yet, so only their name is searchable`}
+                  : platformWords().os === "windows" || platformWords().os === "linux"
+                    ? `photos and scanned pages are read by text recognition on ${platformWords().thisComputer} (its model, about 30 MB, downloads the first time one is read)`
+                    : `photos and scanned pages can't be read on ${platformWords().thisComputer} yet, so only their name is searchable`}
               . The digest is written by your local model (Ollama, or your own server on this computer); without one,
               the text is still searchable but there's no digest. A Google Slides link is fetched from Google only if
               you tick it, and only when it's shared publicly.
