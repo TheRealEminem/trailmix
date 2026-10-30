@@ -30,9 +30,21 @@ on:
         description: "To everyone: promote it right away instead of after 3 days as a beta (needs Release it)"
         type: boolean
         default: false
+      gpu_whisper:
+        description: "GPU whisper.cpp: build Windows x64 and Linux with whisper.cpp on the GPU (Vulkan), CPU without one"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
+
+env:
+  # GPU_WHISPER: whisper.cpp on the GPU through Vulkan (NVIDIA, AMD and Intel graphics), on the CPU where there's none,
+  # in the Windows x64 installer and the Linux app (scripts/build-windows.py, scripts/build-linux.py; Windows ARM and
+  # the Macs are unchanged). Off for releases until it's been tried on real GPUs: then whisper.cpp is pywhispercpp's
+  # CPU-only wheel, as before. The "GPU whisper.cpp" box on a manual run turns it on for that run. To build every
+  # release with it, change the last '0' here to '1'.
+  TRAILMIX_GPU_WHISPER: ${{ inputs.gpu_whisper && '1' || '0' }}
 
 jobs:
   # The release this run makes, if any: the pushed tag, or v<VERSION> when run with "Release it". Checked before
@@ -163,10 +175,10 @@ jobs:
         with:
           workspaces: desktop/src-tauri
           key: ${{ matrix.arch }}
-      # The x64 whisper.cpp has GPU support (Vulkan), compiled with the Vulkan SDK: LunarG's own installer, this version,
-      # checked against LunarG's checksum (https://sdk.lunarg.com/sdk/sha/<version>/windows/<file>.txt).
-      - name: Vulkan SDK
-        if: matrix.arch == 'x64'
+      # With GPU_WHISPER, the x64 whisper.cpp has GPU support (Vulkan), compiled with the Vulkan SDK: LunarG's own
+      # installer, this version, checked against LunarG's checksum (https://sdk.lunarg.com/sdk/sha/<version>/windows/<file>.txt).
+      - name: "GPU whisper.cpp: the Vulkan SDK"
+        if: matrix.arch == 'x64' && env.TRAILMIX_GPU_WHISPER == '1'
         shell: pwsh
         env:
           VULKAN_VERSION: "1.4.363.0"
@@ -273,6 +285,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
             libpulse-dev file xdg-utils xvfb xauth pulseaudio pulseaudio-utils dbus-x11 libfuse2t64
+      # With GPU_WHISPER, whisper.cpp is compiled with Vulkan (scripts/build-linux.py, which makes Vulkan's headers and
+      # glslc once: cached here). It links against Vulkan's loader, which also makes the runner a computer with a
+      # Vulkan driver but no GPU for the smoke tests (the .deb's and .rpm's containers have no Vulkan at all), and
+      # Mesa's software GPU is there for trying the Vulkan backend itself (--try-vulkan, after the build).
+      - name: "GPU whisper.cpp: Vulkan's loader and Mesa's software GPU"
+        if: env.TRAILMIX_GPU_WHISPER == '1'
+        run: sudo apt-get install -y --no-install-recommends g++ libvulkan1 mesa-vulkan-drivers
+      - name: "GPU whisper.cpp: Vulkan's headers and glslc, made before"
+        if: env.TRAILMIX_GPU_WHISPER == '1'
+        uses: actions/cache@v4
+        with:
+          path: build/cache/vulkan-tools-*
+          key: vulkan-tools-${{ matrix.runner }}-${{ hashFiles('scripts/build-linux.py') }}
+          restore-keys: vulkan-tools-${{ matrix.runner }}-
       - name: Build the AppImage, .deb and .rpm
         env:
           TAG: ${{ needs.version.outputs.tag }}
@@ -287,6 +313,11 @@ jobs:
           key: hf-whispercpp-tiny-linux
       - name: "Smoke test: the AppImage, fresh"
         run: python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-"$TRAILMIX_ARCH".AppImage
+      # The smoke tests run whisper.cpp on the CPU, as there's no GPU here: this runs its Vulkan backend too, on Mesa's
+      # software GPU (slow, but the same shaders and code as on a real one), and checks the words it hears.
+      - name: "GPU whisper.cpp: transcribes through Vulkan (on Mesa's software GPU)"
+        if: env.TRAILMIX_GPU_WHISPER == '1'
+        run: python3 scripts/build-linux.py --try-vulkan
       - name: "Smoke test: the .deb, on this Ubuntu"
         id: deb
         continue-on-error: true
