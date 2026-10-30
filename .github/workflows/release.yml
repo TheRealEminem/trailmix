@@ -223,8 +223,12 @@ jobs:
   # The Linux app (scripts/build-linux.py): the same desktop shell as Windows', as an AppImage, a .deb and an .rpm,
   # tried headless (Xvfb, and PulseAudio with null devices) by scripts/smoke-test-linux.py: the AppImage on the
   # runner (fresh, then updated from the current release and back), the .deb installed on the runner's Ubuntu and
-  # on Debian, the .rpm on Fedora. The AppImage has to pass for this computer to get anything; a .deb or .rpm that
-  # fails its test is left out. A failure here never holds up the Mac or Windows release.
+  # on Ubuntu 22.04 and 24.04 and Debian 12 and stable as they come, the .rpm on Fedora. The AppImage has to pass
+  # for this computer to get anything; a .deb or .rpm that fails its test is left out. A failure here never holds
+  # up the Mac or Windows release.
+  # Built on Ubuntu 22.04, the oldest Linux it's for: the shell is linked against the build machine's glibc, so this
+  # is what lets it run on glibc 2.35 and later (Ubuntu 22.04, Debian 12); TRAILMIX_MAX_GLIBC stops a build that
+  # needs newer. 22.04 has WebKitGTK 4.1 and libsoup 3, which Tauri 2 needs.
   linux:
     needs: version
     strategy:
@@ -232,12 +236,13 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            runner: ubuntu-latest
+            runner: ubuntu-22.04
           - arch: arm64
-            runner: ubuntu-24.04-arm   # GitHub's free ARM runner
+            runner: ubuntu-22.04-arm   # GitHub's free ARM runner
     runs-on: ${{ matrix.runner }}
     env:
       TRAILMIX_ARCH: ${{ matrix.arch }}
+      TRAILMIX_MAX_GLIBC: "2.35"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -247,15 +252,23 @@ jobs:
           cache-dependency-path: |
             frontend/package-lock.json
             desktop/package-lock.json
+      - name: Rust, if this runner has none
+        run: |
+          if ! command -v cargo >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri
           key: linux-${{ matrix.arch }}
       - name: What building and the smoke test need
+        # (FUSE 2 is libfuse2 on Ubuntu 22.04, libfuse2t64 from 24.04.)
         run: |
           sudo apt-get update
+          FUSE=libfuse2; apt-cache show libfuse2t64 >/dev/null 2>&1 && FUSE=libfuse2t64
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
-            libpulse-dev file xdg-utils xvfb xauth pulseaudio pulseaudio-utils dbus-x11 libfuse2t64
+            libpulse-dev file xdg-utils xvfb xauth pulseaudio pulseaudio-utils dbus-x11 "$FUSE"
       - name: Build the AppImage, .deb and .rpm
         env:
           TAG: ${{ needs.version.outputs.tag }}
@@ -282,6 +295,42 @@ jobs:
             apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
               python3 xvfb xauth pulseaudio pulseaudio-utils dbus-daemon ca-certificates >/dev/null &&
             python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-'"$TRAILMIX_ARCH"'.deb'
+      # The oldest it's for, and the newest Ubuntu, as they come (the runner has the build's libraries already).
+      - name: "Smoke test: the .deb, on Debian 12"
+        id: debian12
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD:/w" -v "$HOME/.cache/huggingface:/hf" -e HF_HOME=/hf -w /w debian:12 bash -c '
+            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+              python3 xvfb xauth pulseaudio pulseaudio-utils dbus ca-certificates >/dev/null &&
+            python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-'"$TRAILMIX_ARCH"'.deb'
+      - name: "Smoke test: the .deb, on Ubuntu 22.04"
+        id: ubuntu2204
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD:/w" -v "$HOME/.cache/huggingface:/hf" -e HF_HOME=/hf -w /w ubuntu:22.04 bash -c '
+            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+              python3 xvfb xauth pulseaudio pulseaudio-utils dbus ca-certificates >/dev/null &&
+            python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-'"$TRAILMIX_ARCH"'.deb'
+      - name: "Smoke test: the .deb, on Ubuntu 24.04"
+        id: ubuntu2404
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD:/w" -v "$HOME/.cache/huggingface:/hf" -e HF_HOME=/hf -w /w ubuntu:24.04 bash -c '
+            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+              python3 xvfb xauth pulseaudio pulseaudio-utils dbus ca-certificates >/dev/null &&
+            python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-'"$TRAILMIX_ARCH"'.deb'
+      # The AppImage built on 22.04 on a newer Linux, with what a desktop has that an AppImage doesn't bring (X, GL,
+      # fonts, the sound server's library). A warning if it fails, not a reason to leave the AppImage out.
+      - name: "Smoke test: the AppImage, on Ubuntu 24.04"
+        id: appimage2404
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD:/w" -v "$HOME/.cache/huggingface:/hf" -e HF_HOME=/hf -w /w ubuntu:24.04 bash -c '
+            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+              python3 xvfb xauth pulseaudio pulseaudio-utils dbus ca-certificates libpulse0 libx11-6 libx11-xcb1 libxcb1 \
+              libgl1 libegl1 libgbm1 libfontconfig1 libfreetype6 libharfbuzz0b fonts-dejavu-core libasound2t64 libexpat1 >/dev/null &&
+            python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-'"$TRAILMIX_ARCH"'.AppImage'
       - name: "Smoke test: the .rpm, on Fedora"
         id: rpm
         continue-on-error: true
@@ -291,10 +340,12 @@ jobs:
             python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-'"$TRAILMIX_ARCH"'.rpm'
       - name: Leave out the packages that failed
         env:
-          DEB: ${{ steps.deb.outcome }}/${{ steps.debian.outcome }}
+          DEB: ${{ steps.deb.outcome }}/${{ steps.debian.outcome }}/${{ steps.debian12.outcome }}/${{ steps.ubuntu2204.outcome }}/${{ steps.ubuntu2404.outcome }}
           RPM: ${{ steps.rpm.outcome }}
+          APPIMAGE_NEWER: ${{ steps.appimage2404.outcome }}
         run: |
-          [ "$DEB" = success/success ] || { echo "::warning::The $TRAILMIX_ARCH .deb didn't pass ($DEB): left out"; rm -f dist/*.deb dist/*.deb.sha256; }
+          [ "$APPIMAGE_NEWER" = success ] || echo "::warning::The $TRAILMIX_ARCH AppImage didn't pass on Ubuntu 24.04 ($APPIMAGE_NEWER): kept, but look into it"
+          [ "$DEB" = success/success/success/success/success ] || { echo "::warning::The $TRAILMIX_ARCH .deb didn't pass ($DEB): left out"; rm -f dist/*.deb dist/*.deb.sha256; }
           [ "$RPM" = success ] || { echo "::warning::The $TRAILMIX_ARCH .rpm didn't pass ($RPM): left out"; rm -f dist/*.rpm dist/*.rpm.sha256; }
       # As for the Mac and Windows: the current release's AppImage, cached so these tests don't add to its count.
       - name: Which release is current

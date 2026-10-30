@@ -16,11 +16,16 @@ Needs: Linux, Python 3.9+, Node.js, Rust (cargo), and the libraries Tauri builds
 libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libpulse-dev, plus file and xdg-utils), and
 internet access (downloads the Python runtime once into build/cache, Python packages, Rust crates, and Tauri's
 AppImage tools). Data goes to $XDG_DATA_HOME/Trailmix (~/.local/share/Trailmix) when the app runs.
+
+What it makes runs on Linux with this computer's glibc or newer (the shell is linked against it), so releases are
+built on Ubuntu 22.04 (glibc 2.35: Ubuntu 22.04, Debian 12 and later). With TRAILMIX_MAX_GLIBC=2.35 the build stops
+if anything in the app needs a newer one.
 """
 import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -341,6 +346,47 @@ def build_packages() -> None:
         say(f"Built {target} ({target.stat().st_size / 1e6:.0f} MB)")
 
 
+# MARK: Which Linux versions it runs on
+
+# The newest glibc anything in the app may need, when set (release.yml sets it): the shell is linked against the
+# glibc of the computer it's built on, so it's built on an older Linux (Ubuntu 22.04: glibc 2.35) to run on
+# Ubuntu 22.04, Debian 12 and later. Building on something newer by mistake then stops the build.
+MAX_GLIBC = os.environ.get("TRAILMIX_MAX_GLIBC", "")
+
+
+def _glibc_version(text: str) -> tuple:
+    return tuple(int(part) for part in text.split("."))
+
+
+def glibc_needed(path: Path) -> tuple:
+    """The newest GLIBC_x.y symbol version an ELF file asks for ((0,) for none), from readelf's version needs."""
+    done = subprocess.run(["readelf", "--version-info", "--wide", str(path)], capture_output=True, text=True)
+    found = re.findall(r"Name: GLIBC_([0-9][0-9.]*)", done.stdout)
+    return max((_glibc_version(v) for v in found), default=(0,))
+
+
+def check_glibc() -> None:
+    """Says the oldest glibc the app runs with (the newest version anything in it needs), and stops the build if
+    that's newer than TRAILMIX_MAX_GLIBC. Looks at the shell and every program and library staged with it."""
+    if not shutil.which("readelf"):
+        print("! No readelf here (binutils), so which glibc the app needs isn't checked", flush=True)
+        return
+    target_dir = Path(os.environ.get("CARGO_TARGET_DIR") or ROOT / "desktop" / "src-tauri" / "target")
+    shell = target_dir / RUST_TARGET / "release" / "Trailmix"
+    files = [shell] if shell.is_file() else []
+    files += [p for p in STAGE.rglob("*") if p.is_file() and not p.is_symlink() and elf_machine(p) == MACHINE]
+    if not files:
+        return
+    needs = {p: glibc_needed(p) for p in files}
+    newest = max(needs, key=needs.get)
+    version = ".".join(map(str, needs[newest]))
+    say(f"The app needs glibc {version} or later (for {newest.relative_to(ROOT) if newest.is_relative_to(ROOT) else newest})")
+    if MAX_GLIBC and needs[newest] > _glibc_version(MAX_GLIBC):
+        over = sorted(f"{p.name} ({'.'.join(map(str, v))})" for p, v in needs.items() if v > _glibc_version(MAX_GLIBC))
+        die(f"Built to need glibc {version}, newer than {MAX_GLIBC} (TRAILMIX_MAX_GLIBC): {', '.join(over[:10])}. "
+            "Build on an older Linux (release.yml uses Ubuntu 22.04).")
+
+
 def main() -> None:
     if not sys.platform.startswith("linux"):
         die("The Linux app is built on Linux.")
@@ -350,6 +396,7 @@ def main() -> None:
         stage()
     if "--stage-only" not in sys.argv:
         build_packages()
+        check_glibc()
 
 
 if __name__ == "__main__":
