@@ -162,6 +162,23 @@ jobs:
         with:
           workspaces: desktop/src-tauri
           key: ${{ matrix.arch }}
+      # The x64 whisper.cpp has GPU support (Vulkan), compiled with the Vulkan SDK: LunarG's own installer, this version,
+      # checked against LunarG's checksum (https://sdk.lunarg.com/sdk/sha/<version>/windows/<file>.txt).
+      - name: Vulkan SDK
+        if: matrix.arch == 'x64'
+        shell: pwsh
+        env:
+          VULKAN_VERSION: "1.4.363.0"
+          VULKAN_SHA256: "94a82d378f7a5e3e54c9db7d2fb7016af136e14ac0a18dbf0f2f67a36352d141"
+        run: |
+          $installer = "$env:RUNNER_TEMP\vulkansdk.exe"
+          curl.exe -fsSL -o $installer "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne $env:VULKAN_SHA256) { throw "The Vulkan SDK installer failed its checksum" }
+          $sdk = "C:\VulkanSDK\$env:VULKAN_VERSION"
+          $done = Start-Process $installer -ArgumentList "--root", $sdk, "--accept-licenses", "--default-answer", "--confirm-command", "install" -Wait -NoNewWindow -PassThru
+          if ($done.ExitCode -ne 0 -or -not (Test-Path "$sdk\Bin\glslc.exe")) { throw "The Vulkan SDK didn't install (exit $($done.ExitCode))" }
+          "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "Vulkan SDK $env:VULKAN_VERSION in $sdk; vulkan-1.dll in System32: $(Test-Path "$env:SystemRoot\System32\vulkan-1.dll")"
       - name: Build the installer
         shell: pwsh
         env:

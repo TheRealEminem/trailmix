@@ -5,13 +5,18 @@ where the build has one.
 Models are single ggml files from Hugging Face, named "<repo>:<file>" (see models.py).
 """
 import gc
+import logging
 import math
 import os
 import platform
+import threading
 import time
 import zlib
+from pathlib import Path
 
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 NAME = "whisper.cpp"
 REPO = "ggerganov/whisper.cpp"
@@ -37,12 +42,73 @@ FINAL_MODEL, FINAL_MODEL_RAM_GB = pick_final(platform.machine(), _cores())
 
 _model = None
 _model_name: str | None = None
+_backends_loaded = False
+_backends_lock = threading.Lock()
 
 
 def _threads(meeting: bool = False) -> int:
     """All the cores (up to 8) after a meeting; half of them during one, so the call, the recorder and the window
     aren't starved on a slower computer."""
     return max(1, min(8, _cores() // 2 if meeting else _cores()))
+
+
+def _ggml_folder() -> Path | None:
+    """Where the whisper.cpp built with its backends as DLLs of their own keeps them (the Windows x64 build: a CPU one
+    for each generation of x64 CPUs, and Vulkan for the GPU), next to the extension; None for the builds with them
+    built in (the wheels, the Mac's, ARM's), whose ggml has another name."""
+    import _pywhispercpp
+
+    folder = Path(_pywhispercpp.__file__).parent
+    return folder if (folder / "ggml.dll").is_file() and (folder / "ggml-base.dll").is_file() else None
+
+
+def _devices(folder: Path) -> list[tuple[str, str, int]]:
+    """ggml's devices, as (name, description, type: 0 CPU, 1 GPU, 2 integrated GPU, 3 accelerator)."""
+    import ctypes
+
+    ggml, base = ctypes.CDLL(str(folder / "ggml.dll")), ctypes.CDLL(str(folder / "ggml-base.dll"))
+    ggml.ggml_backend_dev_count.restype = ctypes.c_size_t
+    ggml.ggml_backend_dev_get.restype, ggml.ggml_backend_dev_get.argtypes = ctypes.c_void_p, [ctypes.c_size_t]
+    for fn in (base.ggml_backend_dev_name, base.ggml_backend_dev_description):
+        fn.restype, fn.argtypes = ctypes.c_char_p, [ctypes.c_void_p]
+    base.ggml_backend_dev_type.argtypes = [ctypes.c_void_p]
+    found = []
+    for i in range(ggml.ggml_backend_dev_count()):
+        dev = ggml.ggml_backend_dev_get(i)
+        found.append((base.ggml_backend_dev_name(dev).decode(errors="replace"),
+                      base.ggml_backend_dev_description(dev).decode(errors="replace"), base.ggml_backend_dev_type(dev)))
+    return found
+
+
+def _load_backends() -> None:
+    """Once: a whisper.cpp with its backends as DLLs has none until they're loaded, the best CPU one for this PC and
+    Vulkan where a graphics driver provides it (vulkan-1.dll; without one, or without a GPU, it's left out)."""
+    global _backends_loaded
+    with _backends_lock:
+        if _backends_loaded:
+            return
+        folder = _ggml_folder()
+        if folder:
+            import ctypes
+
+            ctypes.CDLL(str(folder / "ggml.dll")).ggml_backend_load_all_from_path(str(folder).encode())
+        _backends_loaded = True
+    log.info("whisper.cpp: %s", system_info())
+
+
+def system_info() -> str:
+    """What whisper.cpp runs on (the first GPU it found, as it picks one, or the CPU) and what it has, for the log."""
+    import _pywhispercpp
+
+    _load_backends()
+    info = " ".join(_pywhispercpp.whisper_print_system_info().split())
+    folder = _ggml_folder()
+    if not folder:
+        return info
+    devices = _devices(folder)
+    gpus = [f"{name} ({about})" for name, about, kind in devices if kind in (1, 2)]
+    listed = ", ".join(f"{name} ({about})" for name, about, _ in devices) or "none"
+    return f"runs on {gpus[0] if gpus else 'the CPU'}; devices: {listed}; {info}"
 
 
 def _load(model: str):
@@ -52,6 +118,7 @@ def _load(model: str):
 
         import models
 
+        _load_backends()
         unload()
         _model = Model(models.path(model), redirect_whispercpp_logs_to=None, n_threads=_threads())
         _model_name = model
