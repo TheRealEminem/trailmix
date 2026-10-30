@@ -1,7 +1,8 @@
 //! The global shortcuts on Linux (hotkeys.rs's RegisterHotKey thread): a passive key grab on the X11 root
 //! window, with a thread of its own that gets the key presses. A combination another app has grabbed can't be
 //! had (X answers BadAccess), and is reported as taken. On Wayland a grab only sees keys typed into X11 apps,
-//! so the shortcuts are off there (the web app then doesn't offer them).
+//! so there the desktop's GlobalShortcuts portal does it instead (portal.rs), where the desktop has one; where
+//! it hasn't, the shortcuts are off (the web app then doesn't offer them).
 //!
 //! Shortcuts are kept as on Windows (virtual-key codes and MOD_* flags, so desktop.json reads the same) and
 //! turned into X keysyms and modifier masks here. XTest types them and clicks the cards, for the self-test.
@@ -127,16 +128,20 @@ fn keycode(conn: &RustConnection, sym: u32) -> Option<u8> {
     map.keysyms.chunks(per).position(|syms| syms.contains(&sym)).map(|i| min + i as u8)
 }
 
-/// Whether the shortcuts work here: an X11 session (not Wayland, where a grab sees only X11 apps' keys).
+/// Whether the shortcuts work here: an X11 session, or Wayland with the GlobalShortcuts portal (on Wayland a
+/// grab sees only X11 apps' keys).
 pub fn available() -> bool {
-    KEYS.get().is_some()
+    KEYS.get().is_some() || super::portal::active()
 }
 
 /// Starts the thread that gets the presses; `pressed(id)` is called (on a thread of its own) for each.
-/// False where there are no global shortcuts (Wayland, or no display).
+/// False where there are no global shortcuts (Wayland without the portal, or no display).
 pub fn start(pressed: impl Fn(i32) + Send + Sync + 'static) -> bool {
-    if KEYS.get().is_some() {
+    if KEYS.get().is_some() || super::portal::active() {
         return true;
+    }
+    if super::session() == super::Session::Wayland {
+        return super::portal::start(pressed);
     }
     if super::session() != super::Session::X11 {
         return false;
@@ -203,6 +208,9 @@ fn ungrab(conn: &RustConnection, root: Window, code: u8, mods: u16) {
 
 /// Grabs exactly these shortcuts (none: lets them all go). Returns the ids of those another app has.
 pub fn register(wanted: &[(i32, Shortcut)]) -> Vec<i32> {
+    if super::portal::active() {
+        return super::portal::register(wanted);
+    }
     let Some(keys) = KEYS.get() else { return wanted.iter().map(|(id, _)| *id).collect() };
     let mut grabbed = keys.grabbed.lock().unwrap_or_else(|e| e.into_inner());
     for (_, code, mods) in grabbed.drain(..) {
@@ -223,6 +231,9 @@ pub fn register(wanted: &[(i32, Shortcut)]) -> Vec<i32> {
 /// Whether a shortcut is free: grabbed and let go at once on a connection of its own. (Grabbed by this app
 /// already counts as not free.)
 pub fn is_free(shortcut: Shortcut) -> bool {
+    if super::portal::active() {
+        return true; // (the desktop decides, when it binds them)
+    }
     let Some((conn, root)) = connect() else { return false };
     let Some(code) = keysym(shortcut.key).and_then(|sym| keycode(&conn, sym)) else { return false };
     let mods = x_mods(shortcut.mods);
@@ -282,6 +293,9 @@ pub fn click_at(x: i32, y: i32) -> bool {
 
 /// Delivers a press of shortcut `id` as X would, for when there's no keyboard to type on.
 pub fn post_press(id: i32) -> bool {
+    if super::portal::active() {
+        return super::portal::post_press(id);
+    }
     let Some(keys) = KEYS.get() else { return false };
     let pressed = keys.pressed.clone();
     thread::spawn(move || pressed(id));
