@@ -298,19 +298,28 @@ pub fn terminate(pid: u32) -> bool {
     }
 }
 
+/// HKEY_LOCAL_MACHINE, the same way.
+fn hklm() -> *mut c_void {
+    0x8000_0002u32 as i32 as isize as *mut c_void
+}
+
 /// A text value under HKEY_CURRENT_USER, if it's there.
 pub fn reg_get_string(subkey: &str, value: &str) -> Option<String> {
+    reg_get_string_in(hkcu(), subkey, value)
+}
+
+fn reg_get_string_in(root: *mut c_void, subkey: &str, value: &str) -> Option<String> {
     let (subkey, value) = (wide(subkey), wide(value));
     unsafe {
         let mut len: u32 = 0;
-        let found = RegGetValueW(hkcu(), subkey.as_ptr(), value.as_ptr(), RRF_RT_REG_SZ, std::ptr::null_mut(), std::ptr::null_mut(), &mut len);
+        let found = RegGetValueW(root, subkey.as_ptr(), value.as_ptr(), RRF_RT_REG_SZ, std::ptr::null_mut(), std::ptr::null_mut(), &mut len);
         if found != 0 {
             return None;
         }
         let mut buffer = vec![0u16; (len as usize / 2) + 1];
         let mut len = (buffer.len() * 2) as u32;
         let read = RegGetValueW(
-            hkcu(),
+            root,
             subkey.as_ptr(),
             value.as_ptr(),
             RRF_RT_REG_SZ,
@@ -516,4 +525,30 @@ pub fn filetime_now() -> u64 {
 /// Whether apps are asked to look dark (Settings > Personalization > Colors).
 pub fn dark_mode() -> bool {
     reg_get_dword("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", "AppsUseLightTheme") == Some(0)
+}
+
+/// Whether Settings > Privacy & security > Microphone keeps Trailmix off the mic: "Microphone access" off for
+/// this PC (HKLM) or for you, or "Let desktop apps access your microphone" off. Each is "Deny" when off.
+pub fn mic_blocked() -> bool {
+    let store = crate::reminder::CONSENT_STORE;
+    let denied = |v: Option<String>| v.map(|v| v.eq_ignore_ascii_case("Deny")).unwrap_or(false);
+    denied(reg_get_string_in(hklm(), store, "Value"))
+        || denied(reg_get_string(store, "Value"))
+        || denied(reg_get_string(&format!("{store}\\NonPackaged"), "Value"))
+}
+
+// MARK: Sound
+
+const SND_NODEFAULT: u32 = 0x0002;
+const SND_MEMORY: u32 = 0x0004;
+
+#[link(name = "winmm")]
+extern "system" {
+    fn PlaySoundW(sound: *const c_void, module: *mut c_void, flags: u32) -> i32;
+}
+
+/// Plays a WAV file's bytes on the default output, and returns once it's done. False if it couldn't
+/// (no output device, say).
+pub fn play_wav(wav: &[u8]) -> bool {
+    unsafe { PlaySoundW(wav.as_ptr() as *const c_void, std::ptr::null_mut(), SND_MEMORY | SND_NODEFAULT) != 0 }
 }

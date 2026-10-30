@@ -245,6 +245,55 @@ pub fn default_microphone() -> Option<String> {
     snapshot.default_mic().map(|d| if d.description.is_empty() { d.name.clone() } else { d.description.clone() })
 }
 
+/// Plays a 16-bit PCM WAV (the sound check's chime) on the default output, and returns once it's played.
+pub fn play_wav(wav: &[u8]) -> bool {
+    if wav.len() < 44 || &wav[..4] != b"RIFF" || &wav[8..12] != b"WAVE" {
+        return false;
+    }
+    let channels = u16::from_le_bytes([wav[22], wav[23]]) as u8;
+    let rate = u32::from_le_bytes([wav[24], wav[25], wav[26], wav[27]]);
+    let pcm = &wav[44..];
+    let Ok(mut conn) = Conn::open("Trailmix (sound check)") else { return false };
+    let spec = Spec { format: Format::S16le, channels, rate };
+    let Some(mut stream) = Stream::new(&mut conn.context, "Sound check", &spec, None) else { return false };
+    if stream.connect_playback(None, None, StreamFlags::NOFLAGS, None, None).is_err() {
+        return false;
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let frame = 2 * channels.max(1) as usize;
+    let mut sent = 0;
+    while Instant::now() < deadline {
+        if !conn.turn() {
+            return false;
+        }
+        match stream.get_state() {
+            StreamState::Ready => {}
+            StreamState::Failed | StreamState::Terminated => return false,
+            _ => {
+                thread::sleep(Duration::from_millis(2));
+                continue;
+            }
+        }
+        if sent < pcm.len() {
+            let room = stream.writable_size().unwrap_or(0);
+            let n = (room.min(pcm.len() - sent) / frame) * frame;
+            if n > 0 {
+                if stream.write(&pcm[sent..sent + n], None, 0, pa::stream::SeekMode::Relative).is_err() {
+                    return false;
+                }
+                sent += n;
+            }
+        } else {
+            let drained = stream.drain(None);
+            let done = conn.wait(drained);
+            let _ = stream.disconnect();
+            return done;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    false
+}
+
 // MARK: Recording
 
 #[derive(Clone, Debug, PartialEq)]

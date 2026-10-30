@@ -286,7 +286,7 @@ function ConnectionRow({
                 onClick={() => revealInFinder(c.path!)}
               >
                 <FolderIcon size={14} />
-                Show in Finder
+                Show in {platformWords().fileManager}
               </button>
             )}
             <button className="btn btn-sm btn-ghost" onClick={() => void remove()}>

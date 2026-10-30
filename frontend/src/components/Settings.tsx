@@ -21,7 +21,7 @@ import type {
   Tracker,
 } from "../api";
 import { tildePath } from "../format";
-import { cap, localEngineLabel, platformWords } from "../platform";
+import { cap, localEngineLabel, platformWords, recorderWords } from "../platform";
 import { useBigSpend } from "../spend";
 import UsagePanel from "./Usage";
 import CloudPanel, { PLAN_NAMES } from "./Cloud";
@@ -909,6 +909,10 @@ function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => 
 }
 
 /** Settings → Updates: which version this is, and checking for and installing a new one. */
+/** The call apps the reminder knows, as that computer has them (FaceTime only on a Mac). */
+const callApps = (native: NativeRecorder) =>
+  recorderWords(native.platform).os === "macos" ? "Zoom, Teams, FaceTime, Slack" : "Zoom, Teams, Slack, WhatsApp";
+
 /** "Zoom call started. Record it?": the menu bar recorder's reminder, switched here (or in its menu). */
 function CallReminders({ native }: { native: NativeRecorder }) {
   const [on, setOn] = useState<boolean | null>(null); // until the recorder reports the change
@@ -919,7 +923,7 @@ function CallReminders({ native }: { native: NativeRecorder }) {
     <SwitchRow
       icon={<MicIcon size={16} />}
       label="Remind me to record calls"
-      hint="When Zoom, Teams, FaceTime, Slack or a browser call starts using your mic and Trailmix isn't recording, a small card asks whether to record. When a recorded call ends, it asks whether to stop. Turning this on again also asks about apps you'd said not to."
+      hint={`When ${callApps(native)} or a browser call starts using your mic and Trailmix isn't recording, a small card asks whether to record. When a recorded call ends, it asks whether to stop. Turning this on again also asks about apps you'd said not to.`}
       checked={on ?? !!native.call_reminders}
       onChange={(v) => {
         setOn(v);
@@ -1209,8 +1213,9 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
           )}
           {u.state === "available" && (
             <span className="text-hint text-ink-soft">
-              Trailmix restarts afterwards, and macOS asks for the microphone
-              and system audio again.
+              {recorderWords(native?.platform).os === "macos"
+                ? "Trailmix restarts afterwards, and macOS asks for the microphone and system audio again."
+                : "Trailmix restarts afterwards."}
             </span>
           )}
         </div>

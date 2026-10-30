@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Trailmix · meeting notes that stay on your Mac</title>
-  <meta name="description" content="Trailmix records your calls, transcribes them on your Mac and writes the notes. Free and open source." />
+  <title>Trailmix · meeting notes that stay on your computer</title>
+  <meta name="description" content="Trailmix records your calls, transcribes them on your own computer (Mac, Windows or Linux) and writes the notes. Free and open source." />
   <link rel="icon" href="assets/logo.svg" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -69,6 +69,23 @@
         linear-gradient(180deg, var(--bg-top) 0%, var(--bg) 42%); }
     .ambient::after { content: ""; position: absolute; inset: 0; background: var(--contour);
       -webkit-mask: url(assets/contours.svg) center / cover no-repeat; mask: url(assets/contours.svg) center / cover no-repeat; }
+    .alt { color: var(--soft); font-size: 15px; margin-top: 14px; }
+    .platforms { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+    .platform { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 20px 22px; }
+    .platform h3 { margin: 0 0 4px; font-size: 18px; }
+    .platform .req { color: var(--soft); font-size: 14px; margin: 0 0 12px; }
+    .platform ul { list-style: none; margin: 0; padding: 0; }
+    .platform li { margin: 6px 0; }
+    .platform li[hidden] { display: none; }
+    .platform .none { color: var(--soft); font-size: 14px; }
+    .tag { display: inline-block; font-size: 12px; font-weight: 600; color: var(--trail); border: 1px solid currentColor; border-radius: 999px; padding: 0 8px; margin-left: 6px; vertical-align: 2px; }
+    .tabs { display: flex; gap: 8px; margin: 0 0 18px; flex-wrap: wrap; }
+    .tabs button { font: 600 15px Geist, sans-serif; color: var(--soft); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 8px 18px; cursor: pointer; }
+    .tabs button[aria-selected="true"] { color: #fff; background: var(--forest); border-color: var(--forest); }
+    .family { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 16px; }
+    .family a.card { text-decoration: none; color: inherit; display: block; transition: border-color .15s; }
+    .family a.card:hover { border-color: var(--forest); }
+    .family .go { color: var(--forest); font-weight: 600; font-size: 15px; margin-top: 10px; display: inline-block; }
     footer { color: var(--soft); font-size: 14px; padding: 56px 0 40px; text-align: center; }
     @media (max-width: 560px) { .step { padding-left: 22px; padding-top: 66px; } .hero { padding-top: 24px; } }
   </style>
@@ -84,26 +101,64 @@
     </header>
 
     <div class="hero">
-      <h1>Meeting notes that stay on your Mac</h1>
+      <h1>Meeting notes that stay on your computer</h1>
       <p class="lead">Have the meeting. Trailmix hands you the notes: what was decided, who's doing what, and everything that was said, searchable.
-        It works with any call on your Mac, and your meetings never leave your computer unless you choose.</p>
-      <a class="cta" id="download" href="https://github.com/TheRealEminem/trailmix/releases/latest/download/Trailmix-arm64.dmg" data-goatcounter-click="download-dmg" data-goatcounter-title="Download Trailmix">
+        It works with any call, on a Mac, a Windows PC or Linux, and your meetings never leave your computer unless you choose.</p>
+      <a class="cta" id="download" href="#downloads" data-goatcounter-click="download-hero" data-goatcounter-title="Download Trailmix (hero)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M5 21h14"/></svg>
-        Download for Mac
+        <span id="download-label">Download Trailmix</span>
       </a>
-      <div class="meta">Free and open source · Apple silicon (M1 or newer) · macOS 14.2 or later</div>
-      <div class="meta" id="windows" hidden>On Windows? <a id="windows-link" href="https://github.com/TheRealEminem/trailmix/releases" data-goatcounter-click="download-windows" data-goatcounter-title="Download Trailmix for Windows">Download for Windows (beta)</a></div>
-      <div class="meta" id="intel" hidden>On an Intel Mac? <a id="intel-link" href="https://github.com/TheRealEminem/trailmix/releases/latest" data-goatcounter-click="download-dmg-intel" data-goatcounter-title="Download Trailmix for Intel">Download for Intel</a></div>
+      <div class="alt">Free and open source · <a href="#downloads">Mac, Windows and Linux downloads</a></div>
       <div class="shot"><img src="assets/app.jpg" alt="Trailmix showing the notes of a meeting: overview, discussion, decisions and action items" width="1800" height="1164" /></div>
     </div>
+
+    <section id="downloads">
+      <h2>Download</h2>
+      <p class="sub">One Trailmix, the same notes and the same privacy on every computer. Each version keeps itself up to date.</p>
+      <div class="platforms">
+        <div class="platform">
+          <h3>Mac</h3>
+          <p class="req">macOS 14.2 or later</p>
+          <ul>
+            <li id="dl-mac-arm"><a href="https://github.com/TheRealEminem/trailmix/releases/latest/download/Trailmix-arm64.dmg" data-goatcounter-click="download-dmg" data-goatcounter-title="Download Trailmix for Mac">Apple silicon (M1 or newer)</a></li>
+            <li id="dl-mac-intel" hidden><a href="https://github.com/TheRealEminem/trailmix/releases" data-goatcounter-click="download-dmg-intel" data-goatcounter-title="Download Trailmix for Intel Mac">Intel Mac</a></li>
+          </ul>
+        </div>
+        <div class="platform">
+          <h3>Windows <span class="tag">Beta</span></h3>
+          <p class="req">Windows 10 or 11, 64-bit</p>
+          <ul>
+            <li id="dl-win-x64" hidden><a href="https://github.com/TheRealEminem/trailmix/releases" data-goatcounter-click="download-windows" data-goatcounter-title="Download Trailmix for Windows">Windows (Intel or AMD)</a></li>
+            <li id="dl-win-arm" hidden><a href="https://github.com/TheRealEminem/trailmix/releases" data-goatcounter-click="download-windows-arm" data-goatcounter-title="Download Trailmix for Windows on ARM">Windows on ARM (Snapdragon)</a></li>
+            <li class="none" id="dl-win-none">Coming soon.</li>
+          </ul>
+        </div>
+        <div class="platform">
+          <h3>Linux <span class="tag">Beta</span></h3>
+          <p class="req">A desktop with PipeWire or PulseAudio</p>
+          <ul>
+            <li id="dl-linux-x64" hidden><a href="https://github.com/TheRealEminem/trailmix/releases" data-goatcounter-click="download-linux" data-goatcounter-title="Download Trailmix for Linux">AppImage, x86_64</a></li>
+            <li id="dl-linux-arm" hidden><a href="https://github.com/TheRealEminem/trailmix/releases" data-goatcounter-click="download-linux-arm" data-goatcounter-title="Download Trailmix for Linux ARM">AppImage, ARM64</a></li>
+            <li id="dl-linux-pkg" hidden>Or a package: <span id="dl-linux-pkgs"></span></li>
+            <li class="none" id="dl-linux-none">Coming soon.</li>
+          </ul>
+        </div>
+      </div>
+      <p class="sub" style="margin-top:18px">Every version, with release notes: <a href="https://github.com/TheRealEminem/trailmix/releases">all releases on GitHub</a>.</p>
+    </section>
 
     <section id="install">
       <h2>Install in three steps</h2>
       <p class="sub">Two minutes, plus a one-time download of the speech models.</p>
-      <div class="steps">
+      <div class="tabs" role="tablist">
+        <button role="tab" data-os="mac" aria-selected="true">Mac</button>
+        <button role="tab" data-os="windows" aria-selected="false">Windows</button>
+        <button role="tab" data-os="linux" aria-selected="false">Linux</button>
+      </div>
+      <div class="steps" data-os="mac">
         <div class="step">
           <h3>Open the download and drag Trailmix to Applications</h3>
-          <p>Double-click the Trailmix download (<b>Trailmix-macos-arm64.dmg</b>) in your Downloads, then drag the Trailmix icon onto the Applications folder next to it.</p>
+          <p>Double-click the Trailmix download (<b>Trailmix-macos-arm64.dmg</b>, or <b>-x86_64</b> on an Intel Mac) in your Downloads, then drag the Trailmix icon onto the Applications folder next to it.</p>
         </div>
         <div class="step">
           <h3>Open it the first time with “Open Anyway”</h3>
@@ -119,7 +174,39 @@
           <h3>Trailmix walks you through the rest</h3>
           <p>A short checklist in the app: a sound check that makes sure both sides of your calls are heard (it tells you exactly which macOS prompts to allow), the speech
             models (about 1.7 GB, once), and a summary model, which it can install for you with one click, or you can use an API key for Claude, OpenAI or Gemini.
-            Then start a call and press Record.</p>
+            Then start a call and press Record, in the window or from the menu bar.</p>
+        </div>
+      </div>
+      <div class="steps" data-os="windows" hidden>
+        <div class="step">
+          <h3>Run the installer</h3>
+          <p>Double-click the Trailmix download (<b>Trailmix-windows-x64.exe</b>, or <b>-arm64</b> on a Snapdragon PC). It installs just for you, with no administrator password.</p>
+        </div>
+        <div class="step">
+          <h3>Click past the “Windows protected your PC” warning</h3>
+          <p>Windows may stop the installer the first time because it doesn't recognize it yet. Click <b>More info</b>, then <b>Run anyway</b>.</p>
+          <p class="why">Why: the Windows version isn't signed with a paid code-signing certificate yet. Updates install from inside the app without this step.</p>
+        </div>
+        <div class="step">
+          <h3>Trailmix walks you through the rest</h3>
+          <p>A short checklist in the app: the speech models (once), and a summary model or an API key for Claude, OpenAI or Gemini. Trailmix lives in the system tray
+            by the clock. Start a call and press Record there, in the window, or with Ctrl+Alt+Shift+R. It can remind you when a Zoom or Teams call starts.</p>
+        </div>
+      </div>
+      <div class="steps" data-os="linux" hidden>
+        <div class="step">
+          <h3>Make the AppImage runnable, or install the package</h3>
+          <p>For the AppImage: right-click it → <b>Properties</b> → <b>Allow executing as a program</b>, or run <b>chmod +x Trailmix-linux-*.AppImage</b>, then open it.
+            Or install the <b>.deb</b> (Ubuntu, Debian) or <b>.rpm</b> (Fedora, openSUSE) with your package manager.</p>
+        </div>
+        <div class="step">
+          <h3>Make sure you can see its tray icon</h3>
+          <p>Trailmix shows an icon in the system tray. KDE, Cinnamon and most desktops show it straight away; on GNOME, turn on the <b>AppIndicator</b> extension (Ubuntu has it on already).</p>
+          <p class="why">The AppImage updates itself from inside the app. The .deb and .rpm say when there's a new version, with a link to it.</p>
+        </div>
+        <div class="step">
+          <h3>Trailmix walks you through the rest</h3>
+          <p>A short checklist in the app: the speech models (once), and a summary model or an API key for Claude, OpenAI or Gemini. Then start a call and press Record.</p>
         </div>
       </div>
     </section>
@@ -129,10 +216,10 @@
       <p class="sub">You have the meeting. Trailmix hands you the notes.</p>
       <div class="grid">
         <div class="card"><h3>Stop taking notes</h3><p>Press record and talk. When you hang up, the notes are there: what was decided, who's doing what by when, and what's still open.</p></div>
-        <div class="card"><h3>Works with any call</h3><p>Zoom, Google Meet, Teams, FaceTime or a phone call on your Mac. No bot joins, nothing to install for anyone else, nobody notices.</p></div>
-        <div class="card"><h3>Your meetings stay yours</h3><p>Everything happens on your Mac. Nothing is uploaded unless you choose a cloud AI to write the notes.</p></div>
+        <div class="card"><h3>Works with any call</h3><p>Zoom, Google Meet, Teams, Slack, FaceTime or a phone call on your computer. No bot joins, nothing to install for anyone else, nobody notices.</p></div>
+        <div class="card"><h3>Your meetings stay yours</h3><p>Everything happens on your own computer. Nothing is uploaded unless you choose a cloud AI to write the notes.</p></div>
         <div class="card"><h3>Find anything anyone said</h3><p>Search every meeting, or just ask: "what did we decide about pricing?" The answer links back to the moment it was said.</p></div>
-        <div class="card"><h3>A to-do list that writes itself</h3><p>Every promise made in every meeting lands on one list, ready to tick off.</p></div>
+        <div class="card"><h3>A to-do list that writes itself</h3><p>Every promise made in every meeting lands on one list, ready to tick off, or to send to Traverse as a task.</p></div>
         <div class="card"><h3>Work and life, kept apart</h3><p>Your job, a committee, personal: meetings sort themselves into the right place, and you switch with one click.</p></div>
         <div class="card"><h3>Bring your history</h3><p>Old meetings from Granola, transcripts from Zoom, Teams or Otter, or any audio or video file. They become notes like the rest.</p></div>
         <div class="card"><h3>Gets your world right</h3><p>When it isn't sure of a name or a word, it asks with one tap, and spells it right from then on.</p></div>
@@ -142,44 +229,118 @@
 
     <section>
       <h2>Questions</h2>
-      <details><summary>What do I need?</summary><p>A Mac with Apple silicon (M1 or newer) on macOS 14.2 or later. 16 GB of memory is best for local summaries; with 8 GB, use a cloud AI for summaries or a small local model.</p></details>
-      <details><summary>Does anything leave my Mac?</summary><p>Not by default: recording, transcription and summaries all run locally. If you add an API key for a cloud AI, only the transcript goes to that provider, to write the notes.</p></details>
-      <details><summary>How do updates work?</summary><p>Trailmix checks for new versions and offers to install them from its menu or window. After an update macOS asks for the microphone and system audio permissions again, until Trailmix is signed by Apple.</p></details>
-      <details><summary>Windows, Linux or an Intel Mac?</summary><p>Intel Macs on macOS 14.2 or later get a download of their own, under the button above, from the first release built for them. Transcribing on an Intel Mac is slower, so a cloud engine may suit you better. Windows has a beta download under the button above (Windows 10 or 11, 64-bit): Windows may warn about an unrecognized app the first time, so choose More info → Run anyway. Linux is planned.</p></details>
+      <details><summary>What do I need?</summary><p>A Mac on macOS 14.2 or later (Apple silicon, or an Intel Mac, where transcribing is slower), a Windows 10 or 11 PC (Intel, AMD or Snapdragon), or a Linux desktop. 16 GB of memory is best for local summaries; with 8 GB, use a cloud AI for summaries or a small local model.</p></details>
+      <details><summary>Does anything leave my computer?</summary><p>Not by default: recording, transcription and summaries all run on your computer. If you add an API key for a cloud AI, only the transcript goes to that provider, to write the notes.</p></details>
+      <details><summary>How do updates work?</summary><p>Trailmix checks for new versions and offers to install them from its window or its menu. On a Mac, macOS asks for the microphone and system audio permissions again after an update, until Trailmix is signed by Apple. On Linux the AppImage updates itself; the .deb and .rpm point you to the new version.</p></details>
+      <details><summary>Windows and Linux are “beta”: what does that mean?</summary><p>They do everything the Mac version does except a few extras that are still coming, and they've had less real-world use, so expect the odd rough edge, and tell us about it from Settings → Feedback.</p></details>
     </section>
 
-    <footer>Trailmix is free and open source (AGPL-3.0) · <a href="https://github.com/TheRealEminem/trailmix">Source on GitHub</a> · <a href="https://github.com/TheRealEminem/trailmix/releases">All releases</a> · <a href="privacy.html">Privacy policy</a></footer>
+    <section>
+      <h2>From the same trail</h2>
+      <p class="sub">Trailmix has two siblings, made the same way: free, open source, and your data stays on your computer.</p>
+      <div class="family">
+        <a class="card" href="https://therealeminem.github.io/Traverse/" data-goatcounter-click="family-traverse" data-goatcounter-title="Traverse">
+          <h3>Traverse</h3>
+          <p>What's next, and who's on it. Your own workspace for planning work: tasks, projects, a morning briefing, and an inbox where AI turns threads and meetings into tasks you approve. Trailmix sends it your action items.</p>
+          <span class="go">Visit Traverse →</span>
+        </a>
+        <a class="card" href="https://therealeminem.github.io/TheLodge/" data-goatcounter-click="family-lodge" data-goatcounter-title="The Lodge">
+          <h3>The Lodge</h3>
+          <p>Who you know, and how well. The people you know, how well you know them and what you know about them, kept in one place on your computer.</p>
+          <span class="go">Visit The Lodge →</span>
+        </a>
+      </div>
+    </section>
+
+    <footer>Trailmix is free and open source (AGPL-3.0) · <a href="https://github.com/TheRealEminem/trailmix">Source on GitHub</a> · <a href="https://github.com/TheRealEminem/trailmix/releases">All releases</a> · <a href="privacy.html">Privacy policy</a><br /><a href="https://therealeminem.github.io/Traverse/">Traverse</a> · <a href="https://therealeminem.github.io/TheLodge/">The Lodge</a></footer>
   </div>
   <script>
-    // The download button offers the newest promoted release that has a disk image for Apple silicon,
-    // Trailmix-macos-arm64.dmg (Trailmix-arm64.dmg in releases from before there were other platforms): a release
-    // whose Mac build failed has none and is passed over. If GitHub can't be asked, the link in the page stays.
-    // The Intel link (Trailmix-macos-x86_64.dmg) shows only once a promoted release has one, the same way.
-    // Windows is in beta: its link takes the newest release with a Windows installer, betas included.
+    // Which computer this is, as far as the browser says: "mac", "windows", "linux" or null. (A browser can't tell an
+    // Intel Mac from an Apple silicon one, so Macs get Apple silicon first and Intel in the list.)
+    const uaData = navigator.userAgentData;
+    const plat = ((uaData && uaData.platform) || navigator.platform || navigator.userAgent || "").toLowerCase();
+    const os = /android|iphone|ipad/.test(navigator.userAgent.toLowerCase()) ? null
+      : plat.includes("mac") ? "mac" : plat.includes("win") ? "windows" : plat.includes("linux") ? "linux" : null;
+
+    // Install steps: one set per computer, this one's shown first.
+    const tabs = document.querySelectorAll(".tabs button");
+    const showSteps = (which) => {
+      tabs.forEach((t) => t.setAttribute("aria-selected", String(t.dataset.os === which)));
+      document.querySelectorAll(".steps[data-os]").forEach((el) => (el.hidden = el.dataset.os !== which));
+    };
+    tabs.forEach((t) => t.addEventListener("click", () => showSteps(t.dataset.os)));
+    if (os) showSteps(os);
+
+    // Downloads come from GitHub's releases, newest first. Macs get the newest *promoted* release with a disk image for
+    // them (a release whose build failed has none and is passed over); Windows and Linux are in beta, so they take the
+    // newest release with their file, betas included. Each file has a fixed-name copy in its release
+    // (Trailmix-macos-arm64.dmg, Trailmix-windows-x64.exe, Trailmix-linux-x86_64.AppImage, ...). If GitHub can't be
+    // asked, the Apple silicon link in the page stays and the rest say "Coming soon" or point at the releases page.
+    const show = (id, asset) => {
+      const li = document.getElementById(id);
+      li.querySelector("a").href = asset.browser_download_url;
+      li.hidden = false;
+    };
+    const setHero = (label, asset) => {
+      document.getElementById("download-label").textContent = label;
+      document.getElementById("download").href = asset.browser_download_url;
+    };
     fetch("https://api.github.com/repos/TheRealEminem/trailmix/releases?per_page=30")
       .then((r) => (r.ok ? r.json() : []))
-      .then((releases) => {
-        let arm = null, intel = null, windows = null;
-        for (const release of releases) {  // newest first
+      .then(async (releases) => {
+        const found = {};
+        const take = (key, asset) => { if (asset && !found[key]) found[key] = asset; };
+        for (const release of releases) {
           if (release.draft) continue;
-          windows = windows || release.assets.find((a) => a.name === "Trailmix-windows-x64.exe");
+          const named = (name) => release.assets.find((a) => a.name === name);
+          take("winX64", named("Trailmix-windows-x64.exe"));
+          take("winArm", named("Trailmix-windows-arm64.exe"));
+          take("linuxX64", named("Trailmix-linux-x86_64.AppImage"));
+          take("linuxArm", named("Trailmix-linux-arm64.AppImage"));
+          if (!found.linuxPkgs) {
+            const pkgs = release.assets.filter((a) => /-linux-(x86_64|arm64)\.(deb|rpm)$/.test(a.name));
+            if (pkgs.length) found.linuxPkgs = pkgs;
+          }
           if (release.prerelease) continue;
-          const find = (name) => release.assets.find((a) => a.name === name);
-          arm = arm || find("Trailmix-macos-arm64.dmg") || find("Trailmix-arm64.dmg");
-          intel = intel || find("Trailmix-macos-x86_64.dmg");
-          if (arm && intel && windows) break;
+          take("macArm", named("Trailmix-macos-arm64.dmg") || named("Trailmix-arm64.dmg"));
+          take("macIntel", named("Trailmix-macos-x86_64.dmg"));
         }
-        if (arm) document.getElementById("download").href = arm.browser_download_url;
-        if (windows) {
-          document.getElementById("windows-link").href = windows.browser_download_url;
-          document.getElementById("windows").hidden = false;
+        if (found.macArm) show("dl-mac-arm", found.macArm);
+        if (found.macIntel) show("dl-mac-intel", found.macIntel);
+        if (found.winX64) show("dl-win-x64", found.winX64);
+        if (found.winArm) show("dl-win-arm", found.winArm);
+        document.getElementById("dl-win-none").hidden = !!(found.winX64 || found.winArm);
+        if (found.linuxX64) show("dl-linux-x64", found.linuxX64);
+        if (found.linuxArm) show("dl-linux-arm", found.linuxArm);
+        if (found.linuxPkgs) {
+          const box = document.getElementById("dl-linux-pkgs");
+          found.linuxPkgs.forEach((a, i) => {
+            const link = document.createElement("a");
+            link.href = a.browser_download_url;
+            const [, cpu, kind] = a.name.match(/-linux-(x86_64|arm64)\.(deb|rpm)$/);
+            link.textContent = `.${kind}\u00a0(${cpu === "arm64" ? "ARM64" : "x86_64"})`;
+            box.append(...(i ? [", ", link] : [link]));
+          });
+          document.getElementById("dl-linux-pkg").hidden = false;
         }
-        if (intel) {
-          document.getElementById("intel-link").href = intel.browser_download_url;
-          document.getElementById("intel").hidden = false;
+        document.getElementById("dl-linux-none").hidden = !!(found.linuxX64 || found.linuxArm || found.linuxPkgs);
+
+        // The big button: this computer's download, when there is one.
+        let arch = null;
+        if (uaData && uaData.getHighEntropyValues) {
+          try { arch = (await uaData.getHighEntropyValues(["architecture"])).architecture; } catch (e) {}
         }
+        if (os === "mac" && found.macArm) setHero("Download for Mac", found.macArm);
+        else if (os === "windows" && (found.winX64 || found.winArm))
+          setHero("Download for Windows (beta)", arch === "arm" && found.winArm ? found.winArm : found.winX64 || found.winArm);
+        else if (os === "linux" && (found.linuxX64 || found.linuxArm))
+          setHero("Download for Linux (beta)", arch === "arm" && found.linuxArm ? found.linuxArm : found.linuxX64 || found.linuxArm);
+        else if (os === "mac") setHero("Download for Mac", { browser_download_url: document.querySelector("#dl-mac-arm a").href });
       })
-      .catch(() => {});
+      .catch(() => {
+        document.getElementById("download-label").textContent = os === "mac" || !os ? "Download for Mac" : "See the downloads";
+        if (os === "mac" || !os) document.getElementById("download").href = document.querySelector("#dl-mac-arm a").href;
+      });
   </script>
 </body>
 </html>
