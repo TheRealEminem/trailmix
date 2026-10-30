@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 
 import ollama_setup
 
@@ -60,7 +61,7 @@ def test_linux_once_installed_says_how_to_start_it(monkeypatch, tmp_path):
 
 def test_linux_finds_ollama_on_the_path(monkeypatch, tmp_path):
     _linux(monkeypatch, tmp_path, which="/opt/ollama/bin/ollama")
-    assert str(ollama_setup.app_path()) == "/opt/ollama/bin/ollama"
+    assert ollama_setup.app_path() == Path("/opt/ollama/bin/ollama")
 
 
 def test_linux_notices_when_ollama_starts_answering(monkeypatch, tmp_path):
