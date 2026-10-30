@@ -32,6 +32,7 @@ import { Ambient, Logo, TrailScene } from "./illustrations";
 import { CONSENT, Source, entryFor, guess, regionOptions, stamp } from "./RecordingLaws";
 import SoundCheck, { soundCheckPassed } from "./SoundCheck";
 import CloudPanel from "./Cloud";
+import { FoundServers, usesLocalServer } from "./LocalServers";
 import { Collapse, Segmented, Select, Spinner, Switch } from "./ui";
 
 /** The home-screen checklist this replaced: closing it meant "I've done setup", so it still does. */
@@ -812,8 +813,9 @@ function NotesStep({
   prefer?: "local" | "cloud";
 }) {
   const current = CLOUD.find((c) => c.id === s.summary_provider);
+  const localServer = usesLocalServer(s); // LM Studio, llama.cpp… on this computer, set up below or in Settings
   const [mode, setMode] = useState<"local" | "cloud">(
-    s.lockdown
+    s.lockdown || localServer
       ? "local"
       : (prefer ??
           (current || s.summary_provider === "custom" || device?.verdict === "cloud" ? "cloud" : "local")),
@@ -825,11 +827,11 @@ function NotesStep({
   const [key, setKey] = useState("");
   const hint = s.secret_hints?.[`${cloud}_api_key`];
   const meta = CLOUD.find((c) => c.id === cloud)!;
-  const customKept = s.summary_provider === "custom" && mode === "cloud";
+  const customKept = s.summary_provider === "custom" && !localServer && mode === "cloud";
 
   const save = async () => {
     if (mode === "local") {
-      if (s.summary_provider !== "ollama") onSaved(await api.putSettings({ summary_provider: "ollama" }));
+      if (s.summary_provider !== "ollama" && !localServer) onSaved(await api.putSettings({ summary_provider: "ollama" }));
       return next();
     }
     if (customKept && !key.trim()) return next();
@@ -881,7 +883,18 @@ function NotesStep({
           {device && device.verdict !== "local" && (
             <p className="mb-3 rounded-sm bg-sun-soft px-3 py-2 text-sun-deep">{device.notes.join(" ")}</p>
           )}
-          <OllamaSetup onReady={() => void api.getSettings().then(onSaved)} />
+          <FoundServers s={s} onSaved={onSaved} className="mb-3 border-b border-line pb-3" />
+          {localServer ? (
+            <button
+              type="button"
+              className="text-hint text-forest underline"
+              onClick={() => void api.putSettings({ summary_provider: "ollama" }).then(onSaved)}
+            >
+              Use Ollama instead
+            </button>
+          ) : (
+            <OllamaSetup onReady={() => void api.getSettings().then(onSaved)} />
+          )}
         </Choice>
         <Choice
           selected={mode === "cloud"}

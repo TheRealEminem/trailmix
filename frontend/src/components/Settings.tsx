@@ -65,6 +65,7 @@ import {
   useOrganize,
 } from "./Workspaces";
 import { FindDuplicates } from "./Duplicates";
+import { FoundServers, isLocalUrl } from "./LocalServers";
 import RecordingLaws, { lawChanged, regionName } from "./RecordingLaws";
 import {
   Collapse,
@@ -1359,6 +1360,7 @@ function ProviderCard({
   const modelKey = `${id}_model` as keyof SettingsT;
   const label = id === "custom" ? s.custom_name || meta.label : meta.label;
   const local = id === "ollama";
+  const onThisComputer = local || (id === "custom" && isLocalUrl(s.custom_base_url));
   const hosted = id === "trailmix";
   const ready = local || (id === "custom" ? !!s.custom_base_url : !!hint);
 
@@ -1417,9 +1419,9 @@ function ProviderCard({
             <span className="chip bg-sun-soft text-sun-deep">Fallback</span>
           )}
           <span
-            className={`chip hidden sm:inline-flex ${local ? "bg-forest-soft/60 text-forest-deep" : "bg-sky-soft text-sky-deep"}`}
+            className={`chip hidden sm:inline-flex ${onThisComputer ? "bg-forest-soft/60 text-forest-deep" : "bg-sky-soft text-sky-deep"}`}
           >
-            {local ? "Local" : "Cloud"}
+            {onThisComputer ? "Local" : "Cloud"}
           </span>
           <ChevronDownIcon
             size={16}
@@ -1461,7 +1463,7 @@ function ProviderCard({
                   <TextField
                     label="Base URL"
                     value={s.custom_base_url}
-                    onSave={(v) => save({ custom_base_url: v })}
+                    onSave={(v) => save({ custom_base_url: v, custom_context_tokens: 0 })}
                     mono
                     placeholder="https://…/v1"
                   />
@@ -1821,14 +1823,14 @@ export default function Settings({
     id === "custom"
       ? s.custom_name || PROVIDER_META.custom.label
       : PROVIDER_META[id].label;
+  // An OpenAI-compatible server at a local address (LM Studio, llama.cpp…) runs here like Ollama.
+  const runsHere = (p: string) => p === "ollama" || (p === "custom" && isLocalUrl(s.custom_base_url));
   const providerOptions = providerIds.map((p) => ({
     value: p,
     label: providerLabel(p),
-    hint: p === "ollama" ? "Local" : "Cloud",
+    hint: runsHere(p) ? "Local" : "Cloud",
   }));
-  const cloudInUse = [s.summary_provider, s.summary_fallback].some(
-    (p) => p !== "ollama" && p !== "none",
-  );
+  const cloudInUse = [s.summary_provider, s.summary_fallback].some((p) => p !== "none" && !runsHere(p));
 
   return (
     <div>
@@ -2030,6 +2032,7 @@ export default function Settings({
         blurb="Connect the models you want to use. Keys are stored in Trailmix's database and never shown again."
         delay={160}
       >
+        <FoundServers s={s} onSaved={setS} className="pb-4" />
         {providerIds.map((id) => (
           <ProviderCard
             key={id}
