@@ -88,7 +88,8 @@ def test_the_profile_reads_this_computer_and_survives_a_reader_that_fails(monkey
 
 def test_the_suggested_notes_model_is_the_biggest_that_fits(monkeypatch, tmp_path):
     assert model_ranks.recommended_notes(5.6)["model"] == "qwen2.5:3b"   # an 8 GB Mac
-    assert model_ranks.recommended_notes(11.2)["model"] == "qwen2.5:7b"  # a 16 GB Mac
+    assert model_ranks.recommended_notes(8.0)["model"] == "qwen2.5:7b"   # an 8 GB graphics card
+    assert model_ranks.recommended_notes(11.2)["model"] == "qwen3:8b"    # a 16 GB Mac
     assert model_ranks.recommended_notes(16.8)["model"] == "qwen2.5:14b"  # a 24 GB Mac
     # A fetched list's suggestions win; one from before suggestions were listed falls back to the built-in ones.
     monkeypatch.setattr(model_ranks, "_load", lambda: {"recommend": {"notes": [{"model": "new:4b", "min_gb": 0},
@@ -96,7 +97,7 @@ def test_the_suggested_notes_model_is_the_biggest_that_fits(monkeypatch, tmp_pat
     assert model_ranks.recommended_notes(30)["model"] == "new:30b"
     assert model_ranks.recommended_notes(2)["model"] == "new:4b"
     monkeypatch.setattr(model_ranks, "_load", lambda: {"models": []})
-    assert model_ranks.recommended_notes(11.2)["model"] == "qwen2.5:7b"
+    assert model_ranks.recommended_notes(11.2)["model"] == "qwen3:8b"
     empty = tmp_path / "model-ranks.json"
     empty.write_text('{"models": []}')
     monkeypatch.setattr(model_ranks, "BUILT_IN", empty)
@@ -164,8 +165,8 @@ def _advice(monkeypatch, *, ram: float, cpu: str, gpus: list[dict]):
 
 def test_setup_advice_names_the_model_it_suggests_and_the_card_that_runs_it(monkeypatch):
     mac = _advice(monkeypatch, ram=16, cpu="Apple M4", gpus=hardware.mac_hardware("Apple M4")[1])
-    assert (mac["verdict"], mac["gpu"], mac["notes_model"]) == ("local", "", "qwen2.5:7b")
-    assert "mid-sized notes model (qwen2.5:7b)" in mac["notes"][0]
+    assert (mac["verdict"], mac["gpu"], mac["notes_model"]) == ("local", "", "qwen3:8b")
+    assert "mid-sized notes model (qwen3:8b)" in mac["notes"][0]
 
     big = _advice(monkeypatch, ram=36, cpu="Apple M3 Pro", gpus=hardware.mac_hardware("Apple M3 Pro")[1])
     assert big["notes_model"] == "qwen2.5:14b"
@@ -174,7 +175,7 @@ def test_setup_advice_names_the_model_it_suggests_and_the_card_that_runs_it(monk
     rtx = hardware.windows_gpus([{"DriverDesc": "NVIDIA GeForce RTX 4070", "HardwareInformation.qwMemorySize": 12 * GB}])
     pc = _advice(monkeypatch, ram=32, cpu="AMD Ryzen 7 7800X3D 8-Core Processor", gpus=rtx)
     assert (pc["chip"], pc["gpu"], pc["notes_model"]) == ("AMD Ryzen 7 7800X3D 8-Core Processor",
-                                                          "NVIDIA GeForce RTX 4070 (12 GB)", "qwen2.5:7b")
+                                                          "NVIDIA GeForce RTX 4070 (12 GB)", "qwen3:8b")
     assert pc["notes"][0].startswith("The NVIDIA GeForce RTX 4070 (12 GB) graphics card runs a mid-sized notes model")
 
     small = _advice(monkeypatch, ram=8, cpu="Apple M1", gpus=hardware.mac_hardware("Apple M1")[1])
