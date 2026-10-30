@@ -152,7 +152,13 @@ def whisper_cpp_runs_on(install: Path, env: dict) -> str:
                           encoding="utf-8", errors="replace")
     if done.returncode != 0 or "CPU :" not in done.stdout:
         raise Failure(f"whisper.cpp didn't say what it runs on (exit {done.returncode}): {done.stdout.strip()}\n{done.stderr[-3000:]}")
-    return done.stdout.strip()
+    info = done.stdout.strip()
+    # A GPU build (GPU_WHISPER) on GitHub's runners, which have no GPU: the transcripts that follow are then the proof
+    # that it falls back to the CPU.
+    gpu_build = (install / "python" / "Lib" / "site-packages" / "ggml-vulkan.dll").is_file()
+    if gpu_build and os.environ.get("GITHUB_ACTIONS") == "true" and not info.startswith("on the CPU"):
+        raise Failure(f"on GitHub's runner (no GPU), the GPU build's whisper.cpp should run on the CPU: {info}")
+    return f"(the GPU build, with Vulkan) {info}" if gpu_build else info
 
 
 def install_silently(installer: Path, folder: Path) -> None:
