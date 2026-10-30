@@ -6,8 +6,8 @@ flattened to pictures, the pictures inside a PowerPoint recompressed) so meeting
 Nothing is read from an attachment unless you tick "Add to searchable notes" on it. Then its text is pulled out, a
 short digest is written, and both go into the search index and what Ask reads. Neither ever goes into the summary,
 so nothing in an attached deck becomes a task. Who reads it is settings["attachments_engine"]: "local" (text
-recognition on this Mac and a model running here; nothing leaves the computer) or "provider" (your summary
-provider, which is sent the file's text, or the photo itself).
+recognition on this computer, Apple's on a Mac and ocr.py's elsewhere, and a model running here; nothing leaves
+the computer) or "provider" (your summary provider, which is sent the file's text, or the photo itself).
 """
 import mimetypes
 import os
@@ -30,6 +30,7 @@ import database as db
 import file_import
 import live
 import llm_engine
+import ocr
 import platform_words
 import settings
 
@@ -41,7 +42,7 @@ PHOTO_EDGE = 2400            # a shrunk photo's longest side, in pixels
 SLIDE_PICTURE_EDGE = 1920    # the same for pictures inside a PowerPoint
 FLATTEN_DPI = 120            # a flattened PDF page: sharp enough to read on screen
 PREVIEW_EDGE = 640
-OCR_PAGES = 30               # pages of a scanned PDF read on this Mac
+OCR_PAGES = 30               # pages of a scanned PDF read on this computer
 VISION_PAGES = 8             # ... or sent to your provider (each one costs)
 
 DIGEST_PROMPT = """Below is the text of "{name}", material attached to a meeting's notes for reference.
@@ -561,6 +562,8 @@ def _picture_text(pictures: list[Path], name: str, cfg: dict) -> str:
     if cfg["attachments_engine"] == "local":
         helper = helper_path()
         if not helper:
+            if ocr.available():
+                return _ocr_text(pictures, name, cfg)
             why = ("needs the Trailmix Mac app" if platform_words.os_id() == "macos" else "isn't available yet")
             raise AttachmentError(f"Reading photos on {platform_words.this_computer()} {why}. Switch Settings → "
                                   "Attachments to your summary provider to have it read them")
@@ -584,6 +587,18 @@ def _picture_text(pictures: list[Path], name: str, cfg: dict) -> str:
     except llm_engine.LLMError as e:
         raise AttachmentError(f"Your provider couldn't read {name} (it needs a model that can see pictures): {e}") from e
     return text
+
+
+def _ocr_text(pictures: list[Path], name: str, cfg: dict) -> str:
+    """Text recognition without the Mac app (Windows, Linux): ocr.py, laid out as the Mac app's --ocr prints it."""
+    try:
+        reader = ocr.Reader(locked=settings.locked(cfg))
+        pages = [reader.text(_open_image(p)) for p in pictures]
+    except ocr.Unavailable as e:
+        raise AttachmentError(str(e)) from e
+    except Exception as e:
+        raise AttachmentError(f"Text recognition couldn't read {name}: {str(e)[:200]}") from e
+    return "\n\n".join(p.strip() for p in pages if p.strip())
 
 
 def _jpeg_for_model(path: Path) -> bytes:

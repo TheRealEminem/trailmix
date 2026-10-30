@@ -415,6 +415,10 @@ def main(argv: list[str]) -> int:
         smoke_test.transcribe(URL, str(them), ["login", "Wednesday", "pricing"])
         smoke_test.meetings(URL)
 
+        log("An iPhone photo read on this PC (text recognition; its model downloads the first time)")
+        smoke_test.read_photo(URL, str(SCRIPTS.parent / "backend" / "tests" / "fixtures" / "ocr-line.heic"),
+                              ["roadmap", "Pricing", "Q3"])
+
         log("The shell's self-test (audio files stand in for the mic and the meeting, a stand-in Zoom for a call)")
         done = subprocess.run([str(exe), "--self-test", URL, str(me), str(them), f"--shots={root}"], env=env, capture_output=True,
                               text=True, timeout=1500, encoding="utf-8", errors="replace")
