@@ -126,8 +126,12 @@ def elf_machine(path: Path) -> int:
 
 def extract(archive: Path, into: Path) -> None:
     with tarfile.open(archive) as tar:
-        if hasattr(tarfile, "data_filter"):
+        # (Before 3.12 the "data" filter takes the runtime's hard links, terminfo's, as pointing outside it, as on
+        # Ubuntu 22.04's Python 3.10. The archive is checked against its pinned checksum first, so it's trusted.)
+        if hasattr(tarfile, "data_filter") and sys.version_info >= (3, 12):
             tar.extractall(into, filter="data")
+        elif hasattr(tarfile, "data_filter"):
+            tar.extractall(into, filter="fully_trusted")
         else:
             tar.extractall(into)
 
