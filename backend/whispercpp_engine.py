@@ -62,19 +62,22 @@ def _threads(meeting: bool = False) -> int:
     return max(1, min(8, _cores() // 2 if meeting else _cores()))
 
 
-# ggml's own libraries, in a whisper.cpp built with its backends as libraries of their own (the GPU builds, see
-# _ggml_folder).
+# ggml's own libraries and its Vulkan backend, in a whisper.cpp built with its backends as libraries of their own
+# (the GPU builds, see _ggml_folder).
 _GGML = ("ggml.dll", "ggml-base.dll") if sys.platform == "win32" else ("libggml.so", "libggml-base.so")
+_VULKAN = "ggml-vulkan.dll" if sys.platform == "win32" else "libggml-vulkan.so"
 
 
 def _ggml_folder() -> Path | None:
     """Where the whisper.cpp built with its backends as libraries of their own keeps them (the GPU builds for Windows
     x64 and Linux: a CPU one for each generation of CPUs, and Vulkan for the GPU), next to the extension; None for
-    the builds with them built in (pywhispercpp's wheels, the Intel Mac's, Windows ARM's), which run on the CPU."""
+    the builds with them built in (pywhispercpp's wheels, the Intel Mac's, Windows ARM's), which run on the CPU.
+    Told apart by Vulkan's backend: the Linux wheel has stray copies of libggml.so next to the extension too, which
+    aren't the ones it uses."""
     import _pywhispercpp
 
     folder = Path(_pywhispercpp.__file__).parent
-    return folder if all((folder / name).is_file() for name in _GGML) else None
+    return folder if all((folder / name).is_file() for name in (*_GGML, _VULKAN)) else None
 
 
 def _devices(folder: Path) -> list[tuple[str, str, int]]:
