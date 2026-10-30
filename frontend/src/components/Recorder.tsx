@@ -10,7 +10,7 @@ import type {
 import { hasCapability, missingCapabilityReason } from "../api";
 import type { ActiveRecording } from "../capture";
 import { formatDuration, formatLongDate, shortModel } from "../format";
-import { cap, platformWords } from "../platform";
+import { cap, platformWords, recorderWords } from "../platform";
 import {
   AlertIcon,
   ChevronDownIcon,
@@ -314,7 +314,7 @@ export default function Recorder(p: Props) {
                   ? `${missingCapabilityReason(p.native, "system_audio")} Only your mic is recorded.`
                   : !hasCapability(p.native, "per_app_audio")
                     ? `Every app's audio together. ${missingCapabilityReason(p.native, "per_app_audio")}`
-                    : "Straight from your call apps: Zoom, Meet in your browser, Teams, FaceTime. No sharing picker."
+                    : `Straight from your call apps: Zoom, Meet in your browser, Teams, ${recorderWords(p.native.platform).os === "macos" ? "FaceTime" : "Slack"}. No sharing picker.`
               }
             >
               <span className="min-w-0 truncate text-right text-label text-ink-soft">

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { inApp, revealInFinder } from "../api";
+import { platformWords } from "../platform";
 import type { Bookmark, Health, Meeting, Task, Workspace } from "../api";
 import {
   formatBytes,
@@ -456,7 +457,7 @@ export default function MeetingView({
                       className="btn btn-sm btn-ghost"
                     >
                       <FolderIcon size={16} />
-                      Show in Finder
+                      Show in {platformWords().fileManager}
                     </button>
                   )}
                   <button onClick={on.onExport} className="btn btn-sm btn-soft">
