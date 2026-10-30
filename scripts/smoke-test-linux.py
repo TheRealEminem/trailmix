@@ -318,19 +318,40 @@ def check_parts(app: App) -> None:
     print(f"the app's parts are there and built for {app.arch} ({size:.0f} MB of resources)")
 
 
-def start_engine(app: App, env: dict, log_path: Path) -> subprocess.Popen:
-    """The engine exactly as the app runs it (desktop/src-tauri/src/server.rs), without the app around it."""
-    engine_env = {k: v for k, v in env.items() if not k.upper().startswith(("PYTHON", "LD_"))}
-    engine_env.update({
+def engine_env(app: App, env: dict) -> dict:
+    """The environment the app gives its engine (desktop/src-tauri/src/server.rs)."""
+    found = {k: v for k, v in env.items() if not k.upper().startswith(("PYTHON", "LD_"))}
+    found.update({
         "PATH": f"{app.resources / 'bin'}:/usr/local/bin:/usr/bin:/bin",
         "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1", "PYTHONUNBUFFERED": "1", "PYTHONUTF8": "1",
         "TRAILMIX_UI_DIR": str(app.resources / "ui"),
     })
+    return found
+
+
+def start_engine(app: App, env: dict, log_path: Path) -> subprocess.Popen:
+    """The engine exactly as the app runs it (desktop/src-tauri/src/server.rs), without the app around it."""
     return subprocess.Popen(
         [str(app.resources / "python" / "bin" / "python3"), "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(PORT)],
-        cwd=app.resources / "backend", env=engine_env, stdin=subprocess.DEVNULL, stdout=open(log_path, "ab"), stderr=subprocess.STDOUT,
-        start_new_session=True,
+        cwd=app.resources / "backend", env=engine_env(app, env), stdin=subprocess.DEVNULL, stdout=open(log_path, "ab"),
+        stderr=subprocess.STDOUT, start_new_session=True,
     )
+
+
+def whisper_cpp_runs_on(app: App, env: dict) -> str:
+    """What the app's whisper.cpp runs on, and what it found, as the engine sees it. A GPU build (GPU_WHISPER) on
+    GitHub's runners, which have no GPU, must say the CPU: the transcripts that follow are then the proof that it
+    falls back to it (on the runner with a Vulkan loader, in the containers without one)."""
+    done = subprocess.run([str(app.resources / "python" / "bin" / "python3"), "-c", "import whispercpp_engine; print(whispercpp_engine.system_info())"],
+                          cwd=app.resources / "backend", env=engine_env(app, env), capture_output=True, text=True, timeout=120,
+                          encoding="utf-8", errors="replace")
+    if done.returncode != 0 or "CPU :" not in done.stdout:
+        raise Failure(f"whisper.cpp didn't say what it runs on (exit {done.returncode}): {done.stdout.strip()}\n{done.stderr[-3000:]}")
+    info = done.stdout.strip()
+    gpu_build = any((app.resources / "python" / "lib").glob("python3.*/site-packages/libggml-vulkan.so"))
+    if gpu_build and os.environ.get("GITHUB_ACTIONS") == "true" and not info.startswith("on the CPU"):
+        raise Failure(f"on GitHub's runner (no GPU), the GPU build's whisper.cpp should run on the CPU: {info}")
+    return f"(the GPU build, with Vulkan) {info}" if gpu_build else info
 
 
 # MARK: The stand-in for GitHub, and the recorder's report
@@ -577,6 +598,7 @@ def main(argv: list[str]) -> int:
             app.install()
             installed = True
         check_parts(app)
+        print(f"whisper.cpp {whisper_cpp_runs_on(app, env)}")
 
         log("The app starts its engine, and takes it down with it")
         app_env = {**env, "TRAILMIX_SERVER_URL": APP_URL, "TRAILMIX_DATA_DIR": str(app_data)}
