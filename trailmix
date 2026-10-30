@@ -39,7 +39,7 @@ ensure_backend() {
   if [ ! -x "$VENV/bin/uvicorn" ]; then
     say "Setting up the Python environment (first run only)…"
     "$(find_python)" -m venv "$VENV"
-    "$VENV/bin/pip" install -q -r "$ROOT/backend/requirements.txt"
+    "$VENV/bin/pip" install -q -c "$ROOT/backend/constraints.txt" -r "$ROOT/backend/requirements.txt"
   fi
 }
 

@@ -7,7 +7,7 @@ time. Lines spoken by the key's owner become You, everyone else Them.
 """
 import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 import httpx
 
@@ -94,7 +94,7 @@ def segments(sentences: list[dict], me: str, duration_min: float | None) -> list
     scale = 1000.0 if longest > max((duration_min or 0) * 60 * 3, 6 * 3600) else 1.0
     me = me.strip().lower()
     out = []
-    for s, (a, b) in zip(sentences, times):
+    for s, (a, b) in zip(sentences, times, strict=True):
         text = (s.get("text") or "").strip()
         if not text:
             continue
@@ -146,13 +146,13 @@ def import_note(key: str, note: dict, keep_summary: bool) -> int | None:
         segs = segments(t.get("sentences") or [], (t.get("user") or {}).get("name") or "", t.get("duration"))
         if not segs:
             return None
-        when = importer._parse_time(t.get("dateString")) or datetime.now(timezone.utc)
+        when = importer._parse_time(t.get("dateString")) or datetime.now(UTC)
         text = ""
         if keep_summary:
             status = (t.get("meeting_info") or {}).get("summary_status")
             s = t.get("summary") or {}
             text = summary(s.get("overview") or "", s.get("action_items") or "")
-            if status == "processing" or (not text and datetime.now(timezone.utc) - when < _NOT_READY):
+            if status == "processing" or (not text and datetime.now(UTC) - when < _NOT_READY):
                 return None
         return importer.save_imported(t.get("title") or note.get("title") or "", when, segs, "fireflies",
                                       note["id"], text)

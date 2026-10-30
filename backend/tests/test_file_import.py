@@ -1,7 +1,7 @@
 import shutil
 import subprocess
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from io import BytesIO
 
 import pytest
@@ -90,7 +90,7 @@ def test_otter_text_and_word_exports():
 
 
 def test_a_transcript_file_becomes_a_meeting_once(fresh_db):
-    when = datetime(2026, 10, 1, 17, 0, tzinfo=timezone.utc)
+    when = datetime(2026, 10, 1, 17, 0, tzinfo=UTC)
     mid = file_import.import_transcript("Weekly_sync.vtt", ZOOM_VTT.encode(), when, ME)
     m = db.get_meeting(mid)
     assert (m["title"], m["created_at"], m["transcribed_with"]) == ("Weekly sync", "2026-10-01T17:00:00.000Z", "a transcript file")
@@ -105,7 +105,7 @@ def test_a_recording_is_converted_and_the_copy_deleted(fresh_db, tmp_path):
                     "creation_time=2026-09-15T14:30:00Z", str(original)], check=True)
     temp = file_import.temp_path(original.name)
     shutil.copy(original, temp)
-    mid = file_import.import_recording(original.name, temp, datetime(2026, 10, 9, tzinfo=timezone.utc))
+    mid = file_import.import_recording(original.name, temp, datetime(2026, 10, 9, tzinfo=UTC))
     m = db.get_meeting(mid)
     assert not temp.exists() and original.exists()  # the copy is gone, your file isn't
     assert m["created_at"] == "2026-09-15T14:30:00.000Z"  # when it was recorded, from the file

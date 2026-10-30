@@ -35,21 +35,8 @@ import CloudPanel from "./Cloud";
 import { FoundServers, usesLocalServer } from "./LocalServers";
 import { Collapse, Segmented, Select, Spinner, Switch } from "./ui";
 
-/** The home-screen checklist this replaced: closing it meant "I've done setup", so it still does. */
-const OLD_CHECKLIST_CLOSED = "trailmix.setupDismissed";
 // Instruction-following families that write good notes (see llm_engine.preferred_ollama_model).
 const GOOD_MODELS = /^(qwen3|qwen2\.5|gemma3|llama3\.[12]|mistral|phi4)/i;
-
-/** Should a new install be walked through setup? Not once it's been done, skipped, or meetings exist. */
-export function needsSetup(s: Settings, meetingCount: number): boolean {
-  let closedChecklist = false;
-  try {
-    closedChecklist = localStorage.getItem(OLD_CHECKLIST_CLOSED) === "1";
-  } catch {
-    /* private window */
-  }
-  return !s.setup_done && meetingCount === 0 && !closedChecklist;
-}
 
 type StepId = "hello" | "name" | "laws" | "ai" | "transcribe" | "notes" | "sound" | "stats" | "done";
 
@@ -626,7 +613,7 @@ function TranscribeStep({
           ...(shareKey ? { openai_api_key: "" } : {}),
         }),
       );
-      throw new Error(which.engine === "gemini" ? `Google didn't accept that: ${(e as Error).message}` : (e as Error).message);
+      throw new Error(which.engine === "gemini" ? `Google didn't accept that: ${(e as Error).message}` : (e as Error).message, { cause: e });
     }
     onSaved(await api.getSettings());
     next();
@@ -847,7 +834,7 @@ function NotesStep({
           ...(typed ? { [keyField]: "" } : {}),
         } as Partial<Settings>),
       );
-      throw new Error(`${meta.label} didn't accept that: ${(e as Error).message}`);
+      throw new Error(`${meta.label} didn't accept that: ${(e as Error).message}`, { cause: e });
     }
     onSaved(await api.getSettings());
     next();

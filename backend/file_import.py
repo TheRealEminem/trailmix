@@ -10,10 +10,9 @@ Transcripts: WebVTT and SRT (what Zoom, Microsoft Teams and Google Meet export),
 import logging
 import re
 import subprocess
-import threading
 import uuid
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree
@@ -127,10 +126,7 @@ def _docx_text(data: bytes) -> str:
 
 def parse_transcript(name: str, data: bytes, my_names: set[str]) -> list[dict]:
     ext = Path(name).suffix.lower()
-    if ext == ".docx":
-        text = _docx_text(data)
-    else:
-        text = data.decode("utf-8", errors="replace")
+    text = _docx_text(data) if ext == ".docx" else data.decode("utf-8", errors="replace")
     if ext in (".vtt", ".srt") or _CUE_TIME.search(text[:2000]):
         return parse_cues(text, my_names)
     return importer.parse_text(_otter(text), my_names)
@@ -197,7 +193,7 @@ def recording_from(name: str, path: Path, modified: datetime) -> int | None:
         raise ValueError(f"{name}: couldn't read its audio ({result.stderr.strip()[:160]})")
     db.update_meeting(
         meeting_id, audio_dir=str(folder), audio_deleted=0, duration_sec=duration, title_auto=1,
-        imported_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"), status="queued",
+        imported_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z"), status="queued",
         transcribed=0, ask_first=int(settings.get_all()["ask_before_ai"]),
     )
     pipeline.enqueue(meeting_id)

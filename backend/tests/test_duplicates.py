@@ -1,6 +1,6 @@
 import json
 import random
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,10 +12,7 @@ import main
 import pipeline
 import settings
 
-VOCAB = ("pilot customer cold chain sensor vaccine budget launch vendor contract onboarding clinic freezer battery "
-         "gateway dashboard alert investor grant hiring roadmap demo partner county pharmacy shipment temperature "
-         "warranty pricing margin supplier firmware cloud latency report county board meeting rural hospital "
-         "outreach survey interview feedback feature backlog sprint design prototype enclosure").split()
+VOCAB = ["pilot", "customer", "cold", "chain", "sensor", "vaccine", "budget", "launch", "vendor", "contract", "onboarding", "clinic", "freezer", "battery", "gateway", "dashboard", "alert", "investor", "grant", "hiring", "roadmap", "demo", "partner", "county", "pharmacy", "shipment", "temperature", "warranty", "pricing", "margin", "supplier", "firmware", "cloud", "latency", "report", "county", "board", "meeting", "rural", "hospital", "outreach", "survey", "interview", "feedback", "feature", "backlog", "sprint", "design", "prototype", "enclosure"]
 
 
 @pytest.fixture
@@ -54,7 +51,7 @@ def recording(segs: list[dict], summary: str | None = "## Overview\nTrailmix not
 
 
 def granola(segs: list[dict], note_id="g1", summary="## Overview\nGranola notes\n\n## Action Items\n- Send the deck") -> int:
-    return importer.save_imported("Cinder Labs check-in", datetime.now(timezone.utc), segs, "granola", note_id, summary)
+    return importer.save_imported("Cinder Labs check-in", datetime.now(UTC), segs, "granola", note_id, summary)
 
 
 def test_the_same_talk_scores_high_and_another_meeting_low():
@@ -84,7 +81,7 @@ def test_granola_copy_merges_into_the_recording_and_lines_up_with_it(fresh_db):
 def test_a_pasted_copy_without_notes_keeps_trailmix_notes(fresh_db):
     said = talk(1)
     rec = recording(heard(said, 2))
-    kept = importer.save_imported("", datetime.now(timezone.utc), heard(said, 3), "paste", None, None)
+    kept = importer.save_imported("", datetime.now(UTC), heard(said, 3), "paste", None, None)
     m = db.get_meeting(kept)
     assert kept == rec and "Trailmix notes" in m["summary"] and m["transcribed_with"] == "a pasted transcript"
 

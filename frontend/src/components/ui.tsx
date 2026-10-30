@@ -212,11 +212,10 @@ export function Select({
   };
 
   let style: CSSProperties = {};
-  let up = false;
   if (rect) {
     const width = Math.max(rect.width, 200);
     const below = window.innerHeight - rect.bottom - 12;
-    up = below < Math.min(300, options.length * 36 + 12) && rect.top > below;
+    const up = below < Math.min(300, options.length * 36 + 12) && rect.top > below;
     style = {
       left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
       width,

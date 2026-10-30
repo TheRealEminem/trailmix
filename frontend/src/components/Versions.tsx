@@ -138,7 +138,7 @@ export default function Versions({
       alive = false;
       clearTimeout(t);
     };
-  }, [open, m.id, engine, model, separate]);
+  }, [open, m.id, m.has_system, engine, model, separate]);
 
   if (!m.transcript || !finished) return null;
 
