@@ -633,15 +633,20 @@ fn catch_up(t: &mut Test, model: &Arc<Model>, base: &str, shots: Option<&Path>) 
     let plan = get_json(&format!("{base}/api/meetings/{id}/catch-up")).unwrap_or(Value::Null);
     let reason = plan.get("reason").and_then(|r| r.as_str()).unwrap_or("").to_string();
     let ready = plan.get("ready").and_then(|r| r.as_bool());
-    t.expect(ready == Some(false) && !reason.is_empty(), &format!("the server says it can't answer: {reason}"));
-    let says = catch_up_card(10.0, |s| !reason.is_empty() && s.text.contains(&reason));
-    t.expect(says.is_some(), "the card says so, in the same words");
-    if says.is_none() {
-        println!("      (the card shows: {:?})", catchup_card::current().map(|s| s.text));
+    if ready == Some(true) {
+        // (Run on a computer with an AI of its own: there's no "no AI" to see.)
+        println!("      (an AI is set up on this server already: {}; skipping the no-AI check)", plan.get("label").unwrap_or(&Value::Null));
+    } else {
+        t.expect(ready == Some(false) && !reason.is_empty(), &format!("the server says it can't answer: {reason}"));
+        let says = catch_up_card(10.0, |s| !reason.is_empty() && s.text.contains(&reason));
+        t.expect(says.is_some(), "the card says so, in the same words");
+        if says.is_none() {
+            println!("      (the card shows: {:?})", catchup_card::current().map(|s| s.text));
+        }
+        t.expect(says.map(|s| !s.text.contains("What did I miss?")).unwrap_or(false), "and offers no questions to ask");
+        t.expect(!card_has_focus(), "the call still has the focus");
+        card_shot(t, shots, "smoke-catch-up-no-ai.png");
     }
-    t.expect(says.map(|s| !s.text.contains("What did I miss?")).unwrap_or(false), "and offers no questions to ask");
-    t.expect(!card_has_focus(), "the call still has the focus");
-    card_shot(t, shots, "smoke-catch-up-no-ai.png");
 
     println!("9d. With an AI set up, What did I miss? is answered in the card");
     let saved = get_json(&format!("{base}/api/settings")).unwrap_or(Value::Null);
