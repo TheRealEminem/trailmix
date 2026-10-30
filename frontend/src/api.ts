@@ -450,6 +450,8 @@ export interface Settings {
   traverse_api_key: string;
   traverse_project: string;
   transcribe_url: string;
+  /** The accurate local speech model picked in Settings; "" for automatic */
+  local_speech_model: string;
   transcribe_api_key: string;
   transcribe_model: string;
   transcribe_live_model: string;
@@ -998,9 +1000,27 @@ export interface SpeechModel {
   size_gb: number;
 }
 
+/** An accurate speech model the local engine offers in Settings (local_engine.catalog). */
+export interface SpeechChoice {
+  id: string;
+  label: string;
+  size_gb: number;
+  ram_gb: number;
+  speed: string;
+  installed: boolean;
+  in_use: boolean;
+  /** How well it transcribes meetings, 0-100 (model-ranks.json) */
+  score: number | null;
+}
+
 export interface SpeechModels {
   local: boolean;
   models: SpeechModel[];
+  choices: SpeechChoice[];
+  /** The model the engine picks for this computer by itself */
+  automatic: string;
+  /** The one picked in Settings; "" for automatic */
+  chosen: string;
 }
 
 /** Running inside Trailmix.app's own window (rather than a browser): the app can be asked to quit. */
@@ -1025,6 +1045,7 @@ export const api = {
   system: () => request<SystemInfo>("/system"),
   speechModels: () => request<SpeechModels>("/models"),
   downloadSpeechModels: () => request<SpeechModels>("/models/download", json("POST")),
+  removeSpeechModel: (repo: string) => request<SpeechModels>("/models/remove", json("POST", { repo })),
   getSettings: () => request<Settings>("/settings"),
   putSettings: (changes: Partial<Settings>) => request<Settings>("/settings", json("PUT", changes)),
   recordingLaws: () => request<RecordingLaws>("/recording-laws"),

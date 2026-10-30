@@ -27,7 +27,7 @@ def fake_model(monkeypatch):
     """Every stretch of audio is "speech", and the model reports how many seconds it was given."""
     calls = []
 
-    def transcribe_final(audio, prompt=None):
+    def transcribe_final(audio, prompt=None, model=None):
         calls.append(len(audio) / SR)
         return [{"start": 0.0, "end": len(audio) / SR, "text": f"heard {len(audio) / SR:.0f} seconds"}]
 
@@ -83,7 +83,7 @@ def test_a_missed_chunk_means_transcribing_it_all_afterwards(fresh_db, fake_mode
     db.update_meeting(mid, audio_dir=str(folder), status="recording")
     session = live.LiveSession(mid, folder, draft=False, cfg={"live_final": True, "transcribe_engine": "local"})
 
-    def broken(audio, prompt=None):
+    def broken(audio, prompt=None, model=None):
         raise RuntimeError("out of memory")
 
     monkeypatch.setattr(live.local_engine, "transcribe_final", broken)
@@ -139,7 +139,7 @@ def test_cuts_land_at_pauses_or_between_words():
 def test_each_chunk_gets_what_was_just_said_as_context(fresh_db, fake_model, monkeypatch):
     prompts = []
 
-    def transcribe_final(audio, prompt=None):
+    def transcribe_final(audio, prompt=None, model=None):
         prompts.append(prompt)
         return [{"start": 0.0, "end": 1.0, "text": f"part {len(prompts)}"}]
 

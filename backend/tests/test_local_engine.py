@@ -24,7 +24,7 @@ def pick(monkeypatch):
 def test_whisper_cpp_is_used_where_asked_with_its_own_models(pick):
     engine = pick("whispercpp")
     assert engine.ENGINE is whispercpp_engine and engine.NAME == "whisper.cpp"
-    assert (engine.FINAL_MODEL, engine.FINAL_MODEL_RAM_GB) in (whispercpp_engine.TURBO, whispercpp_engine.SMALL)
+    assert (engine.final_model({}), engine.final_model_ram_gb({})) in (whispercpp_engine.TURBO, whispercpp_engine.SMALL)
 
 
 def test_a_small_intel_cpu_gets_the_small_model():
@@ -39,7 +39,7 @@ def test_no_engine_means_not_available(pick):
     assert not engine.available() and engine.loaded() is None
     engine.unload()  # nothing to do, and no error
     with pytest.raises(RuntimeError):
-        engine.run(np.zeros(16000, dtype=np.float32), engine.FINAL_MODEL)
+        engine.run(np.zeros(16000, dtype=np.float32), engine.final_model({}))
 
 
 def test_model_labels_are_the_same_whichever_engine():
@@ -103,3 +103,73 @@ def test_a_meeting_chunk_has_a_deadline(monkeypatch):
     assert stop()
     monkeypatch.setattr(whispercpp_engine, "_cores", lambda: 1)
     assert whispercpp_engine._threads(meeting=True) == 1
+
+
+def test_the_speech_model_picked_in_settings_is_used_if_the_engine_lists_it(pick, monkeypatch):
+    engine = pick("whispercpp")
+    full = "ggerganov/whisper.cpp:ggml-large-v3-turbo.bin"
+    assert any(m["id"] == full for m in engine.catalog())
+    assert engine.final_model({"local_speech_model": full}) == full
+    assert engine.final_model_ram_gb({"local_speech_model": full}) == 2.5
+    # Automatic, or a model this engine doesn't list (picked on another computer, say): the engine's own choice.
+    assert engine.final_model({"local_speech_model": ""}) == engine.automatic_model() == whispercpp_engine.FINAL_MODEL
+    assert engine.final_model({"local_speech_model": "mlx-community/whisper-large-v3-mlx"}) == whispercpp_engine.FINAL_MODEL
+    # Settings that can't be read yet (a fresh data folder) mean automatic too.
+    monkeypatch.setattr(engine.settings, "get_all", lambda: (_ for _ in ()).throw(engine.sqlite3.OperationalError("no such table")))
+    assert engine.final_model() == whispercpp_engine.FINAL_MODEL
+
+
+def test_the_environment_wins_over_settings(pick, monkeypatch):
+    monkeypatch.setenv("TRAILMIX_WHISPER_MODEL", "mlx-community/whisper-tiny-mlx")
+    monkeypatch.setenv("TRAILMIX_WHISPER_RAM_GB", "0.5")
+    engine = pick("mlx")
+    assert engine.final_model({"local_speech_model": "mlx-community/whisper-large-v3-mlx"}) == "mlx-community/whisper-tiny-mlx"
+    assert engine.final_model_ram_gb({}) == 0.5
+    monkeypatch.delenv("TRAILMIX_WHISPER_MODEL")
+    monkeypatch.delenv("TRAILMIX_WHISPER_RAM_GB")
+
+
+def test_a_fetched_list_can_offer_new_speech_models(pick, monkeypatch):
+    import model_ranks
+
+    engine = pick("mlx")
+    newer = {"id": "mlx-community/whisper-large-v4-turbo", "label": "Whisper Large v4 Turbo", "size_gb": 1.7, "ram_gb": 3.2}
+    monkeypatch.setattr(model_ranks, "_load", lambda: {"recommend": {"speech": {"mlx": [newer]}}})
+    assert engine.catalog() == [newer]
+    assert engine.final_model({"local_speech_model": newer["id"]}) == newer["id"]
+    assert engine.final_model_ram_gb({"local_speech_model": newer["id"]}) == 3.2
+    monkeypatch.setattr(model_ranks, "_load", lambda: {})
+    assert engine.catalog() == engine.ENGINE.MODELS  # nothing listed: the engine's own
+
+
+def _fake_hub(root, repo: str, files: dict[str, bytes]):
+    """A Hugging Face cache entry as hf_hub_download leaves it: blobs, a ref, and a snapshot of links."""
+    folder = root / ("models--" + repo.replace("/", "--"))
+    (folder / "refs").mkdir(parents=True)
+    (folder / "refs" / "main").write_text("abc123")
+    snap = folder / "snapshots" / "abc123"
+    snap.mkdir(parents=True)
+    (folder / "blobs").mkdir()
+    for name, data in files.items():
+        blob = folder / "blobs" / f"sha-{name}"
+        blob.write_bytes(data)
+        (snap / name).symlink_to(blob)
+    return folder
+
+
+def test_removing_a_speech_model_frees_only_that_one(pick, monkeypatch, tmp_path):
+    pytest.importorskip("huggingface_hub")
+    engine = pick("whispercpp")
+    monkeypatch.setattr(models, "_hub_cache", lambda: tmp_path)
+    monkeypatch.setattr(models.settings, "get_all", lambda: {"local_speech_model": "", "transcribe_engine": "local"})
+    repo = _fake_hub(tmp_path, "ggerganov/whisper.cpp", {"ggml-base.bin": b"live", "ggml-large-v3-q5_0.bin": b"big",
+                                                         "ggml-large-v3-turbo-q5_0.bin": b"turbo"})
+    with pytest.raises(ValueError, match="in use"):
+        models.remove(engine.automatic_model())
+    with pytest.raises(ValueError, match="only removes"):
+        models.remove("ggerganov/whisper.cpp:ggml-base.bin")  # the live model isn't one of the choices
+    models.remove("ggerganov/whisper.cpp:ggml-large-v3-q5_0.bin")
+    left = sorted(p.name for p in (repo / "snapshots" / "abc123").iterdir())
+    assert "ggml-large-v3-q5_0.bin" not in left and "ggml-base.bin" in left
+    assert not (repo / "blobs" / "sha-ggml-large-v3-q5_0.bin").exists()
+    assert (repo / "blobs" / "sha-ggml-base.bin").exists()

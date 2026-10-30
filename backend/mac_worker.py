@@ -26,8 +26,8 @@ import local_engine
 TOKEN = os.getenv("TRAILMIX_WORKER_TOKEN", "")
 IDLE_S = float(os.getenv("TRAILMIX_WORKER_IDLE_S", "120"))
 ALIASES = {
-    "large": local_engine.FINAL_MODEL,
-    "whisper-1": local_engine.FINAL_MODEL,
+    "large": local_engine.automatic_model(),
+    "whisper-1": local_engine.automatic_model(),
     "live": local_engine.LIVE_MODEL,
     "small": local_engine.LIVE_MODEL,
 }
