@@ -167,10 +167,16 @@ def trim(python: Path) -> None:
         rmtree(p)
     for p in (python / "lib").glob("tk*"):
         rmtree(p)
+    # Only python3 itself (a link to python3.14, made a copy of it), not pip's, idle's or python3-config, which are
+    # scripts pointing at this build machine.
     bin_dir = python / "bin"
-    for p in bin_dir.iterdir():
-        if not p.name.startswith("python3"):
-            rmtree(p)  # pip's, idle's and the like: scripts pointing at this build machine
+    real = (bin_dir / "python3").resolve()
+    keep = bin_dir / ".python3"
+    shutil.copy2(real, keep)
+    for p in list(bin_dir.iterdir()):
+        if p != keep:
+            rmtree(p)
+    keep.rename(bin_dir / "python3")
     for p in list(site.rglob("tests")) + list(site.rglob("test")):
         if p.is_dir():
             rmtree(p)
