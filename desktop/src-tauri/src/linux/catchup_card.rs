@@ -209,11 +209,12 @@ pub fn focus_report() -> String {
             let live = live.try_borrow().ok()?;
             let l = live.as_ref()?;
             Some(format!(
-                "card {:?}, keyboard at {:?}, typing {}, GTK focus {}",
+                "card {:?}, keyboard at {:?}, typing {}, GTK focus {}; last {}",
                 x11_id(&l.window),
                 x11_focus(),
                 l.typing,
-                l.window.has_toplevel_focus()
+                l.window.has_toplevel_focus(),
+                HANDED_BACK.lock().map(|h| h.clone()).unwrap_or_default()
             ))
         })
     })
@@ -460,15 +461,35 @@ fn end_typing(give_back: bool) {
         }
         l.typing = false;
         l.window.set_accept_focus(false);
-        Some(l.before.take())
+        Some((l.before.take(), x11_id(&l.window)))
     });
-    if let Some(before) = before.flatten().filter(|_| give_back) {
+    if let Some((Some(before), card)) = before.filter(|_| give_back) {
         // GTK's own request for the keyboard (when the box was clicked) goes first, or it would win.
         if let Some(display) = gtk::gdk::Display::default() {
             display.sync();
         }
-        x11_set_focus(before);
+        let outcome = x11_hand_back(before, card);
+        *HANDED_BACK.lock().unwrap_or_else(|e| e.into_inner()) = outcome;
     }
+}
+
+/// What happened the last time the keyboard was handed back, for the self-test's log.
+static HANDED_BACK: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// Gives the keyboard to `before`, the window that had it; if X won't (that window has gone, say) or the card still
+/// has it, to X's own default, the window under the pointer.
+fn x11_hand_back(before: u32, card: Option<u32>) -> String {
+    use x11rb::protocol::xproto::{ConnectionExt as _, InputFocus};
+    let Ok((conn, _)) = x11rb::connect(None) else { return "no X connection".into() };
+    let set = conn.set_input_focus(InputFocus::PARENT, before, x11rb::CURRENT_TIME).map_err(|e| e.to_string()).and_then(|c| c.check().map_err(|e| e.to_string()));
+    let now = conn.get_input_focus().ok().and_then(|c| c.reply().ok()).map(|r| r.focus);
+    if set.is_ok() && now != card {
+        return format!("handed back to {before:#x}");
+    }
+    const POINTER_ROOT: u32 = 1;
+    let fallback = conn.set_input_focus(InputFocus::POINTER_ROOT, POINTER_ROOT, x11rb::CURRENT_TIME).map_err(|e| e.to_string()).and_then(|c| c.check().map_err(|e| e.to_string()));
+    let after = conn.get_input_focus().ok().and_then(|c| c.reply().ok()).map(|r| r.focus);
+    format!("handing back to {before:#x}: {set:?}, keyboard at {now:?}; to the pointer's window: {fallback:?}, keyboard at {after:?}")
 }
 
 extern "C" {
@@ -496,14 +517,6 @@ fn x11_focus() -> Option<u32> {
     let (conn, _) = x11rb::connect(None).ok()?;
     let reply = conn.get_input_focus().ok()?.reply().ok()?;
     Some(reply.focus)
-}
-
-fn x11_set_focus(window: u32) {
-    use x11rb::connection::Connection as _;
-    use x11rb::protocol::xproto::{ConnectionExt as _, InputFocus};
-    let Ok((conn, _)) = x11rb::connect(None) else { return };
-    let _ = conn.set_input_focus(InputFocus::PARENT, window, x11rb::CURRENT_TIME);
-    let _ = conn.flush();
 }
 
 fn label(text: &str, classes: &[&str]) -> gtk::Label {
