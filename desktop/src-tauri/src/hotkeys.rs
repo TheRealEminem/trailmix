@@ -1,16 +1,21 @@
 //! Global keyboard shortcuts (HotKeys.swift): Ctrl+Alt+Shift+R starts and stops a recording and
 //! Ctrl+Alt+Shift+M marks a moment, from any app. RegisterHotKey on a thread of their own, which gets
 //! WM_HOTKEY when one is pressed; a shortcut another app already has can't be registered, and is reported.
+//! On Linux, an X11 key grab does the same (linux/keys.rs); what a press does is shared.
 
 use std::sync::atomic::{AtomicU32, Ordering};
+#[cfg(windows)]
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(windows)]
+use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
 use crate::card;
+#[cfg(windows)]
 use crate::gui::*;
 use crate::model::{Model, Phase, Snapshot};
 
@@ -18,7 +23,10 @@ pub const MOD_ALT: u32 = 0x1;
 pub const MOD_CONTROL: u32 = 0x2;
 pub const MOD_SHIFT: u32 = 0x4;
 pub const MOD_WIN: u32 = 0x8;
+#[cfg(windows)]
 const MOD_NOREPEAT: u32 = 0x4000;
+/// What the Windows key is called here.
+const WIN_NAME: &str = if cfg!(windows) { "Win" } else { "Super" };
 
 /// The ids the two shortcuts are registered under.
 pub const RECORD: i32 = 1;
@@ -61,7 +69,7 @@ impl Shortcut {
     /// In Windows' own notation: "Ctrl+Alt+Shift+R", "Win+Shift+F9".
     pub fn display(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
-        for (flag, name) in [(MOD_WIN, "Win"), (MOD_CONTROL, "Ctrl"), (MOD_ALT, "Alt"), (MOD_SHIFT, "Shift")] {
+        for (flag, name) in [(MOD_WIN, WIN_NAME), (MOD_CONTROL, "Ctrl"), (MOD_ALT, "Alt"), (MOD_SHIFT, "Shift")] {
             if self.mods & flag != 0 {
                 parts.push(name.into());
             }
@@ -108,16 +116,25 @@ pub fn key_name(key: u32) -> Option<String> {
         0x30..=0x39 | 0x41..=0x5A => Some(char::from(key as u8).to_string()),
         0x60..=0x69 => Some(format!("Num {}", key - 0x60)),
         VK_F1..=VK_F24 => Some(format!("F{}", key - VK_F1 + 1)),
-        0xBA..=0xC0 | 0xDB..=0xDF | 0xE2 => {
-            // Punctuation: whatever the key shows on this keyboard layout (MAPVK_VK_TO_CHAR).
-            let mapped = unsafe { MapVirtualKeyW(key, 2) } & 0x7FFF;
-            match char::from_u32(mapped).filter(|c| !c.is_control() && *c != '\0') {
-                Some(c) => Some(c.to_uppercase().to_string()),
-                None => fallback_punctuation(key).map(String::from),
-            }
-        }
+        0xBA..=0xC0 | 0xDB..=0xDF | 0xE2 => punctuation(key),
         _ => None,
     }
+}
+
+/// Punctuation: whatever the key shows on this keyboard layout (MAPVK_VK_TO_CHAR).
+#[cfg(windows)]
+fn punctuation(key: u32) -> Option<String> {
+    let mapped = unsafe { MapVirtualKeyW(key, 2) } & 0x7FFF;
+    match char::from_u32(mapped).filter(|c| !c.is_control() && *c != '\0') {
+        Some(c) => Some(c.to_uppercase().to_string()),
+        None => fallback_punctuation(key).map(String::from),
+    }
+}
+
+/// Punctuation, as a US keyboard has it (the keys Linux shortcuts are grabbed by).
+#[cfg(not(windows))]
+fn punctuation(key: u32) -> Option<String> {
+    fallback_punctuation(key).map(String::from)
 }
 
 fn fallback_punctuation(key: u32) -> Option<&'static str> {
@@ -138,6 +155,7 @@ fn fallback_punctuation(key: u32) -> Option<&'static str> {
 }
 
 /// The modifier keys held right now, as MOD_* flags (for a key press in a window of ours).
+#[cfg(windows)]
 pub fn mods_held() -> u32 {
     let down = |vk: u32| unsafe { GetKeyState(vk as i32) } < 0;
     let mut mods = 0;
@@ -158,21 +176,25 @@ pub fn mods_held() -> u32 {
 
 // MARK: The hotkey thread
 
+#[cfg(windows)]
 struct Request {
     wanted: Vec<(i32, Shortcut)>,
     reply: mpsc::Sender<Vec<i32>>,
 }
 
+#[cfg(windows)]
 struct HotKeyThread {
     id: u32,
     requests: Mutex<mpsc::Sender<Request>>,
 }
 
+#[cfg(windows)]
 static THREAD: OnceLock<HotKeyThread> = OnceLock::new();
 static TAKEN: Mutex<Vec<i32>> = Mutex::new(Vec::new());
 
 /// Starts the thread the shortcuts are registered on; `pressed(id)` is called (on a thread of its own)
 /// whenever one is pressed. Once per process.
+#[cfg(windows)]
 pub fn start(pressed: impl Fn(i32) + Send + Sync + 'static) -> bool {
     if THREAD.get().is_some() {
         return true;
@@ -221,6 +243,7 @@ pub fn start(pressed: impl Fn(i32) + Send + Sync + 'static) -> bool {
 
 /// Registers exactly these shortcuts (none: pauses them, while a new one is being typed). Returns the ids
 /// of those that couldn't be registered, usually because another app has them.
+#[cfg(windows)]
 pub fn register(wanted: &[(i32, Shortcut)]) -> Vec<i32> {
     let Some(thread) = THREAD.get() else { return wanted.iter().map(|(id, _)| *id).collect() };
     let (reply_tx, reply_rx) = mpsc::channel();
@@ -234,6 +257,18 @@ pub fn register(wanted: &[(i32, Shortcut)]) -> Vec<i32> {
     taken
 }
 
+#[cfg(target_os = "linux")]
+pub use crate::linux::keys::{is_free, post_press, start, type_keys};
+
+/// Grabs exactly these shortcuts (none: pauses them, while a new one is being typed). Returns the ids of those
+/// that couldn't be had, usually because another app has them.
+#[cfg(target_os = "linux")]
+pub fn register(wanted: &[(i32, Shortcut)]) -> Vec<i32> {
+    let taken = crate::linux::keys::register(wanted);
+    *TAKEN.lock().unwrap_or_else(|e| e.into_inner()) = taken.clone();
+    taken
+}
+
 /// The shortcuts the last `register` couldn't have.
 pub fn taken() -> Vec<i32> {
     TAKEN.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -241,6 +276,7 @@ pub fn taken() -> Vec<i32> {
 
 /// Whether a shortcut is free: registered and let go at once from a thread of its own. (Registered here
 /// already counts as not free: a combination can only be registered once.)
+#[cfg(windows)]
 pub fn is_free(shortcut: Shortcut) -> bool {
     thread::spawn(move || unsafe {
         let ok = RegisterHotKey(0, 0xBFF0, shortcut.mods | MOD_NOREPEAT, shortcut.key) != 0;
@@ -255,6 +291,7 @@ pub fn is_free(shortcut: Shortcut) -> bool {
 
 /// Types the shortcut on the keyboard, as you would (for the self-test). False if Windows didn't take the
 /// keystrokes (no interactive desktop).
+#[cfg(windows)]
 pub fn type_keys(shortcut: Shortcut) -> bool {
     let key = |vk: u32, up: bool| {
         let extended = matches!(vk, 0x21..=0x28 | 0x2D | 0x2E | VK_LWIN | VK_RWIN | 0x6F);
@@ -278,6 +315,7 @@ pub fn type_keys(shortcut: Shortcut) -> bool {
 }
 
 /// Delivers a press of shortcut `id` as Windows would (WM_HOTKEY), for when there's no keyboard to type on.
+#[cfg(windows)]
 pub fn post_press(id: i32) -> bool {
     match THREAD.get() {
         Some(thread) => unsafe { PostThreadMessageW(thread.id, WM_HOTKEY, id as usize, 0) != 0 },
@@ -359,7 +397,7 @@ mod tests {
     fn shortcuts_read_the_windows_way() {
         assert_eq!(Shortcut::RECORD_DEFAULT.display(), "Ctrl+Alt+Shift+R");
         assert_eq!(Shortcut::MARK_DEFAULT.display(), "Ctrl+Alt+Shift+M");
-        assert_eq!(Shortcut { key: 0x78, mods: MOD_WIN | MOD_SHIFT }.display(), "Win+Shift+F9");
+        assert_eq!(Shortcut { key: 0x78, mods: MOD_WIN | MOD_SHIFT }.display(), format!("{WIN_NAME}+Shift+F9"));
         assert_eq!(Shortcut { key: 0x20, mods: MOD_CONTROL | MOD_ALT }.display(), "Ctrl+Alt+Space");
         assert_eq!(Shortcut { key: 0x63, mods: MOD_CONTROL }.display(), "Ctrl+Num 3");
         assert_eq!(Shortcut { key: 0x22, mods: MOD_ALT }.display(), "Alt+Page Down");
