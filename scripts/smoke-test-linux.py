@@ -249,7 +249,8 @@ class App:
         package = package or self.package
         if self.kind == "appimage":
             self.appimage.parent.mkdir(exist_ok=True)
-            shutil.copy2(package, self.appimage)
+            if package.resolve() != self.appimage.resolve():
+                shutil.copy2(package, self.appimage)
             self.appimage.chmod(0o755)
             fuse = Path("/dev/fuse").exists() and (shutil.which("fusermount") or shutil.which("fusermount3"))
             if not fuse or os.environ.get("APPIMAGE_EXTRACT_AND_RUN"):
@@ -633,6 +634,12 @@ def main(argv: list[str]) -> int:
             if (root / card).is_file():
                 shutil.copy2(root / card, package.parent / card.replace(".png", f"-linux-{app.arch}.png"))
         if done.returncode != 0:
+            try:
+                found = smoke_test.get(f"{URL}/api/meetings")
+                for m in (found if isinstance(found, list) else found.get("meetings", [])):
+                    print(f"  meeting {m.get('id')}: {m.get('status')} {str(m.get('error') or m.get('status_detail') or '')[:200]}", file=sys.stderr)
+            except Exception as e:
+                print(f"  (couldn't list the meetings: {e})", file=sys.stderr)
             raise Failure(f"the shell's self-test failed (exit {done.returncode})")
         if f"linux-{app.arch})" not in done.stdout:
             raise Failure(f"the app doesn't say it's linux-{app.arch}")
