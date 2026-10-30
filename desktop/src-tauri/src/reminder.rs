@@ -6,6 +6,11 @@
 //! Which apps are using the mic comes from Windows' own privacy records, the ones behind the microphone
 //! icon in the taskbar: HKCU\...\CapabilityAccessManager\ConsentStore\microphone has a key per Store app
 //! and, under NonPackaged, one per program (its path with # for \). LastUsedTimeStop is 0 while it's in use.
+//! On Linux it comes from the sound server: the apps with a recording stream on a mic (source outputs, by
+//! their binary), as PulseAudio and PipeWire list them.
+
+// (The ConsentStore's reading is Windows' only; its tests run everywhere.)
+#![cfg_attr(not(windows), allow(dead_code))]
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -15,6 +20,7 @@ use std::time::{Duration, Instant};
 use crate::audio;
 use crate::card::{self, Answer, Card};
 use crate::model::{Connection, Model, Phase};
+#[cfg(windows)]
 use crate::win;
 
 pub const CONSENT_STORE: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone";
@@ -79,16 +85,39 @@ impl MicEntry {
 
 /// "Zoom" for zoom.exe, "a call in Chrome" for chrome.exe, None for anything else (and for Trailmix itself).
 pub fn call_name_for_exe(exe: &str) -> Option<String> {
-    if exe == "trailmix.exe" {
+    if exe == "trailmix.exe" || exe == "trailmix" {
         return None;
     }
     if let Some(name) = audio::apps::call_app_name(exe) {
         return Some(name.to_string());
     }
-    BROWSERS.iter().find(|(e, _)| *e == exe).map(|(_, n)| format!("a call in {n}"))
+    #[cfg(target_os = "linux")]
+    let browsers = audio::apps::BROWSERS;
+    #[cfg(windows)]
+    let browsers = BROWSERS;
+    browsers.iter().find(|(e, _)| *e == exe).map(|(_, n)| format!("a call in {n}"))
+}
+
+/// The call (or browser) among the apps using a mic, by binary with whether each is taking sound now (Linux):
+/// a call app before a browser.
+pub fn call_among(users: &[(String, bool)]) -> Option<String> {
+    let calls: Vec<String> = users.iter().filter(|(_, live)| *live).filter_map(|(binary, _)| call_name_for_exe(binary)).collect();
+    calls.iter().find(|c| !c.starts_with("a call in")).or_else(|| calls.first()).cloned()
+}
+
+/// The apps using a mic (Linux): from the sound server, or (`root` set, for the self-test) a stand-in file
+/// with one binary per line.
+#[cfg(target_os = "linux")]
+pub fn mic_users(root: &str) -> Vec<(String, bool)> {
+    if root.is_empty() {
+        return audio::apps::mic_users();
+    }
+    let text = std::fs::read_to_string(root).unwrap_or_default();
+    text.lines().map(str::trim).filter(|l| !l.is_empty()).map(|l| (l.to_lowercase(), true)).collect()
 }
 
 /// Every app in the ConsentStore under `root`.
+#[cfg(windows)]
 pub fn mic_entries(root: &str) -> Vec<MicEntry> {
     let read = |key: String, packaged: bool, path: String| MicEntry {
         start: win::reg_get_qword(&path, "LastUsedTimeStart").unwrap_or(0),
@@ -293,9 +322,13 @@ impl Reminder {
         })
     }
 
-    /// The one the app runs: Windows' own ConsentStore, every 3 seconds.
+    /// The one the app runs: Windows' own ConsentStore (on Linux, the sound server), every 3 seconds.
     pub fn standard(model: Arc<Model>) -> Arc<Reminder> {
-        Reminder::new(model, CONSENT_STORE, CHECK_EVERY, ENDED_AFTER, true, true)
+        #[cfg(windows)]
+        let root = CONSENT_STORE;
+        #[cfg(not(windows))]
+        let root = "";
+        Reminder::new(model, root, CHECK_EVERY, ENDED_AFTER, true, true)
     }
 
     pub fn begin(self: &Arc<Self>) {
@@ -317,6 +350,22 @@ impl Reminder {
     }
 
     /// The call using the mic right now, if any.
+    #[cfg(target_os = "linux")]
+    pub fn call_using_mic(&self) -> Option<String> {
+        call_among(&mic_users(&self.root))
+    }
+
+    /// Whether the app still has the mic or the speakers (muted calls often let go of the mic but keep playing).
+    #[cfg(target_os = "linux")]
+    fn still_in_call(&self, name: &str) -> bool {
+        if mic_users(&self.root).iter().any(|(binary, _)| call_name_for_exe(binary).as_deref() == Some(name)) {
+            return true;
+        }
+        audio::apps::current().iter().any(|a| a.playing && call_name_for_exe(&a.exe).as_deref() == Some(name))
+    }
+
+    /// The call using the mic right now, if any.
+    #[cfg(windows)]
     pub fn call_using_mic(&self) -> Option<String> {
         let entries = mic_entries(&self.root);
         if !self.require_running {
@@ -330,6 +379,7 @@ impl Reminder {
     }
 
     /// Whether the app still has the mic or the speakers (muted calls often let go of the mic but keep playing).
+    #[cfg(windows)]
     fn still_in_call(&self, name: &str) -> bool {
         let entries = mic_entries(&self.root);
         if entries.iter().any(|e| e.in_use() && e.call_name().as_deref() == Some(name)) {
@@ -420,6 +470,16 @@ mod tests {
         MicEntry { key: key.into(), packaged, start, stop }
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_sound_servers_mic_users_are_named() {
+        let users = |list: &[(&str, bool)]| list.iter().map(|(b, live)| (b.to_string(), *live)).collect::<Vec<_>>();
+        assert_eq!(call_among(&users(&[("chrome", true), ("zoom", true)])).as_deref(), Some("Zoom"));
+        assert_eq!(call_among(&users(&[("firefox", true)])).as_deref(), Some("a call in Firefox"));
+        assert_eq!(call_among(&users(&[("zoom", false), ("audacity", true), ("trailmix", true)])), None, "paused, not a call, ourselves");
+    }
+
+    #[cfg(windows)]
     #[test]
     fn consent_store_entries_are_named() {
         let zoom = entry("C:#Users#Sam Lee#AppData#Roaming#Zoom#bin#Zoom.exe", false, 5, 0);
@@ -438,6 +498,7 @@ mod tests {
         assert_eq!(entry("Microsoft.WindowsSoundRecorder_8wekyb3d8bbwe", true, 5, 0).call_name(), None);
     }
 
+    #[cfg(windows)]
     #[test]
     fn a_call_app_beats_a_browser() {
         let entries = vec![

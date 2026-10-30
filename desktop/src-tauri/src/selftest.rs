@@ -10,6 +10,7 @@
 //! The self-test registers the real shortcuts, so quit Trailmix first if it's running on this PC.
 
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread;
@@ -19,19 +20,33 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use crate::app::AppState;
+#[cfg(windows)]
 use crate::audio;
+#[cfg(windows)]
 use crate::card::{self, Target};
+#[cfg(windows)]
 use crate::gui::{self, WS_EX_NOACTIVATE, WS_EX_TOPMOST};
-use crate::hotkeys::{self, Shortcut, MARK, MOD_ALT, MOD_CONTROL, MOD_SHIFT, RECORD};
+use crate::hotkeys::{MARK, RECORD};
+#[cfg(windows)]
+use crate::hotkeys::{self, Shortcut, MOD_ALT, MOD_CONTROL, MOD_SHIFT};
 use crate::model::{Connection, Model, Phase, Sources};
 use crate::prefs::{tidy_url, Prefs};
+#[cfg(windows)]
 use crate::reminder::{self, Reminder};
 use crate::soundcheck;
+#[cfg(windows)]
 use crate::win;
 use crate::window;
 use crate::wire::{AudioSource, FileSource, MEETING, MIC};
 
+// The shortcuts, the call reminder and the audio list, as Linux has them.
+#[cfg(target_os = "linux")]
+pub use crate::linux::selftest::list_audio;
+#[cfg(target_os = "linux")]
+use crate::linux::selftest::{press, reminders, shortcuts};
+
 /// What the meeting-audio menu would offer right now, and what this Windows can do. Needs no permission.
+#[cfg(windows)]
 pub fn list_audio() {
     audio::wasapi::com_init();
     println!("Windows {} (build {})", crate::win::os_version(), crate::win::os_build());
@@ -57,12 +72,12 @@ pub fn list_audio() {
     println!("Recorder capabilities: {}", Model::capabilities().join(", "));
 }
 
-struct Test {
-    failures: u32,
+pub(crate) struct Test {
+    pub failures: u32,
 }
 
 impl Test {
-    fn expect(&mut self, ok: bool, what: &str) {
+    pub fn expect(&mut self, ok: bool, what: &str) {
         println!("{}  {what}", if ok { "  ok  " } else { "  FAIL" });
         if !ok {
             self.failures += 1;
@@ -70,7 +85,7 @@ impl Test {
     }
 }
 
-fn wait_until(seconds: f64, mut condition: impl FnMut() -> bool) -> bool {
+pub(crate) fn wait_until(seconds: f64, mut condition: impl FnMut() -> bool) -> bool {
     let deadline = Instant::now() + Duration::from_secs_f64(seconds);
     while Instant::now() < deadline {
         if condition() {
@@ -154,6 +169,7 @@ pub fn run(app: AppHandle, args: Vec<String>) {
 }
 
 /// The shortcuts registered the way the app registers them (HotKeys.swift's register), and a taken one noticed.
+#[cfg(windows)]
 fn shortcuts(t: &mut Test, model: &Arc<Model>) {
     println!("0. The shortcuts");
     let pressed = model.clone();
@@ -176,6 +192,7 @@ fn shortcuts(t: &mut Test, model: &Arc<Model>) {
 
 /// Presses a shortcut: typed on the keyboard, if Windows takes keystrokes here; else handed to the shortcut
 /// thread the way Windows hands it a press. Says which.
+#[cfg(windows)]
 fn press(id: i32, shortcut: Shortcut) -> Option<&'static str> {
     let before = hotkeys::PRESSES.load(Ordering::SeqCst);
     let arrived = || hotkeys::PRESSES.load(Ordering::SeqCst) > before;
@@ -276,8 +293,11 @@ impl AudioSource for Broken {
 /// "running", then both sides heard, through the check-in the window reads.
 fn sound_check(t: &mut Test, model: &Arc<Model>, base: &str) {
     println!("5b. The sound check from the Trailmix window");
-    let blocked = win::mic_blocked();
-    println!("      (this PC's microphone privacy switch: {})", if blocked { "off" } else { "on" });
+    #[cfg(windows)]
+    {
+        let blocked = win::mic_blocked();
+        println!("      (this PC's microphone privacy switch: {})", if blocked { "off" } else { "on" });
+    }
     // Refused (409) while the server still counts the last recording as live: asked again until it isn't.
     let mut asked = None;
     wait_until(15.0, || {
@@ -316,9 +336,12 @@ fn sound_check(t: &mut Test, model: &Arc<Model>, base: &str) {
 }
 
 /// A stand-in for Windows' microphone records (the ConsentStore), so a "call" can start and end on cue.
+#[cfg(windows)]
 const STAND_IN: &str = "Software\\Trailmix\\SelfTest\\ConsentStore\\microphone";
+#[cfg(windows)]
 const STAND_IN_ROOT: &str = "Software\\Trailmix\\SelfTest";
 
+#[cfg(windows)]
 fn zoom_call(on: bool) {
     let key = format!("{STAND_IN}\\NonPackaged\\C:#Program Files#Zoom#bin#Zoom.exe");
     let now = win::filetime_now();
@@ -327,6 +350,7 @@ fn zoom_call(on: bool) {
 }
 
 /// Waits for a card whose title starts so.
+#[cfg(windows)]
 fn card_titled(seconds: f64, title: &str) -> Option<card::Shown> {
     let mut found = None;
     wait_until(seconds, || {
@@ -338,6 +362,7 @@ fn card_titled(seconds: f64, title: &str) -> Option<card::Shown> {
 
 /// Clicks a card's button: with the real mouse if Windows takes it here, else by handing the card the
 /// click. Says which (None: the card didn't go).
+#[cfg(windows)]
 fn click(id: u64, target: Target) -> Option<&'static str> {
     let gone = || card::current().map(|c| c.id != id).unwrap_or(true);
     if card::press(id, target, true) && wait_until(3.0, &gone) {
@@ -349,6 +374,7 @@ fn click(id: u64, target: Target) -> Option<&'static str> {
     None
 }
 
+#[cfg(windows)]
 fn shot(t: &mut Test, shots: Option<&Path>, name: &str) {
     let Some(folder) = shots else { return };
     let path = folder.join(name);
@@ -358,6 +384,7 @@ fn shot(t: &mut Test, shots: Option<&Path>, name: &str) {
 /// CallReminder.swift's card, driven by a stand-in Zoom "taking the mic": asked to record, the card's
 /// Record records; the call ending asks to stop, and Stop recording stops; Don't ask for Zoom sticks; and
 /// with reminders off nothing asks. The card must never take the focus.
+#[cfg(windows)]
 fn reminders(t: &mut Test, model: &Arc<Model>, shots: Option<&Path>) {
     println!("6. A call app taking the mic brings up the reminder");
     let own = reminder::mic_entries(reminder::CONSENT_STORE);

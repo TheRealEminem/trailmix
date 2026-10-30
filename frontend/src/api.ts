@@ -88,8 +88,12 @@ export interface TrialRow extends Trial {
 export interface DeviceAdvice {
   verdict: "local" | "mixed" | "cloud";
   chip: string;
+  /** A graphics card with memory of its own, e.g. "NVIDIA GeForce RTX 4070 (12 GB)"; "" for none */
+  gpu: string;
   ram_gb: number;
   disk_free_gb: number;
+  /** The local notes model to suggest for this computer */
+  notes_model: string;
   notes: string[];
 }
 
@@ -429,6 +433,8 @@ export interface Settings {
   custom_base_url: string;
   custom_model: string;
   custom_api_key: string;
+  /** The OpenAI-compatible server's context window, where it says; 0 when not known */
+  custom_context_tokens: number;
   transcribe_engine: TranscribeEngine;
   /** Trailmix Cloud's account as last seen ({} when signed out); signing in sets it, not the settings page */
   cloud_account: CloudAccount;
@@ -444,6 +450,8 @@ export interface Settings {
   traverse_api_key: string;
   traverse_project: string;
   transcribe_url: string;
+  /** The accurate local speech model picked in Settings; "" for automatic */
+  local_speech_model: string;
   transcribe_api_key: string;
   transcribe_model: string;
   transcribe_live_model: string;
@@ -842,6 +850,8 @@ export interface UpdateInfo {
   going_back?: boolean;
   /** Lockdown mode: no automatic checks (checking by hand still works) */
   lockdown?: boolean;
+  /** a Linux .deb or .rpm install: it only says a new version is out (notes is where to get it) */
+  manual?: boolean;
 }
 
 export interface SoundCheckResult {
@@ -949,6 +959,25 @@ export interface ImportJob {
   errors?: string[];
 }
 
+/** An AI server running on this computer, found by asking its usual port (backend/local_ai.py). */
+export interface LocalAIServer {
+  name: string;
+  /** "ollama": its own provider; "openai": used through the OpenAI-compatible provider */
+  kind: "ollama" | "openai";
+  port: number;
+  url: string;
+  models: { id: string; context: number | null }[];
+  in_use: boolean;
+}
+
+export interface LocalAIStatus {
+  servers: LocalAIServer[];
+  /** Apps installed here whose server is off, with how to turn it on */
+  installed: { name: string; hint: string }[];
+  /** A context window below this is too small for a meeting's notes */
+  small_context: number;
+}
+
 export interface OllamaStatus {
   can_install: boolean;
   installed: boolean;
@@ -957,6 +986,8 @@ export interface OllamaStatus {
   models: string[];
   using: string;
   recommended: string;
+  /** The suggested model's download, in GB */
+  recommended_gb: number | null;
   pull: { model: string; active: boolean; progress: number | null; status: string; error: string | null } | null;
 }
 
@@ -971,9 +1002,27 @@ export interface SpeechModel {
   size_gb: number;
 }
 
+/** An accurate speech model the local engine offers in Settings (local_engine.catalog). */
+export interface SpeechChoice {
+  id: string;
+  label: string;
+  size_gb: number;
+  ram_gb: number;
+  speed: string;
+  installed: boolean;
+  in_use: boolean;
+  /** How well it transcribes meetings, 0-100 (model-ranks.json) */
+  score: number | null;
+}
+
 export interface SpeechModels {
   local: boolean;
   models: SpeechModel[];
+  choices: SpeechChoice[];
+  /** The model the engine picks for this computer by itself */
+  automatic: string;
+  /** The one picked in Settings; "" for automatic */
+  chosen: string;
 }
 
 /** Running inside Trailmix.app's own window (rather than a browser): the app can be asked to quit. */
@@ -998,6 +1047,7 @@ export const api = {
   system: () => request<SystemInfo>("/system"),
   speechModels: () => request<SpeechModels>("/models"),
   downloadSpeechModels: () => request<SpeechModels>("/models/download", json("POST")),
+  removeSpeechModel: (repo: string) => request<SpeechModels>("/models/remove", json("POST", { repo })),
   getSettings: () => request<Settings>("/settings"),
   putSettings: (changes: Partial<Settings>) => request<Settings>("/settings", json("PUT", changes)),
   recordingLaws: () => request<RecordingLaws>("/recording-laws"),
@@ -1125,6 +1175,7 @@ export const api = {
   setMyNotes: (id: number, notes: MyNote[]) => request<MyNote[]>(`/meetings/${id}/my-notes`, json("PUT", { notes })),
   nativeRecorder: () => request<NativeRecorder>("/recorder"),
   ollama: () => request<OllamaStatus>("/ollama"),
+  localAI: (fresh = false) => request<LocalAIStatus>(`/local-ai${fresh ? "?fresh=true" : ""}`),
   granolaNotes: () => request<{ notes: GranolaNote[] }>("/import/granola/notes"),
   importGranola: (note_ids: string[], keep_summary: boolean) => request<ImportJob>("/import/granola", json("POST", { note_ids, keep_summary })),
   granolaImportStatus: () => request<ImportJob>("/import/granola"),

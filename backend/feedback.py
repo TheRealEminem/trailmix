@@ -174,7 +174,8 @@ def diagnostics(cfg: dict, meeting_id: int | None) -> dict:
         "Trailmix": archive.APP_VERSION,
         w["os_name"] if w["os"] != "unknown" else "OS": platform_words.os_version(),
         platform_words.cap(w["computer"]): f"{device['chip'] or platform.processor() or platform.machine()}, "
-                                           f"{device['ram_gb']} GB memory, {device['disk_free_gb']} GB free",
+                                           + (f"{device['gpu']}, " if device["gpu"] else "")
+                                           + f"{device['ram_gb']} GB memory, {device['disk_free_gb']} GB free",
         "Transcription": f"{cfg['transcribe_engine']}, final transcript while recording: {'on' if cfg.get('live_final') else 'off'}",
         "Notes AI": f"{cfg['summary_provider']} ({llm_engine.model_for(cfg['summary_provider'], cfg) or 'none'})",
         "Meetings": db.count_meetings(),

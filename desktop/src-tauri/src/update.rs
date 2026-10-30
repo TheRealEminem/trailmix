@@ -10,8 +10,10 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -23,22 +25,34 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::server;
+#[cfg(windows)]
 use crate::win;
+
+// The AppImage updating itself, and .deb and .rpm installs pointing you at the download.
+#[cfg(target_os = "linux")]
+#[path = "linux/update.rs"]
+mod platform;
+#[cfg(target_os = "linux")]
+pub use platform::{apply, installer_name};
 
 /// The GitHub repo releases come from (owner/name), baked in by build.rs; empty for a build without one.
 const REPO: &str = env!("TRAILMIX_UPDATE_REPO");
 
 /// This computer's kind, as release installers are named: Trailmix-<version>-windows-<arch>.exe.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(windows, target_arch = "aarch64"))]
 pub const ARCH: &str = "arm64";
-#[cfg(not(target_arch = "aarch64"))]
+#[cfg(all(windows, not(target_arch = "aarch64")))]
 pub const ARCH: &str = "x64";
 
 pub const APPLY_FLAG: &str = "--apply-update";
 
+#[cfg(windows)]
 const DETACHED_PROCESS: u32 = 0x0000_0008;
+#[cfg(windows)]
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(windows)]
 const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -204,9 +218,23 @@ impl Updater {
 
     /// Only an installed Trailmix (one the installer put there, with its uninstaller next to it) updates
     /// itself, and only with somewhere to look: the repo it was built from, or TRAILMIX_UPDATE_URL (tests).
+    #[cfg(windows)]
     pub fn enabled_for(exe: &Path) -> bool {
         let installed = exe.parent().map(|dir| dir.join("uninstall.exe").is_file()).unwrap_or(false);
         installed && (!REPO.is_empty() || std::env::var_os("TRAILMIX_UPDATE_URL").is_some())
+    }
+
+    /// Whether it installs updates itself (else it only says one is out, with where to get it: a Linux .deb or
+    /// .rpm, which the package manager updates).
+    #[cfg(windows)]
+    pub fn installs_itself(&self) -> bool {
+        true
+    }
+
+    /// The folder the app is installed in, which an update replaces.
+    #[cfg(windows)]
+    fn install_folder(&self) -> Option<PathBuf> {
+        self.exe.parent().map(Path::to_path_buf)
     }
 
     /// Where releases are looked up: TRAILMIX_UPDATE_URL (tests), else the repo's recent releases. They're
@@ -299,6 +327,7 @@ impl Updater {
             "skipped": inner.saved.skip_version,
             "going_back": inner.going_back,
             "lockdown": inner.saved.lockdown,
+            "manual": !self.installs_itself(),
         });
         let latest_version = inner.latest.as_ref().map(|l| l.version.clone()).unwrap_or_default();
         match &inner.state {
@@ -405,7 +434,7 @@ impl Updater {
     }
 
     fn user_agent(&self) -> String {
-        format!("Trailmix/{} (Windows)", self.current)
+        format!("Trailmix/{} ({})", self.current, if cfg!(windows) { "Windows" } else { "Linux" })
     }
 
     fn fetch_json(&self, url: &str) -> Option<Value> {
@@ -449,7 +478,12 @@ impl Updater {
             self.set_state(State::Failed("Finish the recording first, then update.".into()));
             return;
         }
-        let Some(folder) = self.exe.parent().map(Path::to_path_buf) else { return };
+        #[cfg(target_os = "linux")]
+        if !self.installs_itself() {
+            platform::open_download(&release);
+            return;
+        }
+        let Some(folder) = self.install_folder() else { return };
         if !writable(&folder) {
             self.set_state(State::Failed(format!(
                 "Trailmix can't update itself where it's installed ({}). Download the new version and install it instead.",
@@ -476,6 +510,7 @@ impl Updater {
         });
     }
 
+    #[cfg(windows)]
     fn download_and_hand_over(&self, release: &Release, install_dir: &Path, going_back: bool) -> Result<(), String> {
         let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
         let folder = std::env::temp_dir().join(format!("trailmix-update-{}-{stamp}", std::process::id()));
@@ -590,6 +625,7 @@ fn writable(folder: &Path) -> bool {
     }
 }
 
+#[cfg(windows)]
 /// Is this the Trailmix installer it should be? A Windows program (MZ), named as releases name it, whose
 /// version resource (which the installer build writes) says Trailmix at that version.
 fn check_installer(file: &Path, expected_name: &str, version: &str) -> Result<(), String> {
@@ -640,6 +676,7 @@ pub fn log(line: &str) {
 // MARK: Which release
 
 /// The installer for this computer in a release: Trailmix-<version>-windows-<arch>.exe.
+#[cfg(windows)]
 pub fn installer_name(version: &str) -> String {
     format!("Trailmix-{version}-windows-{ARCH}.exe")
 }
@@ -720,6 +757,7 @@ pub fn is_newer(a: &str, b: &str) -> bool {
 
 // MARK: Installing it (a copy of Trailmix.exe, run with --apply-update)
 
+#[cfg(windows)]
 /// `--apply-update <installer> <pid> <install folder> <version> <from version> <forward|back>`: waits for the
 /// app (pid) and anything else running from the install folder to end, runs the installer silently over it,
 /// remembers what to go back to, and opens the new version (unless TRAILMIX_UPDATE_NO_RELAUNCH, for tests).
