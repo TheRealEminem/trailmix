@@ -261,7 +261,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri
-          key: linux-${{ matrix.arch }}
+          key: linux-ubuntu2204-${{ matrix.arch }}   # (not the cache of builds on Ubuntu 24.04: other libraries)
       - name: What building and the smoke test need
         # (FUSE 2 is libfuse2 on Ubuntu 22.04, libfuse2t64 from 24.04.)
         run: |
