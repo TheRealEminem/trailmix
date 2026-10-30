@@ -88,7 +88,8 @@ def check(required_gb: float, what: str) -> str | None:
     if available >= needed:
         return None
     what = what.lower()
-    if required_gb > total - 2:
+    # What everything else needs: 2 GB, or a quarter of a small server's memory (a 2 GB NAS can still run the tiny model).
+    if required_gb > total - min(2.0, total / 4):
         return (f"Waiting for memory: {what} needs about {required_gb:.1f} GB, more than "
                 f"{platform_words.this_computer()} can spare. "
                 "Pick a smaller model in Settings, or proceed anyway.")

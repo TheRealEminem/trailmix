@@ -644,6 +644,10 @@ def main(argv: list[str]) -> int:
         smoke_test.transcribe(URL, str(them), THEM_WORDS)
         smoke_test.meetings(URL)
 
+        log("An iPhone photo read on this computer (text recognition; its model downloads the first time)")
+        smoke_test.read_photo(URL, str(SCRIPTS.parent / "backend" / "tests" / "fixtures" / "ocr-line.heic"),
+                              ["roadmap", "Pricing", "Q3"])
+
         log("Recording the real mic and other apps (on the private sound server)")
         check_capture(app, desk, env, root)
 
