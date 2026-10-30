@@ -301,6 +301,9 @@ fn responded(path: &str, params: &Variant) {
     let handler = LINK.with(|link| link.borrow_mut().as_mut().and_then(|l| l.pending.remove(path)));
     let Some(handler) = handler else { return };
     let code = params.try_child_value(0).and_then(|v| v.get::<u32>()).unwrap_or(2);
+    if code != 0 {
+        eprintln!("The GlobalShortcuts portal answered {code} ({})", if code == 1 { "you said no" } else { "it failed" });
+    }
     let results = params.try_child_value(1).unwrap_or_else(empty_dict);
     handler(code, results);
 }
@@ -319,7 +322,13 @@ fn request(method: &str, signature: &'static str, args: impl FnOnce(&str) -> Str
     });
     let Some((conn, token, path)) = prepared else { return };
     let reply = parse(signature, &args(&token)).and_then(|args| {
-        conn.call_sync(Some(BUS_NAME), OBJECT, INTERFACE, method, Some(&args), Some(ty("(o)")), gio::DBusCallFlags::NONE, 10000, no_cancel()).ok()
+        match conn.call_sync(Some(BUS_NAME), OBJECT, INTERFACE, method, Some(&args), Some(ty("(o)")), gio::DBusCallFlags::NONE, 10000, no_cancel()) {
+            Ok(reply) => Some(reply),
+            Err(e) => {
+                eprintln!("The GlobalShortcuts portal's {method} failed: {e}");
+                None
+            }
+        }
     });
     LINK.with(|link| {
         let mut link = link.borrow_mut();
@@ -697,7 +706,7 @@ mod tests {
                                     let session = session_path(sender, &token);
                                     asked.client = sender.to_string();
                                     asked.sessions.push(session.clone());
-                                    invocation.return_value(parse("(o)", &format!("(objectpath {})", quote(&request))).as_ref());
+                                    invocation.return_value(parse("(o)", &format!("(objectpath {},)", quote(&request))).as_ref());
                                     let answer = parse("(ua{sv})", &format!("(0, {{'session_handle': <{}>}})", quote(&session))).unwrap();
                                     let _ = conn.emit_signal(Some(sender), &request, REQUEST, "Response", Some(&answer));
                                 }
@@ -721,7 +730,7 @@ mod tests {
                                         })
                                         .collect();
                                     asked.binds.push((session, wanted));
-                                    invocation.return_value(parse("(o)", &format!("(objectpath {})", quote(&request))).as_ref());
+                                    invocation.return_value(parse("(o)", &format!("(objectpath {},)", quote(&request))).as_ref());
                                     let answer = parse("(ua{sv})", &format!("(0, {{'shortcuts': <@a(sa{{sv}}) [{}]>}})", bound.join(", "))).unwrap();
                                     let _ = conn.emit_signal(Some(sender), &request, REQUEST, "Response", Some(&answer));
                                 }
