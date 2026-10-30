@@ -9,6 +9,24 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.19.5",
+    items: [
+      {
+        title: "Trailmix for Windows on ARM",
+        body: "Snapdragon laptops and other ARM PCs get a Windows version of their own, alongside the one for Intel and AMD PCs.",
+      },
+      {
+        title: "A sound check on Windows",
+        body: "Windows gets the sound check: it listens to your microphone and to other apps' audio, and tells you which Windows setting to change if one is quiet.",
+        where: "Record → Test your audio",
+      },
+      {
+        title: "Check for updates from the tray",
+        body: "On Windows, \"Check for Updates…\" in the tray menu tells you straight away whether a new version is out.",
+      },
+    ],
+  },
+  {
     version: "0.19.4",
     items: [
       {
