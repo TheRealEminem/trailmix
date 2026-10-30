@@ -70,7 +70,8 @@ pub fn shortcuts(t: &mut Test, model: &Arc<Model>) {
         ),
     );
     t.expect(!hotkeys::is_free(prefs.shortcut_record), "another app can't have it now (so a taken shortcut is noticed)");
-    let spare = Shortcut { key: 0x87, mods: MOD_CONTROL | MOD_ALT | MOD_SHIFT };
+    // (F9: every keyboard layout X has maps it, unlike F24.)
+    let spare = Shortcut { key: 0x78, mods: MOD_CONTROL | MOD_ALT | MOD_SHIFT };
     t.expect(hotkeys::is_free(spare), &format!("{} is free (so a free one reads as free)", spare.display()));
 }
 

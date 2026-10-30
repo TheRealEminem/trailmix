@@ -37,9 +37,10 @@ pub enum Session {
 
 pub fn session() -> Session {
     let kind = std::env::var("XDG_SESSION_TYPE").unwrap_or_default().to_lowercase();
-    if kind == "wayland" || std::env::var_os("WAYLAND_DISPLAY").is_some() {
+    let set = |name: &str| std::env::var_os(name).map(|v| !v.is_empty()).unwrap_or(false);
+    if kind == "wayland" || (kind != "x11" && set("WAYLAND_DISPLAY")) {
         Session::Wayland
-    } else if std::env::var_os("DISPLAY").is_some() {
+    } else if set("DISPLAY") {
         Session::X11
     } else {
         Session::None
