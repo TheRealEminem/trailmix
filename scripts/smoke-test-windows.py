@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The release gate on Windows (scripts/smoke-test.sh is the Mac's): installs the built installer silently
-into a temporary folder, checks the app brings its engine up and takes it down with it, then starts the
+into a temporary folder, says what its whisper.cpp runs on (the GPU or the CPU), checks the app brings its engine
+up and takes it down with it, then starts the
 engine inside the install the way the app does and runs the checks shared with the Mac (scripts/smoke_test.py),
 the shell's own self-test (audio files standing in for the mic and the meeting: start and stop with the global
 shortcut, marks, the live draft, the sound check, the call reminder's cards driven by a stand-in Zoom, Record pressed in the window,
@@ -121,21 +122,37 @@ def tail(path: Path, lines: int = 60) -> str:
         return "(no log)"
 
 
-def start_engine(install: Path, env: dict, log_path: Path) -> subprocess.Popen:
-    """The engine exactly as the app runs it (desktop/src-tauri/src/server.rs), without the app around it."""
+def engine_env(install: Path, env: dict) -> dict:
+    """The environment the app gives its engine (desktop/src-tauri/src/server.rs)."""
     system_root = os.environ.get("SystemRoot", r"C:\Windows")
-    engine_env = {k: v for k, v in env.items() if not k.upper().startswith("PYTHON")}
-    engine_env.update({
+    found = {k: v for k, v in env.items() if not k.upper().startswith("PYTHON")}
+    found.update({
         "PATH": f"{install / 'bin'};{system_root}\\System32;{system_root}",
         "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1", "PYTHONUNBUFFERED": "1", "PYTHONUTF8": "1",
         "TRAILMIX_UI_DIR": str(install / "ui"),
     })
+    return found
+
+
+def start_engine(install: Path, env: dict, log_path: Path) -> subprocess.Popen:
+    """The engine exactly as the app runs it (desktop/src-tauri/src/server.rs), without the app around it."""
     out = open(log_path, "ab")
     return subprocess.Popen(
         [str(install / "python" / "python.exe"), "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(PORT)],
-        cwd=install / "backend", env=engine_env, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+        cwd=install / "backend", env=engine_env(install, env), stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
     )
+
+
+def whisper_cpp_runs_on(install: Path, env: dict) -> str:
+    """What the install's whisper.cpp runs on, and what it found, as the engine sees it: on a PC without a GPU (or
+    without Vulkan, as on GitHub's runners), the CPU."""
+    done = subprocess.run([str(install / "python" / "python.exe"), "-c", "import whispercpp_engine; print(whispercpp_engine.system_info())"],
+                          cwd=install / "backend", env=engine_env(install, env), capture_output=True, text=True, timeout=120,
+                          encoding="utf-8", errors="replace")
+    if done.returncode != 0 or "CPU :" not in done.stdout:
+        raise Failure(f"whisper.cpp didn't say what it runs on (exit {done.returncode}): {done.stdout.strip()}\n{done.stderr[-3000:]}")
+    return done.stdout.strip()
 
 
 def install_silently(installer: Path, folder: Path) -> None:
@@ -393,6 +410,7 @@ def main(argv: list[str]) -> int:
                 raise Failure(f"the install has no {part.relative_to(install)}")
         print(f"installed: {sum(p.stat().st_size for p in install.rglob('*') if p.is_file()) / 1e6:.0f} MB")
         check_arch(install, arch)
+        print(f"whisper.cpp {whisper_cpp_runs_on(install, env)}")
 
         log("The app starts its engine, and takes it down with it")
         app_env = {**env, "TRAILMIX_SERVER_URL": APP_URL, "TRAILMIX_DATA_DIR": str(app_data)}

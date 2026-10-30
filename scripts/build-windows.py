@@ -9,9 +9,10 @@ Trailmix server with its own Python, whisper.cpp and ffmpeg, and the web app, so
   python scripts/build-windows.py --stage-only     only stage build/windows (no Rust build, no installer)
 
 Needs: Windows, Python 3.9+, Node.js, Rust (cargo) and internet access (downloads the Python runtime once
-into build/cache, plus Python packages and Rust crates). The ARM build also compiles whisper.cpp, which has
-no ARM wheel: that needs Visual Studio's ARM64 C++ tools and its Clang tools (clang-cl). The installer is
-unsigned for now.
+into build/cache, plus Python packages and Rust crates). Both builds compile whisper.cpp. The x64 one, with
+GPU support (Vulkan), needs Visual Studio's C++ tools and the Vulkan SDK (VULKAN_SDK set to it, as its installer
+does), and keeps what it compiled in build/cache. The ARM one, as there's no ARM wheel, needs Visual Studio's
+ARM64 C++ tools and its Clang tools (clang-cl). The installer is unsigned for now.
 """
 import hashlib
 import json
@@ -63,6 +64,17 @@ FF_RELEASE = "autobuild-2026-08-31-13-27"
 FF_NAME = "ffmpeg-n8.1.2-50-g1a748fe2cd-winarm64-lgpl-8.1"
 FF_SHA256 = "0ad4d6e7342d6d77bbae4ac230964ebd51bdd6192414392e5f521d295b39b111"
 FF_URL = f"https://github.com/BtbN/FFmpeg-Builds/releases/download/{FF_RELEASE}/{FF_NAME}.zip"
+
+# whisper.cpp for x64 PCs, compiled from pywhispercpp's source (the checksum is PyPI's) with ggml's backends as DLLs of
+# their own: the CPU one in a variant for each generation of x64 CPUs, of which the best for the PC is loaded, and
+# Vulkan for the GPU (NVIDIA, AMD and Intel graphics alike), which loads only where a graphics driver provides Vulkan
+# (vulkan-1.dll). Without one, or without a GPU, whisper.cpp runs on the CPU. whispercpp_engine.py loads them.
+PWCPP_VERSION = "1.5.1"  # (whisper.cpp 1.8.5)
+PWCPP_SHA256 = "5df897e5dd9d9f16804fc937bd85b9f5880a0b29a55f8843585e0e03d76195e5"
+PWCPP_URL = ("https://files.pythonhosted.org/packages/9f/35/610787a277e177e6b7983277a35a2969c0876b46c0d889bc6a0c4b4ac4a7/"
+             f"pywhispercpp-{PWCPP_VERSION}.tar.gz")
+WHISPER_CMAKE_ARGS = ["-DGGML_NATIVE=OFF", "-DGGML_VULKAN=ON", "-DGGML_BACKEND_DL=ON", "-DGGML_CPU_ALL_VARIANTS=ON"]
+VULKAN_SDK_VERSION = "1.4.363.0"  # the one CI builds with (.github/workflows)
 
 
 def say(text: str) -> None:
@@ -131,14 +143,17 @@ def no_spaces(path: Path, tmp: Path) -> str:
     return Path(buf.value).as_posix()
 
 
+# What a from-source build of whisper.cpp keeps of this shell's environment (see build_env).
+BUILD_ENV_KEEP = ("SystemRoot", "SystemDrive", "windir", "ComSpec", "PATHEXT", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
+                  "APPDATA", "LOCALAPPDATA", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
+                  "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432", "NUMBER_OF_PROCESSORS", "OS")
+
+
 def build_env(vs: Path) -> dict:
     """The environment the from-source build gets. pywhispercpp's setup.py hands every environment variable to
     CMake as a -D flag, and its log prints them all: it gets what building needs, never whatever keys and tokens
     are in this shell (or a CI runner's). As build-app.sh does for the Intel Mac build."""
-    keep = ("SystemRoot", "SystemDrive", "windir", "ComSpec", "PATHEXT", "USERPROFILE", "HOMEDRIVE", "HOMEPATH",
-            "APPDATA", "LOCALAPPDATA", "ProgramData", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432",
-            "CommonProgramFiles", "CommonProgramFiles(x86)", "CommonProgramW6432", "NUMBER_OF_PROCESSORS", "OS")
-    env = {k: os.environ[k] for k in keep if k in os.environ}
+    env = {k: os.environ[k] for k in BUILD_ENV_KEEP if k in os.environ}
     system_root = env.get("SystemRoot", r"C:\Windows")
     # A short temporary folder: Visual Studio's build of whisper.cpp nests deep, inside pip's own build folders.
     tmp = ROOT / "build" / "t"
@@ -230,12 +245,175 @@ def trim(python: Path) -> None:
 
 MACHINE = {"x64": 0x8664, "arm64": 0xAA64}[ARCH]  # the PE header's machine type for this arch
 
+# Visual C++'s runtime, which not every PC has: whisper.cpp's DLLs get theirs next to them.
+VC_RUNTIME = ("msvcp140", "vcruntime140", "vcomp140", "concrt140", "vccorlib140")
+
+
+def vulkan_sdk() -> Path:
+    sdk = os.environ.get("VULKAN_SDK")
+    if not sdk or not (Path(sdk) / "Bin" / "glslc.exe").is_file():
+        die(f"Building whisper.cpp with GPU support needs the Vulkan SDK ({VULKAN_SDK_VERSION} is the one CI uses, from "
+            "https://vulkan.lunarg.com/sdk/home#windows), and VULKAN_SDK set to where it is (as its installer does).")
+    return Path(sdk)
+
+
+def vulkan_build_env(sdk: Path) -> dict:
+    """As build_env (for ARM), the short, explicit environment the x64 build of whisper.cpp gets: Visual Studio's own
+    compiler (CMake finds it) and the Vulkan SDK."""
+    env = {k: os.environ[k] for k in BUILD_ENV_KEEP if k in os.environ}
+    system_root = env.get("SystemRoot", r"C:\Windows")
+    tmp = ROOT / "build" / "t"
+    rmtree(tmp)
+    tmp.mkdir(parents=True)
+    env.update({
+        "PATH": f"{system_root}\\System32;{system_root};{system_root}\\System32\\Wbem",
+        "TEMP": str(tmp), "TMP": str(tmp),
+        "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PIP_NO_INPUT": "1",
+        "VULKAN_SDK": str(sdk),
+        "SETUPTOOLS_SCM_PRETEND_VERSION": PWCPP_VERSION,
+        "CMAKE_ARGS": " ".join(WHISPER_CMAKE_ARGS),
+        "CMAKE_BUILD_PARALLEL_LEVEL": str(os.cpu_count() or 4),
+    })
+    return env
+
+
+def whisper_cpp_vulkan(py: Path) -> Path:
+    """Compiles whisper.cpp for x64 PCs (see PWCPP_URL), once: a folder in build/cache with pywhispercpp's wheel and
+    whisper.cpp's DLLs (it takes a while: Vulkan's shaders, and the CPU backend nine times over)."""
+    sdk = vulkan_sdk()
+    key = hashlib.sha256(Path(__file__).read_bytes() + sdk.name.encode()).hexdigest()[:12]  # (this recipe, this SDK)
+    built = CACHE / f"whisper-cpp-{PWCPP_VERSION}-vulkan-{key}"
+    if (built / "done").is_file():
+        say("whisper.cpp with Vulkan: compiled already (build/cache)")
+        return built
+    archive = download(PWCPP_URL, PWCPP_SHA256, f"pywhispercpp {PWCPP_VERSION}'s source")
+    work = ROOT / "build" / "w"  # short: Visual Studio's build of Vulkan's shaders nests deep
+    rmtree(work)
+    work.mkdir(parents=True)
+    extract(archive, work)
+    src = work / "s"
+    (work / f"pywhispercpp-{PWCPP_VERSION}").rename(src)
+    # Its wheel's repair step bundles the DLLs the extension links against under new names (delvewheel's), which the
+    # backends, loaded on their own, wouldn't find: the DLLs are bundled here instead, as they're named. And a short
+    # build folder, for the same reason as the source's.
+    setup = src / "setup.py"
+    text = setup.read_text(encoding="utf-8")
+    anchor = "            self.repair_wheel()\n"
+    if text.count(anchor) != 1:
+        die(f"pywhispercpp {PWCPP_VERSION}'s setup.py isn't as expected (no repair_wheel call to leave out)")
+    setup.write_text(text.replace(anchor, "            pass  # (Trailmix: build-windows.py bundles the DLLs)\n"), encoding="utf-8")
+    with open(src / "setup.cfg", "a", encoding="utf-8") as f:
+        f.write("\n[build_ext]\nbuild_temp = t\n")
+
+    say("Compiling whisper.cpp with Vulkan (pywhispercpp's wheel has no GPU support; 20 minutes or so)…")
+    rmtree(built)
+    (built / "dlls").mkdir(parents=True)
+    log = ROOT / "build" / "whisper-cpp-build.log"
+    run([str(py), "-m", "pip", "wheel", "-q", "--no-deps", "--log", str(log), "-w", str(built), str(src)], env=vulkan_build_env(sdk))
+    with open(log, encoding="utf-8", errors="replace") as f:  # what CMake made of it
+        found = [line.strip()[-200:] for line in f if "-- " in line and "-D" not in line
+                 and any(word in line for word in ("Vulkan", "GL_", "CPU backend variant", "OpenMP"))]
+    print("\n".join(f"  {line}" for line in found[:60]), flush=True)
+    dlls = {p.name: p for p in src.rglob("*.dll")}
+    for name in ("whisper.dll", "ggml.dll", "ggml-base.dll", "ggml-vulkan.dll", "ggml-cpu-x64.dll", "ggml-cpu-haswell.dll"):
+        if name not in dlls:
+            die(f"Compiling whisper.cpp made no {name} (it made {', '.join(sorted(dlls)) or 'no DLLs'})")
+    for p in dlls.values():
+        shutil.copy2(p, built / "dlls" / p.name)
+    (built / "done").write_text(f"pywhispercpp {PWCPP_VERSION}, {' '.join(WHISPER_CMAKE_ARGS)}, Vulkan SDK {sdk.name}\n")
+    rmtree(work)
+    rmtree(ROOT / "build" / "t")
+    return built
+
+
+def pe_imports(path: Path) -> list[str]:
+    """The DLLs a PE file links against, as its import table names them."""
+    data = path.read_bytes()
+
+    def u32(at: int) -> int:
+        return int.from_bytes(data[at:at + 4], "little")
+
+    pe = u32(0x3C)
+    opt = pe + 24
+    sections = [opt + int.from_bytes(data[pe + 20:pe + 22], "little") + 40 * i
+                for i in range(int.from_bytes(data[pe + 6:pe + 8], "little"))]
+    dirs = opt + (112 if data[opt:opt + 2] == b"\x0b\x02" else 96)  # (PE32+, or PE32)
+
+    def offset(rva: int) -> int:
+        for s in sections:
+            va, size = u32(s + 12), max(u32(s + 8), u32(s + 16))
+            if va <= rva < va + size:
+                return u32(s + 20) + rva - va
+        raise ValueError(f"{path.name}: RVA {rva:#x} is in no section")
+
+    names, rva = [], u32(dirs + 8)  # the import directory (data directory 1)
+    at = offset(rva) if rva else None
+    while at is not None and u32(at + 12):
+        start = offset(u32(at + 12))
+        names.append(data[start:data.index(b"\0", start)].decode("ascii", "replace"))
+        at += 20
+    return names
+
+
+def vc_runtime(name: str) -> Path:
+    """name (msvcp140.dll, vcomp140.dll, ...) from Visual Studio's redistributable runtime, the newest it has (at least
+    as new as the compiler that built whisper.cpp, as it needs), else this PC's own."""
+    vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    found: list[Path] = []
+    if vswhere.is_file():
+        for vs in subprocess.run([str(vswhere), "-latest", "-products", "*", "-property", "installationPath"],
+                                 capture_output=True, text=True).stdout.strip().splitlines():
+            found += Path(vs).glob(f"VC/Redist/MSVC/*/x64/Microsoft.VC*/{name}")
+
+    def version(p: Path) -> tuple:
+        return tuple(int(n) for n in p.parents[2].name.split(".") if n.isdigit())
+
+    if found:
+        return max(found, key=version)
+    own = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / name
+    if not own.is_file():
+        die(f"No {name} to bundle: Visual Studio's redistributable runtime (VC\\Redist) isn't installed")
+    return own
+
+
+def bundle_runtime(site: Path, python: Path) -> None:
+    """Puts the parts of Visual C++'s runtime that whisper.cpp's DLLs use next to them, and checks that everything
+    else they use is part of Windows, or is vulkan-1.dll for Vulkan's (from the graphics driver: without it, that DLL
+    doesn't load and whisper.cpp runs on the CPU)."""
+    system32 = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32"
+    here = {p.name.lower() for p in [*site.glob("*.dll"), *python.glob("*.dll")]}
+    todo = [*site.glob("*.dll"), *site.glob("_pywhispercpp*.pyd")]
+    while todo:
+        dll = todo.pop()
+        for name in pe_imports(dll):
+            low = name.lower()
+            if low in here or low.startswith(("api-ms-win-", "ext-ms-")):
+                continue
+            if low == "vulkan-1.dll" and dll.name.lower().startswith("ggml-vulkan"):
+                continue
+            if low.startswith(VC_RUNTIME):
+                source = vc_runtime(name)
+                print(f"  bundling {name} ({dll.name} uses it) from {source}", flush=True)
+                shutil.copy2(source, site / low)
+                here.add(low)
+                todo.append(site / low)
+            elif not (system32 / name).is_file():
+                die(f"{dll.name} uses {name}, which is neither bundled nor part of Windows")
+
 
 def install_packages(py: Path) -> None:
     reqs = str(ROOT / "backend" / "requirements-whispercpp.txt")
     if ARCH == "x64":
+        whisper = whisper_cpp_vulkan(py)
+        wheel = next(whisper.glob("pywhispercpp-*.whl"))
         env = {**os.environ, "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PIP_NO_INPUT": "1"}
-        run([str(py), "-m", "pip", "install", "-q", "--no-compile", "-r", reqs], env=env)
+        run([str(py), "-m", "pip", "install", "-q", "--no-compile", str(wheel), "-r", reqs], env=env)
+        site = py.parent / "Lib" / "site-packages"
+        for dll in (whisper / "dlls").glob("*.dll"):
+            shutil.copy2(dll, site / dll.name)
+        for p in [*site.glob("*.lib"), *site.glob("*.exp"), *site.glob("*.pdb")]:  # (the build's, not needed to run)
+            p.unlink()
+        bundle_runtime(site, py.parent)
         return
     # Everything has an ARM wheel except whisper.cpp's (pywhispercpp), which is compiled here, and only that:
     # anything else without a wheel stops the build rather than being compiled unnoticed.
@@ -255,17 +433,27 @@ def install_packages(py: Path) -> None:
 
 def check_packages(py: Path) -> None:
     """whisper.cpp loads in a bare environment, as the app gives the engine, finding its DLLs (installed next to
-    it), and the binaries that matter are built for this arch."""
+    it) and, through the engine, its CPU backend, and the binaries that matter are built for this arch."""
     system_root = os.environ.get("SystemRoot", r"C:\Windows")
     env = {"SystemRoot": system_root, "PATH": f"{system_root}\\System32;{system_root}"}
-    code = "import _pywhispercpp, pywhispercpp.model; print(_pywhispercpp.__file__); print(_pywhispercpp.whisper_print_system_info())"
+    code = (f"import sys; sys.path.insert(0, {str(ROOT / 'backend')!r}); import _pywhispercpp, pywhispercpp.model, whispercpp_engine; "
+            "print(_pywhispercpp.__file__); print('whisper.cpp', whispercpp_engine.system_info())")
     done = subprocess.run([str(py), "-I", "-c", code], env=env, capture_output=True, text=True)
     if done.returncode != 0:
         die(f"whisper.cpp doesn't load:\n{done.stderr[-3000:]}")
     print(done.stdout.strip(), flush=True)
+    if "CPU :" not in done.stdout:
+        die("whisper.cpp has no CPU backend")
     site = py.parent / "Lib" / "site-packages"
-    dlls = sorted(site.glob("*.dll"))  # whisper.cpp's, as its wheel's repair step bundled them
-    print(f"whisper.cpp's DLLs: {', '.join(p.name for p in dlls)}", flush=True)
+    dlls = sorted(site.glob("*.dll"))  # whisper.cpp's (and the runtime bundled with them)
+    print(f"whisper.cpp's DLLs ({sum(p.stat().st_size for p in dlls) / 1e6:.0f} MB): {', '.join(p.name for p in dlls)}", flush=True)
+    if ARCH == "x64":
+        vulkan = site / "ggml-vulkan.dll"
+        if not vulkan.is_file() or not list(site.glob("ggml-cpu-*.dll")):
+            die("whisper.cpp's backends (ggml-vulkan.dll, ggml-cpu-*.dll) aren't bundled")
+        probe = subprocess.run([str(py), "-I", "-c", f"import ctypes; ctypes.WinDLL({str(vulkan)!r})"], env=env, capture_output=True)
+        print("Vulkan's DLL loads here (there's a vulkan-1.dll)" if probe.returncode == 0 else
+              "Vulkan's DLL doesn't load here (no vulkan-1.dll: no graphics driver with Vulkan), so whisper.cpp runs on the CPU", flush=True)
     if not any(p.name.startswith(("libomp", "vcomp")) for p in dlls):
         die("whisper.cpp was built without OpenMP (or its DLL wasn't bundled)")
     binaries = [py, *py.parent.glob("python3*.dll"), *site.glob("_pywhispercpp*.pyd"), *dlls]
