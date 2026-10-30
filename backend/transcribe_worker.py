@@ -1,4 +1,5 @@
-"""Runs the final (large-model) transcription in its own process: `python transcribe_worker.py <audio_dir>`.
+"""Runs the final (large-model) transcription in its own process:
+`python transcribe_worker.py <audio_dir> [vocabulary] [model]` (the model picked in Settings, as the server read it).
 
 A separate process is the only way to *guarantee* the model's memory goes back to macOS: when it
 exits, every page is released. (Freeing the model inside a long-lived server leaves ~1.5 GB of
@@ -21,7 +22,8 @@ def emit(**msg) -> None:
     print("TRAILMIX:" + json.dumps(msg), flush=True)
 
 
-def main(folder: Path, vocabulary: str = "") -> None:
+def main(folder: Path, vocabulary: str = "", model: str = "") -> None:
+    model = model or local_engine.final_model()
     tracks = {}
     for name in store.TRACKS.values():
         audio = store.load_track(folder, name)
@@ -33,7 +35,7 @@ def main(folder: Path, vocabulary: str = "") -> None:
         regions = vad.speech_regions(audio)
         segments = []
         for i, (a, b) in enumerate(regions):
-            for seg in local_engine.run(audio[a:b], local_engine.FINAL_MODEL, vocabulary or None):
+            for seg in local_engine.run(audio[a:b], model, vocabulary or None):
                 segments.append({**seg, "start": seg["start"] + a / SR, "end": seg["end"] + a / SR})
             emit(progress=[name, i + 1, len(regions)])
         emit(track=name, segments=segments)
@@ -41,4 +43,4 @@ def main(folder: Path, vocabulary: str = "") -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), sys.argv[2] if len(sys.argv) > 2 else "")
+    main(Path(sys.argv[1]), sys.argv[2] if len(sys.argv) > 2 else "", sys.argv[3] if len(sys.argv) > 3 else "")

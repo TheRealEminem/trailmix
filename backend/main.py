@@ -149,7 +149,7 @@ async def _warm_loop():
             cfg = settings.get_all()
             model = live.live_model(cfg)
             if model and local_engine.loaded() != model:
-                need = local_engine.FINAL_MODEL_RAM_GB if cfg["live_final"] else 0.5
+                need = local_engine.final_model_ram_gb(cfg) if cfg["live_final"] else 0.5
                 calling = bool(recorder.status().get("call_app"))
                 if resources.has_room(need) or (calling and resources.check(need, "The speech model") is None):
                     live.warm_up(cfg)
@@ -881,7 +881,21 @@ def download_models():
     """Start (or retry) downloading any missing local speech model."""
     if settings.locked():
         raise HTTPException(409, f"{settings.LOCKDOWN}, so speech models can't be downloaded")
-    models.prefetch()
+    models.prefetch(asked=True)
+    return models.status()
+
+
+class RemoveModel(BaseModel):
+    repo: str
+
+
+@app.post("/api/models/remove")
+def remove_speech_model(body: RemoveModel):
+    """Delete a downloaded speech model that isn't in use (one of those Settings → Transcription lists)."""
+    try:
+        models.remove(body.repo)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
     return models.status()
 
 
@@ -938,9 +952,9 @@ def health():
         "transcription": {
             "engine": cfg["transcribe_engine"],
             "model": ("Trailmix Cloud" if cloudy else transcribe_gemini.MODEL if gemini else cfg["transcribe_model"] if remote
-                      else local_engine.FINAL_MODEL),
+                      else local_engine.final_model(cfg)),
             "live_model": None if gemini or cloudy else (cfg["transcribe_model"] if cfg["live_final"] else cfg["transcribe_live_model"] or cfg["transcribe_model"])
-            if remote else (local_engine.FINAL_MODEL if cfg["live_final"] else local_engine.LIVE_MODEL),
+            if remote else (local_engine.final_model(cfg) if cfg["live_final"] else local_engine.LIVE_MODEL),
             "url": cfg["transcribe_url"] if remote else None,
             "local_available": local_engine.available(),
             "local_engine": local_engine.NAME,  # "MLX", "whisper.cpp", or None
@@ -1899,7 +1913,7 @@ def _speech_engines(cfg: dict) -> list[dict]:
     if cfg["transcribe_url"] and (not settings.locked(cfg) or settings.on_this_computer(cfg["transcribe_url"])):
         out.append({"engine": "remote", "model": cfg["transcribe_model"]})
     if local_engine.available():
-        out.append({"engine": "local", "model": local_engine.model_label(local_engine.FINAL_MODEL)})
+        out.append({"engine": "local", "model": local_engine.model_label(local_engine.final_model(cfg))})
     for e in out:
         e["score"] = model_ranks.score(e["model"])
     return out
