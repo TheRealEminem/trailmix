@@ -463,6 +463,10 @@ fn end_typing(give_back: bool) {
         Some(l.before.take())
     });
     if let Some(before) = before.flatten().filter(|_| give_back) {
+        // GTK's own request for the keyboard (when the box was clicked) goes first, or it would win.
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.sync();
+        }
         x11_set_focus(before);
     }
 }
