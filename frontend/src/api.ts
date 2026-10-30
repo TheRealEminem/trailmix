@@ -433,6 +433,8 @@ export interface Settings {
   custom_base_url: string;
   custom_model: string;
   custom_api_key: string;
+  /** The OpenAI-compatible server's context window, where it says; 0 when not known */
+  custom_context_tokens: number;
   transcribe_engine: TranscribeEngine;
   /** Trailmix Cloud's account as last seen ({} when signed out); signing in sets it, not the settings page */
   cloud_account: CloudAccount;
@@ -953,6 +955,25 @@ export interface ImportJob {
   errors?: string[];
 }
 
+/** An AI server running on this computer, found by asking its usual port (backend/local_ai.py). */
+export interface LocalAIServer {
+  name: string;
+  /** "ollama": its own provider; "openai": used through the OpenAI-compatible provider */
+  kind: "ollama" | "openai";
+  port: number;
+  url: string;
+  models: { id: string; context: number | null }[];
+  in_use: boolean;
+}
+
+export interface LocalAIStatus {
+  servers: LocalAIServer[];
+  /** Apps installed here whose server is off, with how to turn it on */
+  installed: { name: string; hint: string }[];
+  /** A context window below this is too small for a meeting's notes */
+  small_context: number;
+}
+
 export interface OllamaStatus {
   can_install: boolean;
   installed: boolean;
@@ -1131,6 +1152,7 @@ export const api = {
   setMyNotes: (id: number, notes: MyNote[]) => request<MyNote[]>(`/meetings/${id}/my-notes`, json("PUT", { notes })),
   nativeRecorder: () => request<NativeRecorder>("/recorder"),
   ollama: () => request<OllamaStatus>("/ollama"),
+  localAI: (fresh = false) => request<LocalAIStatus>(`/local-ai${fresh ? "?fresh=true" : ""}`),
   granolaNotes: () => request<{ notes: GranolaNote[] }>("/import/granola/notes"),
   importGranola: (note_ids: string[], keep_summary: boolean) => request<ImportJob>("/import/granola", json("POST", { note_ids, keep_summary })),
   granolaImportStatus: () => request<ImportJob>("/import/granola"),

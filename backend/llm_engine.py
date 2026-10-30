@@ -39,6 +39,7 @@ MODEL_ROOM_FACTOR = 1.6
 # OpenAI-compatible servers are often small local models, so they get the conservative figure.
 CONTEXT_TOKENS = {"custom": 16384, "deepseek": 60000}
 DEFAULT_CONTEXT_TOKENS = 120000
+MIN_CONTEXT_TOKENS = 8192  # whatever a server says, below this nothing useful fits (setup warns about it)
 CHARS_PER_TOKEN = 3.0      # meeting transcripts run ~3.1 characters per token; err on the safe side
 RESERVED_TOKENS = 4500     # the reply, the instructions and the meeting description
 
@@ -173,7 +174,12 @@ def preferred_ollama_model(tags: list[dict], room_gb: float | None = None) -> st
 
 def context_chars(pid: str, cfg: dict) -> int:
     """How much transcript (in characters) fits in one request to this provider, leaving room for the rest."""
-    tokens = ollama_num_ctx(cfg) if pid == "ollama" else CONTEXT_TOKENS.get(pid, DEFAULT_CONTEXT_TOKENS)
+    if pid == "ollama":
+        tokens = ollama_num_ctx(cfg)
+    elif pid == "custom" and cfg.get("custom_context_tokens"):  # what the server said (local_ai.py)
+        tokens = max(MIN_CONTEXT_TOKENS, cfg["custom_context_tokens"])
+    else:
+        tokens = CONTEXT_TOKENS.get(pid, DEFAULT_CONTEXT_TOKENS)
     return int((tokens - RESERVED_TOKENS) * CHARS_PER_TOKEN)
 
 

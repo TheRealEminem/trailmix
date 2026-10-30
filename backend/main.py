@@ -43,6 +43,7 @@ import importer
 import live
 import live_notes
 import llm_engine
+import local_ai
 import logfile
 import meeting_date
 import meeting_text
@@ -760,6 +761,13 @@ def ollama_status():
     return ollama_setup.status(settings.get_all())
 
 
+@app.get("/api/local-ai")
+def local_ai_status(fresh: bool = False):
+    """The AI servers running on this computer (Ollama, LM Studio, Jan, llama.cpp, vLLM…) with their models, and
+    apps installed whose server is off. Only this computer's own ports are asked."""
+    return local_ai.status(settings.get_all(), fresh)
+
+
 @app.post("/api/ollama/install", status_code=202)
 def ollama_install():
     """Download, check and install Ollama (the Mac or Windows app), or open it if it's installed but not running."""
@@ -918,7 +926,7 @@ def health():
     def provider_info(pid: str) -> dict:
         ready, why = llm_engine.configured(pid, cfg)
         return {"id": pid, "label": llm_engine.label(pid, cfg), "model": llm_engine.model_name(pid, cfg),
-                "ready": ready, "reason": why, "local": llm_engine.is_local(pid, cfg)}
+                "ready": ready, "reason": why, "local": llm_engine.runs_here(pid, cfg)}
 
     remote = cfg["transcribe_engine"] == "remote"
     gemini = cfg["transcribe_engine"] == "gemini"
