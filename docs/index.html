@@ -299,7 +299,7 @@
           take("linuxX64", named("Trailmix-linux-x86_64.AppImage"));
           take("linuxArm", named("Trailmix-linux-arm64.AppImage"));
           if (!found.linuxPkgs) {
-            const pkgs = release.assets.filter((a) => /-linux-(x86_64|arm64)\.(deb|rpm)$/.test(a.name));
+            const pkgs = release.assets.filter((a) => /^Trailmix-linux-(x86_64|arm64)\.(deb|rpm)$/.test(a.name));
             if (pkgs.length) found.linuxPkgs = pkgs;
           }
           if (release.prerelease) continue;
@@ -318,7 +318,7 @@
           found.linuxPkgs.forEach((a, i) => {
             const link = document.createElement("a");
             link.href = a.browser_download_url;
-            const [, cpu, kind] = a.name.match(/-linux-(x86_64|arm64)\.(deb|rpm)$/);
+            const [, cpu, kind] = a.name.match(/^Trailmix-linux-(x86_64|arm64)\.(deb|rpm)$/);
             link.textContent = `.${kind}\u00a0(${cpu === "arm64" ? "ARM64" : "x86_64"})`;
             box.append(...(i ? [", ", link] : [link]));
           });
