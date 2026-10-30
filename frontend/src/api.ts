@@ -981,6 +981,12 @@ export interface LocalAIStatus {
 export interface OllamaStatus {
   can_install: boolean;
   installed: boolean;
+  /** Linux: the command to install it yourself (it needs root, so Trailmix doesn't run it); null elsewhere or once installed */
+  install_command?: string | null;
+  /** Linux: Ollama's own page about installing it */
+  install_page?: string | null;
+  /** Linux, installed but not running: how to start it */
+  start_command?: string | null;
   install: { active: boolean; progress: number | null; status: string; error: string | null } | null;
   reachable: boolean;
   models: string[];

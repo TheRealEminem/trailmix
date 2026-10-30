@@ -41,8 +41,23 @@ def _windows_app_dir() -> Path:
     return Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Ollama"
 
 
+# Linux: Ollama's own install script needs root (it puts ollama in /usr/local and sets up a system service), so
+# Trailmix never runs it: it shows the command for you to run in a terminal, and watches for Ollama answering.
+LINUX_INSTALL_COMMAND = "curl -fsSL https://ollama.com/install.sh | sh"
+LINUX_INSTALL_PAGE = "https://ollama.com/download/linux"
+LINUX_SERVICE_FILES = [Path("/etc/systemd/system/ollama.service"), Path("/usr/lib/systemd/system/ollama.service"),
+                       Path("/lib/systemd/system/ollama.service")]
+LINUX_BINARIES = [Path("/usr/local/bin/ollama"), Path("/usr/bin/ollama")]
+
+
 def app_path() -> Path | None:
-    """The Ollama app: Ollama.app on a Mac, "ollama app.exe" (the tray app that runs the server) on Windows."""
+    """The Ollama app: Ollama.app on a Mac, "ollama app.exe" (the tray app that runs the server) on Windows, the
+    ollama command on Linux."""
+    if sys.platform.startswith("linux"):
+        found = shutil.which("ollama")
+        if found:
+            return Path(found)
+        return next((p for p in LINUX_BINARIES if p.exists()), None)
     if sys.platform == "win32":
         for name in ("ollama app.exe", "ollama.exe"):
             if (_windows_app_dir() / name).exists():
@@ -72,9 +87,11 @@ def status(cfg: dict) -> dict:
         pull = dict(_pull)
     with _lock:
         install = dict(_install)
+    installed = app_path() is not None
     return {
         "can_install": sys.platform in ("darwin", "win32"),
-        "installed": app_path() is not None,
+        "installed": installed,
+        **_linux_commands(installed),
         "install": install or None,
         "reachable": reachable,
         "models": [m["name"] for m in tags],
@@ -82,6 +99,19 @@ def status(cfg: dict) -> dict:
         "recommended": suggestion()["model"],
         "recommended_gb": suggestion().get("size_gb"),
         "pull": pull or None,
+    }
+
+
+def _linux_commands(installed: bool) -> dict:
+    """On Linux, what to run yourself (Trailmix runs nothing as root): the install command and Ollama's page for
+    it, or, once installed, how to start it. None elsewhere."""
+    if not sys.platform.startswith("linux"):
+        return {"install_command": None, "install_page": None, "start_command": None}
+    service = any(p.exists() for p in LINUX_SERVICE_FILES)
+    return {
+        "install_command": None if installed else LINUX_INSTALL_COMMAND,
+        "install_page": LINUX_INSTALL_PAGE,
+        "start_command": ("sudo systemctl start ollama" if service else "ollama serve") if installed else None,
     }
 
 
@@ -126,7 +156,7 @@ def _run(url: str, model: str) -> None:
             _pull.update(active=False, error=f"Couldn't download {model}: {e}")
 
 
-# ── Installing Ollama itself (Mac and Windows) ──────────────────────────
+# ── Installing Ollama itself (Mac and Windows; Linux shows LINUX_INSTALL_COMMAND instead) ──
 
 def start_install(cfg: dict) -> bool:
     """Downloads, checks and installs the Ollama app, then opens it. Opens it if it's installed but not running."""
