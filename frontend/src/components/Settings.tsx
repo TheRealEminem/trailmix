@@ -18,6 +18,7 @@ import type {
   ProviderId,
   RecordingLaws as RecordingLawsT,
   Settings as SettingsT,
+  SpeechModels,
   Tracker,
 } from "../api";
 import { tildePath } from "../format";
@@ -65,6 +66,7 @@ import {
   useOrganize,
 } from "./Workspaces";
 import { FindDuplicates } from "./Duplicates";
+import { FoundServers, isLocalUrl } from "./LocalServers";
 import RecordingLaws, { lawChanged, regionName } from "./RecordingLaws";
 import {
   Collapse,
@@ -914,6 +916,96 @@ const callApps = (native: NativeRecorder) =>
   recorderWords(native.platform).os === "macos" ? "Zoom, Teams, FaceTime, Slack" : "Zoom, Teams, Slack, WhatsApp";
 
 /** "Zoom call started. Record it?": the menu bar recorder's reminder, switched here (or in its menu). */
+const AUTOMATIC = "automatic";
+
+/**
+ * Settings → Transcription, on this computer: which accurate speech model to use. "Automatic" lets the engine pick
+ * for the hardware; another one downloads when it's picked, and one downloaded but not used can be removed.
+ */
+function SpeechModelPicker({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT>) => Promise<void> }) {
+  const [st, setSt] = useState<SpeechModels | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const final = st?.models.find((m) => m.kind === "final");
+  const busy = !!final?.downloading;
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api
+        .speechModels()
+        .then((v) => alive && setSt(v))
+        .catch(() => undefined);
+    load();
+    const t = setInterval(load, busy ? 1500 : 15000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [busy, s.local_speech_model]);
+  if (!st?.choices.length) return null;
+
+  const auto = st.choices.find((c) => c.id === st.automatic);
+  const current = st.choices.find((c) => c.in_use);
+  const spare = st.choices.filter((c) => c.installed && !c.in_use);
+  const act = async (call: () => Promise<SpeechModels>) => {
+    setError(null);
+    try {
+      setSt(await call());
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  const pick = (v: string) =>
+    act(async () => {
+      await save({ local_speech_model: v === AUTOMATIC ? "" : v });
+      return api.downloadSpeechModels();
+    });
+  const hint = current
+    ? `${current.speed}. ${current.size_gb} GB download, about ${current.ram_gb} GB of memory while it transcribes.` +
+      (busy ? ` Downloading${final?.progress != null ? ` (${Math.round(final.progress * 100)}%)` : "…"}` : "") +
+      (!busy && !current.installed ? " It downloads before the next transcript." : "")
+    : undefined;
+
+  return (
+    <>
+      <Row label="Speech model" hint={hint}>
+        <Select
+          label="Speech model"
+          value={st.chosen && st.choices.some((c) => c.id === st.chosen) ? st.chosen : AUTOMATIC}
+          onChange={(v) => void pick(v)}
+          className="w-full sm:w-72"
+          options={[
+            {
+              value: AUTOMATIC,
+              label: `Automatic${auto ? ` (${auto.label})` : ""}`,
+              hint: `Picked for ${platformWords().thisComputer}`,
+            },
+            ...st.choices.map((c) => ({
+              value: c.id,
+              label: c.label,
+              hint: `${c.size_gb} GB · ${c.speed}${c.installed ? " · downloaded" : ""}`,
+            })),
+          ]}
+        />
+      </Row>
+      {(spare.length > 0 || error) && (
+        <div className="space-y-1.5 py-3 text-hint text-ink-soft">
+          {spare.map((c) => (
+            <p key={c.id} className="flex flex-wrap items-center gap-x-3">
+              <span>
+                Also downloaded: {c.label} ({c.size_gb} GB)
+              </span>
+              <button type="button" className="text-forest underline" onClick={() => void act(() => api.removeSpeechModel(c.id))}>
+                Remove
+              </button>
+            </p>
+          ))}
+          {error && <p className="text-trail-deep">{error}</p>}
+        </div>
+      )}
+    </>
+  );
+}
+
 function CallReminders({ native }: { native: NativeRecorder }) {
   const [on, setOn] = useState<boolean | null>(null); // until the recorder reports the change
   useEffect(() => {
@@ -1135,7 +1227,17 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
     : null;
 
   let status: ReactNode;
-  if (native && !hasCapability(native, "auto_update"))
+  if (native && !hasCapability(native, "auto_update") && native.update?.manual && native.update.state === "available")
+    status = (
+      <span className="font-medium text-forest-deep">
+        Trailmix {native.update.version} is available:{" "}
+        <a href={native.update.notes || "https://github.com/TheRealEminem/trailmix/releases"} target="_blank" rel="noreferrer" className="underline">
+          download it
+        </a>{" "}
+        and install it as you installed this one.
+      </span>
+    );
+  else if (native && !hasCapability(native, "auto_update"))
     status = `${missingCapabilityReason(native, "auto_update")} Download new versions from GitHub.`;
   else if (!u)
     status = native
@@ -1359,6 +1461,7 @@ function ProviderCard({
   const modelKey = `${id}_model` as keyof SettingsT;
   const label = id === "custom" ? s.custom_name || meta.label : meta.label;
   const local = id === "ollama";
+  const onThisComputer = local || (id === "custom" && isLocalUrl(s.custom_base_url));
   const hosted = id === "trailmix";
   const ready = local || (id === "custom" ? !!s.custom_base_url : !!hint);
 
@@ -1417,9 +1520,9 @@ function ProviderCard({
             <span className="chip bg-sun-soft text-sun-deep">Fallback</span>
           )}
           <span
-            className={`chip hidden sm:inline-flex ${local ? "bg-forest-soft/60 text-forest-deep" : "bg-sky-soft text-sky-deep"}`}
+            className={`chip hidden sm:inline-flex ${onThisComputer ? "bg-forest-soft/60 text-forest-deep" : "bg-sky-soft text-sky-deep"}`}
           >
-            {local ? "Local" : "Cloud"}
+            {onThisComputer ? "Local" : "Cloud"}
           </span>
           <ChevronDownIcon
             size={16}
@@ -1461,7 +1564,7 @@ function ProviderCard({
                   <TextField
                     label="Base URL"
                     value={s.custom_base_url}
-                    onSave={(v) => save({ custom_base_url: v })}
+                    onSave={(v) => save({ custom_base_url: v, custom_context_tokens: 0 })}
                     mono
                     placeholder="https://…/v1"
                   />
@@ -1821,14 +1924,14 @@ export default function Settings({
     id === "custom"
       ? s.custom_name || PROVIDER_META.custom.label
       : PROVIDER_META[id].label;
+  // An OpenAI-compatible server at a local address (LM Studio, llama.cpp…) runs here like Ollama.
+  const runsHere = (p: string) => p === "ollama" || (p === "custom" && isLocalUrl(s.custom_base_url));
   const providerOptions = providerIds.map((p) => ({
     value: p,
     label: providerLabel(p),
-    hint: p === "ollama" ? "Local" : "Cloud",
+    hint: runsHere(p) ? "Local" : "Cloud",
   }));
-  const cloudInUse = [s.summary_provider, s.summary_fallback].some(
-    (p) => p !== "ollama" && p !== "none",
-  );
+  const cloudInUse = [s.summary_provider, s.summary_fallback].some((p) => p !== "none" && !runsHere(p));
 
   return (
     <div>
@@ -2030,6 +2133,7 @@ export default function Settings({
         blurb="Connect the models you want to use. Keys are stored in Trailmix's database and never shown again."
         delay={160}
       >
+        <FoundServers s={s} onSaved={setS} className="pb-4" />
         {providerIds.map((id) => (
           <ProviderCard
             key={id}
@@ -2071,6 +2175,9 @@ export default function Settings({
             ]}
           />
         </Row>
+        {s.transcribe_engine === "local" && health?.transcription.local_available && (
+          <SpeechModelPicker s={s} save={save} />
+        )}
         {s.transcribe_engine === "trailmix" && (
           <p className="py-3.5 text-hint leading-relaxed text-ink-soft">
             {!s.secret_hints?.cloud_token

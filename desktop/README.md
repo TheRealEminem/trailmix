@@ -49,3 +49,41 @@ going back to it.
 
 Not yet on Windows (its capability flag is off, so the web app hides it): the sound check. The web app's sound check
 walks you through the macOS permission prompts and System Settings; on Windows it would need its own wording.
+
+# Trailmix for Linux
+
+The same Tauri app, built for Linux by `python3 scripts/build-linux.py` (on Linux: Python, Node.js, Rust and the
+libraries Tauri builds against: `libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libpulse-dev`)
+into `dist/Trailmix-<version>-linux-<x86_64|arm64>.AppImage`, `.deb` and `.rpm`, each with a `.sha256`. Everything
+shared stays shared; what's Windows-only is behind `cfg(windows)`, and Linux has its own counterparts in `linux/`
+(behind `cfg(target_os = "linux")`):
+
+- Data goes to `$XDG_DATA_HOME/Trailmix` (`~/.local/share/Trailmix`); the engine is `python/bin/python3 -m uvicorn`
+  in a process group of its own, stopped with SIGTERM, and stops by itself if the app dies (`TRAILMIX_PARENT_PID`).
+- `audio/pulse.rs` records through PulseAudio's client API, which PipeWire serves too (`pipewire-pulse`): the mic
+  from the default source, all apps from the default output's monitor (following it when it changes), and one
+  app's playback streams on their own (a monitor stream per sink input, as pavucontrol's meters do). The sound
+  server converts to the wire format itself. `audio/apps_linux.rs` lists the apps playing (sink inputs, by
+  `application.process.binary`) and the apps recording from a mic (source outputs), for the call reminder.
+- `linux/keys.rs` is the global shortcuts: an X11 key grab on the root window (a combination another app has
+  grabbed is reported as taken). On Wayland a grab only sees keys typed into X11 apps, so there the shortcuts are
+  off and the web app doesn't offer them (the GlobalShortcuts portal isn't used yet).
+- `linux/card.rs` draws the cards with GTK (no frame, kept above, never taking the focus except the shortcut
+  card). On X11 they sit bottom right; on Wayland the desktop places them.
+- `linux/login.rs` is open at login: `~/.config/autostart/trailmix.desktop`, starting the AppImage (or
+  `/usr/bin/Trailmix`) with `--at-login`.
+- `linux/update.rs`: an AppImage updates itself, putting `Trailmix-<version>-linux-<arch>.AppImage` (checked against
+  its `.sha256`, and for being an AppImage) in place of the file you run, under the same name, then opening it.
+  A `.deb` or `.rpm` install only says an update is out ("manual" in the report); Update opens the release page.
+- The tray icon is an AppIndicator (StatusNotifierItem): KDE, Cinnamon, XFCE, MATE and Budgie show it; GNOME
+  needs the "AppIndicator and KStatusNotifierItem Support" extension (Ubuntu has it on). It has no left click
+  (AppIndicator only has a menu): Open Trailmix is in the menu.
+- `linux/selftest.rs`: the self-test's Linux parts, `--list-audio`, and `--capture-test <seconds> <folder> [app]`
+  (records the real mic, all apps and one app at once and saves them as WAVs).
+
+`scripts/smoke-test-linux.py` runs the app headless in a private Xvfb and a private PulseAudio (a null speaker and
+a mic fed from a null sink), so nothing of yours is touched or heard: the engine with and without the app, the
+checks shared with the Mac, real recording of speech played into those devices, a stand-in Zoom holding the mic,
+the self-test, a picture of the window, and (given a previous AppImage) updating and going back. It tests a .deb
+or .rpm by installing it (as root or with sudo). The `linux` job in `release.yml` runs it on GitHub's x86_64 and
+ARM runners, and the packages on Debian and Fedora too.

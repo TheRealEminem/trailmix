@@ -12,15 +12,13 @@ import time
 from pathlib import Path
 
 import httpx
-import psutil
 
+import hardware
 import llm_engine
+import model_ranks
 
 log = logging.getLogger("trailmix")
 
-# Good at following the notes format. 16 GB Macs and up get the 7B; smaller ones the 3B.
-RECOMMENDED_BIG = "qwen2.5:7b"
-RECOMMENDED_SMALL = "qwen2.5:3b"
 
 # The official Mac app: signed and notarized by Ollama (Infra Technologies, Inc). Trailmix only installs a
 # download that carries that signature.
@@ -57,8 +55,14 @@ def app_path() -> Path | None:
     return None
 
 
+def suggestion() -> dict:
+    """{"model", "size_gb", …}: the notes model to suggest for this computer's memory or graphics card. The list
+    (model_ranks.recommended_notes) is fetched with the rankings, so it can follow new models."""
+    return model_ranks.recommended_notes(hardware.profile()["ai_memory_gb"])
+
+
 def recommended() -> str:
-    return RECOMMENDED_BIG if psutil.virtual_memory().total >= 15 * 1024**3 else RECOMMENDED_SMALL
+    return suggestion()["model"]
 
 
 def status(cfg: dict) -> dict:
@@ -75,7 +79,8 @@ def status(cfg: dict) -> dict:
         "reachable": reachable,
         "models": [m["name"] for m in tags],
         "using": llm_engine.model_for("ollama", cfg) if tags else "",
-        "recommended": recommended(),
+        "recommended": suggestion()["model"],
+        "recommended_gb": suggestion().get("size_gb"),
         "pull": pull or None,
     }
 

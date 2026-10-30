@@ -137,7 +137,11 @@ pub fn chime_wav() -> Vec<u8> {
 pub fn play_chime() {
     thread::spawn(|| {
         let wav = chime_wav();
-        if !crate::win::play_wav(&wav) {
+        #[cfg(windows)]
+        let played = crate::win::play_wav(&wav);
+        #[cfg(target_os = "linux")]
+        let played = crate::audio::pulse::play_wav(&wav);
+        if !played {
             eprintln!("[sound check] couldn't play the chime (no audio output?)");
         }
     });

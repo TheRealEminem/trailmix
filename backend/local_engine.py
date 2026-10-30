@@ -2,18 +2,22 @@
 (whispercpp_engine.py). Everything else in Trailmix calls this module, never an engine directly.
 
 Two models are used at different times so a meeting never competes with a heavy model:
-  - LIVE_MODEL  (small, in this process, for a rough draft while the meeting runs)
-  - FINAL_MODEL (large, in a throwaway subprocess - see transcribe_worker.py - after you stop; or in this
-                 process during the meeting when "Final transcript while recording" is on, see live.py)
+  - LIVE_MODEL     (small, in this process, for a rough draft while the meeting runs)
+  - final_model()  (large, in a throwaway subprocess - see transcribe_worker.py - after you stop; or in this
+                    process during the meeting when "Final transcript while recording" is on, see live.py).
+                    The one picked in Settings (local_speech_model) from catalog(), else the engine's own choice.
 
 TRAILMIX_LOCAL_ENGINE=mlx|whispercpp|none picks one by hand (the first one installed is used otherwise).
 """
 import os
+import sqlite3
 import threading
 
 import numpy as np
 
 import mlx_engine
+import model_ranks
+import settings
 import whispercpp_engine
 
 _ENGINES = {"mlx": mlx_engine, "whispercpp": whispercpp_engine}
@@ -29,8 +33,8 @@ def _pick():
 ENGINE = _pick()
 NAME = ENGINE.NAME if ENGINE else None
 LIVE_MODEL = os.getenv("TRAILMIX_LIVE_MODEL") or (ENGINE or mlx_engine).LIVE_MODEL
-FINAL_MODEL = os.getenv("TRAILMIX_WHISPER_MODEL") or (ENGINE or mlx_engine).FINAL_MODEL
-FINAL_MODEL_RAM_GB = float(os.getenv("TRAILMIX_WHISPER_RAM_GB") or (ENGINE or mlx_engine).FINAL_MODEL_RAM_GB)
+_FINAL_ENV = os.getenv("TRAILMIX_WHISPER_MODEL", "")  # wins over Settings (tests, server installs)
+_FINAL_RAM_ENV = os.getenv("TRAILMIX_WHISPER_RAM_GB", "")
 LANGUAGE = os.getenv("TRAILMIX_LANGUAGE", "en") or None  # None = auto-detect
 
 # The live model is cached in a process-wide singleton, so live calls must not overlap.
@@ -57,6 +61,44 @@ def run(audio: np.ndarray, model: str, prompt: str | None = None, meeting: bool 
     return ENGINE.run(audio, model, prompt, LANGUAGE, meeting)
 
 
+def catalog() -> list[dict]:
+    """The speech models this engine can run, smallest first, for Settings: [{"id", "label", "size_gb", "ram_gb",
+    "speed"}]. A fetched model-ranks.json can list them (recommend.speech.<engine>), so a new Whisper-family model
+    can be offered without an app update; otherwise the engine's own list."""
+    if ENGINE is None:
+        return []
+    key = next(k for k, e in _ENGINES.items() if e is ENGINE)
+    return model_ranks.speech_models(key) or ENGINE.MODELS
+
+
+def automatic_model() -> str:
+    """The accurate model this engine picks for this computer by itself (TRAILMIX_WHISPER_MODEL wins)."""
+    return _FINAL_ENV or (ENGINE or mlx_engine).FINAL_MODEL
+
+
+def final_model(cfg: dict | None = None) -> str:
+    """The accurate model: TRAILMIX_WHISPER_MODEL, else the one picked in Settings if this engine lists it, else
+    automatic_model(). `cfg` is settings.get_all(), read here when not given."""
+    if _FINAL_ENV:
+        return _FINAL_ENV
+    if cfg is None:
+        try:
+            cfg = settings.get_all()
+        except sqlite3.Error:  # no settings yet (a fresh data folder): the engine's own choice
+            cfg = {}
+    chosen = cfg.get("local_speech_model") or ""
+    return chosen if chosen and any(m["id"] == chosen for m in catalog()) else automatic_model()
+
+
+def final_model_ram_gb(cfg: dict | None = None) -> float:
+    """About how much memory the accurate model takes, for the RAM gate."""
+    if _FINAL_RAM_ENV:
+        return float(_FINAL_RAM_ENV)
+    model = final_model(cfg)
+    entry = next((m for m in catalog() if m["id"] == model), None)
+    return float(entry["ram_gb"]) if entry and entry.get("ram_gb") else float((ENGINE or mlx_engine).FINAL_MODEL_RAM_GB)
+
+
 def filter_hallucinations(segs: list[dict]) -> list[dict]:
     return [s for s in segs if s["text"].lower() not in _HALLUCINATIONS]
 
@@ -72,10 +114,11 @@ def transcribe_live(audio: np.ndarray, prompt: str | None = None) -> list[dict] 
     return filter_hallucinations(segs)
 
 
-def transcribe_final(audio: np.ndarray, prompt: str | None = None) -> list[dict]:
-    """The accurate model on a chunk, in this process (final transcript while recording). Waits its turn."""
+def transcribe_final(audio: np.ndarray, prompt: str | None = None, model: str | None = None) -> list[dict]:
+    """The accurate model (final_model() unless given) on a chunk, in this process (final transcript while
+    recording). Waits its turn."""
     with _lock:
-        return run(audio, FINAL_MODEL, prompt, meeting=True)
+        return run(audio, model or final_model(), prompt, meeting=True)
 
 
 def loaded() -> str | None:

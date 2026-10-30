@@ -177,8 +177,46 @@ def require(repo: str) -> None:
 def wanted() -> list[tuple[str, str, str]]:
     return [
         ("live", local_engine.LIVE_MODEL, "Live draft model"),
-        ("final", local_engine.FINAL_MODEL, "Transcription model"),
+        ("final", local_engine.final_model(), "Transcription model"),
     ]
+
+
+def choices(cfg: dict) -> list[dict]:
+    """The accurate models this engine offers (local_engine.catalog), each with whether it's downloaded, whether
+    it's the one used, and how it's rated (model_ranks.py)."""
+    import model_ranks
+
+    using = local_engine.final_model(cfg)
+    return [{**m, "installed": installed(m["id"]), "in_use": m["id"] == using,
+             "score": model_ranks.score(local_engine.model_label(m["id"]))} for m in local_engine.catalog()]
+
+
+def remove(repo: str) -> None:
+    """Deletes a downloaded speech model from the list that isn't in use, to give its disk space back. Raises
+    ValueError for anything else."""
+    if repo not in {m["id"] for m in local_engine.catalog()}:
+        raise ValueError("Trailmix only removes the speech models it lists")
+    if repo in {r for _, r, _ in wanted()}:
+        raise ValueError("That speech model is in use")
+    job = _jobs.get(repo)
+    if job and not job.done.is_set():
+        raise ValueError("That speech model is still downloading")
+    from huggingface_hub import scan_cache_dir
+
+    name, file = _split(repo)
+    cache = scan_cache_dir(_hub_cache())
+    for cached in cache.repos:
+        if cached.repo_id != name:
+            continue
+        if file is None:  # a whole repo (MLX models)
+            cache.delete_revisions(*[r.commit_hash for r in cached.revisions]).execute()
+            continue
+        for revision in cached.revisions:  # one file of a shared repo (whisper.cpp's): its link and its blob
+            for f in revision.files:
+                if f.file_name == file:
+                    f.file_path.unlink(missing_ok=True)
+                    f.blob_path.unlink(missing_ok=True)
+    log.info("Removed speech model %s", repo)
 
 
 def status() -> dict:
@@ -192,14 +230,17 @@ def status() -> dict:
             "progress": progress(repo), "error": job.error if job and job.done.is_set() and not have else None,
             "size_gb": round((job.total if job and job.total else _size_guess(repo)) / 1e9, 2),
         })
-    return {"local": local_engine.available() and settings.get_all()["transcribe_engine"] == "local", "models": items}
+    cfg = settings.get_all()
+    return {"local": local_engine.available() and cfg["transcribe_engine"] == "local", "models": items,
+            "choices": choices(cfg), "automatic": local_engine.automatic_model(), "chosen": cfg["local_speech_model"]}
 
 
-def prefetch() -> None:
-    """Downloads whichever local models are missing, the small live one first."""
+def prefetch(asked: bool = False) -> None:
+    """Downloads whichever local models are missing, the small live one first. `asked`: someone asked for it (a
+    model picked in Settings), so TRAILMIX_PREFETCH=0, which only stops the download at startup, doesn't apply."""
     if not local_engine.available() or settings.get_all()["transcribe_engine"] != "local":
         return
-    if os.getenv("TRAILMIX_PREFETCH") == "0":
+    if os.getenv("TRAILMIX_PREFETCH") == "0" and not asked:
         return
 
     def go():

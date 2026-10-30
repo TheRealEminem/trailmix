@@ -39,6 +39,15 @@ def _cores() -> int:
 
 
 FINAL_MODEL, FINAL_MODEL_RAM_GB = pick_final(platform.machine(), _cores())
+# The accurate models it offers in Settings, smallest first (download size and rough peak memory in GB).
+MODELS = [
+    {"id": SMALL[0], "label": "Whisper Small", "size_gb": 0.2, "ram_gb": SMALL[1], "speed": "Fastest, least accurate"},
+    {"id": TURBO[0], "label": "Whisper Large v3 Turbo", "size_gb": 0.6, "ram_gb": TURBO[1], "speed": "Fast and accurate"},
+    {"id": f"{REPO}:ggml-large-v3-turbo.bin", "label": "Whisper Large v3 Turbo (full size)", "size_gb": 1.6,
+     "ram_gb": 2.5, "speed": "A little more accurate, slower"},
+    {"id": f"{REPO}:ggml-large-v3-q5_0.bin", "label": "Whisper Large v3", "size_gb": 1.1, "ram_gb": 2.0,
+     "speed": "Most accurate, about three times as slow"},
+]
 
 _model = None
 _model_name: str | None = None

@@ -135,7 +135,7 @@
         </div>
         <div class="platform">
           <h3>Linux <span class="tag">Beta</span></h3>
-          <p class="req">A desktop with PipeWire or PulseAudio</p>
+          <p class="req">Ubuntu 24.04, Debian 13, Fedora 40 or newer</p>
           <ul>
             <li id="dl-linux-x64" hidden><a href="https://github.com/TheRealEminem/trailmix/releases" data-goatcounter-click="download-linux" data-goatcounter-title="Download Trailmix for Linux">AppImage, x86_64</a></li>
             <li id="dl-linux-arm" hidden><a href="https://github.com/TheRealEminem/trailmix/releases" data-goatcounter-click="download-linux-arm" data-goatcounter-title="Download Trailmix for Linux ARM">AppImage, ARM64</a></li>
@@ -198,6 +198,7 @@
           <h3>Make the AppImage runnable, or install the package</h3>
           <p>For the AppImage: right-click it → <b>Properties</b> → <b>Allow executing as a program</b>, or run <b>chmod +x Trailmix-linux-*.AppImage</b>, then open it.
             Or install the <b>.deb</b> (Ubuntu, Debian) or <b>.rpm</b> (Fedora, openSUSE) with your package manager.</p>
+          <p class="why">If the AppImage won't open, install FUSE 2: <b>sudo apt install libfuse2t64</b> on Ubuntu 24.04, or <b>libfuse2</b> on other distros.</p>
         </div>
         <div class="step">
           <h3>Make sure you can see its tray icon</h3>
@@ -229,7 +230,7 @@
 
     <section>
       <h2>Questions</h2>
-      <details><summary>What do I need?</summary><p>A Mac on macOS 14.2 or later (Apple silicon, or an Intel Mac, where transcribing is slower), a Windows 10 or 11 PC (Intel, AMD or Snapdragon), or a Linux desktop. 16 GB of memory is best for local summaries; with 8 GB, use a cloud AI for summaries or a small local model.</p></details>
+      <details><summary>What do I need?</summary><p>A Mac on macOS 14.2 or later (Apple silicon, or an Intel Mac, where transcribing is slower), a Windows 10 or 11 PC (Intel, AMD or Snapdragon), or a Linux desktop from 2024 or later (Ubuntu 24.04, Debian 13, Fedora 40 or newer, with PipeWire or PulseAudio; the AppImage also needs libfuse2). 16 GB of memory is best for local summaries; with 8 GB, use a cloud AI for summaries or a small local model.</p></details>
       <details><summary>Does anything leave my computer?</summary><p>Not by default: recording, transcription and summaries all run on your computer. If you add an API key for a cloud AI, only the transcript goes to that provider, to write the notes.</p></details>
       <details><summary>How do updates work?</summary><p>Trailmix checks for new versions and offers to install them from its window or its menu. On a Mac, macOS asks for the microphone and system audio permissions again after an update, until Trailmix is signed by Apple. On Linux the AppImage updates itself; the .deb and .rpm point you to the new version.</p></details>
       <details><summary>Windows and Linux are “beta”: what does that mean?</summary><p>They do everything the Mac version does except a few extras that are still coming, and they've had less real-world use, so expect the odd rough edge, and tell us about it from Settings → Feedback.</p></details>
@@ -298,7 +299,7 @@
           take("linuxX64", named("Trailmix-linux-x86_64.AppImage"));
           take("linuxArm", named("Trailmix-linux-arm64.AppImage"));
           if (!found.linuxPkgs) {
-            const pkgs = release.assets.filter((a) => /-linux-(x86_64|arm64)\.(deb|rpm)$/.test(a.name));
+            const pkgs = release.assets.filter((a) => /^Trailmix-linux-(x86_64|arm64)\.(deb|rpm)$/.test(a.name));
             if (pkgs.length) found.linuxPkgs = pkgs;
           }
           if (release.prerelease) continue;
@@ -317,7 +318,7 @@
           found.linuxPkgs.forEach((a, i) => {
             const link = document.createElement("a");
             link.href = a.browser_download_url;
-            const [, cpu, kind] = a.name.match(/-linux-(x86_64|arm64)\.(deb|rpm)$/);
+            const [, cpu, kind] = a.name.match(/^Trailmix-linux-(x86_64|arm64)\.(deb|rpm)$/);
             link.textContent = `.${kind}\u00a0(${cpu === "arm64" ? "ARM64" : "x86_64"})`;
             box.append(...(i ? [", ", link] : [link]));
           });

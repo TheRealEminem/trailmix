@@ -213,7 +213,7 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
             if not local_engine.available():
                 raise RuntimeError("Local transcription needs MLX (Apple silicon) or whisper.cpp; set a remote endpoint in Settings → Transcription")
             _wait_for_recording_to_end(meeting_id)
-            _gate(meeting_id, "transcribe" in force, local_engine.FINAL_MODEL_RAM_GB, "The transcription model")
+            _gate(meeting_id, "transcribe" in force, local_engine.final_model_ram_gb(cfg), "The transcription model")
         db.update_meeting(meeting_id, status="transcribing", wait_reason=None)
         began = time.monotonic()
         transcribe = (_transcribe_local if local else _transcribe_gemini if engine in ("gemini", "trailmix")
@@ -316,14 +316,15 @@ def _template(m: dict, cfg: dict) -> str:
 def _transcribe_local(m: dict) -> tuple[list[dict], bool, float]:
     """Runs the large model in a subprocess; when it exits all of its memory is back with macOS."""
     local_engine.unload()  # drop the small live model from this process too
-    models.ensure(  # first run: the speech model may still be downloading
-        local_engine.FINAL_MODEL,
+    model = local_engine.final_model()
+    models.ensure(  # first run (or a newly picked model): the speech model may still be downloading
+        model,
         lambda p: _progress(m["id"], "Downloading the speech model (first time only)"
                             + (f": {p:.0%}" if p is not None else "…")),
     )
     proc = subprocess.Popen(
         [sys.executable, str(Path(__file__).with_name("transcribe_worker.py")), str(store.track_dir(m)),
-         questions.vocabulary_prompt()[:300]],  # names and terms you confirmed, so they're spelled right
+         questions.vocabulary_prompt()[:300], model],  # names and terms you confirmed, so they're spelled right
         stdout=subprocess.PIPE, text=True, cwd=Path(__file__).parent,  # stderr: model download progress -> server log
     )
     tracks, duration, per_track, done = [], 0.0, {}, False
@@ -516,7 +517,7 @@ def _speech_model(cfg: dict) -> str:
         return cfg["gemini_transcribe_model"]
     if cfg["transcribe_engine"] == "trailmix":
         return "Trailmix Cloud"
-    model = local_engine.FINAL_MODEL if cfg["transcribe_engine"] == "local" else cfg["transcribe_model"]
+    model = local_engine.final_model(cfg) if cfg["transcribe_engine"] == "local" else cfg["transcribe_model"]
     return local_engine.model_label(model)
 
 
@@ -611,7 +612,7 @@ def _run_trial(meeting_id: int, engine: str, model: str | None, apply: bool, sum
             while live.active_count():  # never run the heavy model during a recording
                 trial["detail"] = "Waiting for the current recording to finish"
                 time.sleep(3)
-            short = resources.check(local_engine.FINAL_MODEL_RAM_GB, "The transcription model")
+            short = resources.check(local_engine.final_model_ram_gb(cfg), "The transcription model")
             if short:
                 raise RuntimeError(short)
         trial.update(state="running", detail=None)

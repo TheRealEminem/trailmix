@@ -17,13 +17,14 @@ tauri = { version = "2.12", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# https-native: Windows' own TLS (SChannel) and certificate store, for the updater's GitHub downloads
-minreq = { version = "2", features = ["json-using-serde", "https-native"] }
+minreq = { version = "2", features = ["json-using-serde"] }
 sha2 = "0.10"
 tungstenite = "0.30"
 url = "2"
 
 [target.'cfg(windows)'.dependencies]
+# https-native: Windows' own TLS (SChannel) and certificate store, for the updater's GitHub downloads
+minreq = { version = "2", features = ["https-native"] }
 webview2-com = "0.39"
 windows-core = "0.62"
 windows = { version = "0.62", features = [
@@ -38,6 +39,20 @@ windows = { version = "0.62", features = [
   "Win32_UI_Shell",
   "Win32_UI_Shell_PropertiesSystem",
 ] }
+
+# Linux: PulseAudio's client library (which PipeWire serves too, through pipewire-pulse) for the mic, other apps'
+# audio and which apps have the mic; X11 for the global shortcuts; GTK and WebKitGTK (what Tauri's window is made
+# of) for the cards and for running script in, and taking a picture of, the window. TLS for the updater is rustls,
+# so the app needs no particular OpenSSL.
+[target.'cfg(target_os = "linux")'.dependencies]
+minreq = { version = "2", features = ["https-rustls"] }
+libc = "0.2"
+libpulse-binding = "2"
+x11rb = { version = "0.13", features = ["xtest"] }
+gtk = "0.18"
+webkit2gtk = { version = "2.0", features = ["v2_40"] }
+javascriptcore-rs = "1"
+cairo-rs = { version = "0.18", features = ["png"] }
 
 [profile.release]
 strip = true
