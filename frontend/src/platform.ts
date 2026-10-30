@@ -137,6 +137,17 @@ export const currentOS = (): OS => {
 /** The words for this computer (or for `os`). */
 export const platformWords = (os: OS = currentOS()): PlatformWords => WORDS[os];
 
+/**
+ * The words for the computer a native recorder runs on (its check-in's platform, which can differ from the
+ * server's), for what happens there: its permission switches, its chimes. The localStorage override still wins.
+ */
+export const recorderWords = (platform: string | null | undefined): PlatformWords => {
+  const os = override();
+  if (os !== "unknown") return WORDS[os];
+  const own = parseOS(platform);
+  return own !== "unknown" ? WORDS[own] : platformWords();
+};
+
 /** "this Mac" → "This Mac". */
 export const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 

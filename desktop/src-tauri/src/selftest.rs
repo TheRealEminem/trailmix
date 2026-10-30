@@ -1,6 +1,7 @@
 //! Checks the shell without a microphone or any audio device (SelfTest.swift): audio files stand in for
 //! the mic and the meeting, a stand-in for Windows' microphone records for a call app, and everything else
-//! is the real thing (model, shortcuts, reminder card, recorder socket, audio socket, window, server).
+//! is the real thing (model, shortcuts, sound check, reminder card, recorder socket, audio socket, window,
+//! server).
 //!
 //!   Trailmix.exe --self-test http://127.0.0.1:8797 me.wav them.wav [--no-window] [--shots=<folder>]
 //!   Trailmix.exe --window-test http://127.0.0.1:8765/#meeting-2 window.png [seconds]
@@ -25,6 +26,7 @@ use crate::hotkeys::{self, Shortcut, MARK, MOD_ALT, MOD_CONTROL, MOD_SHIFT, RECO
 use crate::model::{Connection, Model, Phase, Sources};
 use crate::prefs::{tidy_url, Prefs};
 use crate::reminder::{self, Reminder};
+use crate::soundcheck;
 use crate::win;
 use crate::window;
 use crate::wire::{AudioSource, FileSource, MEETING, MIC};
@@ -109,6 +111,18 @@ pub fn run(app: AppHandle, args: Vec<String>) {
     let shots = args.iter().find_map(|a| a.strip_prefix("--shots=")).map(PathBuf::from);
 
     let model = Model::new(Prefs::default(), None, app.package_info().version.to_string(), Some(server.clone()));
+    // The sound check hears the same files: your side, then the meeting's (the chimes are played for real,
+    // and go nowhere on a computer without speakers).
+    let (check_me, check_them) = (me.clone(), them.clone().unwrap_or_else(|| me.clone()));
+    model.set_make_sound_check(Box::new(move || {
+        let source = |path: &PathBuf| -> Box<dyn AudioSource> {
+            match FileSource::new(path) {
+                Ok(file) => Box::new(file),
+                Err(e) => Box::new(Broken(e)),
+            }
+        };
+        soundcheck::Kit { mic: source(&check_me), system: source(&check_them), chime: Arc::new(soundcheck::play_chime), mic_blocked: false }
+    }));
     model.set_make_sources(Box::new(move |_| {
         let mic: Box<dyn AudioSource> = Box::new(FileSource::new(&me)?);
         let mut sources: Sources = vec![(MIC, mic)];
@@ -129,6 +143,7 @@ pub fn run(app: AppHandle, args: Vec<String>) {
         let mut t = Test { failures: 0 };
         shortcuts(&mut t, &model);
         check(&mut t, &model, &server);
+        sound_check(&mut t, &model, &server);
         reminders(&mut t, &model, shots.as_deref());
         if !no_window {
             window_record(&mut t, &app, &model, &server);
@@ -227,8 +242,8 @@ fn check(t: &mut Test, model: &Arc<Model>, base: &str) {
     let capabilities: Vec<&str> =
         status.get("capabilities").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|c| c.as_str()).collect()).unwrap_or_default();
     t.expect(
-        capabilities.contains(&"hotkeys") && capabilities.contains(&"call_reminder"),
-        &format!("it offers the shortcuts and call reminders ({})", capabilities.join(", ")),
+        capabilities.contains(&"hotkeys") && capabilities.contains(&"call_reminder") && capabilities.contains(&"sound_check"),
+        &format!("it offers the shortcuts, call reminders and the sound check ({})", capabilities.join(", ")),
     );
     let shown = status.get("shortcut_record").and_then(|v| v.as_str()).unwrap_or("");
     t.expect(
@@ -242,6 +257,62 @@ fn check(t: &mut Test, model: &Arc<Model>, base: &str) {
     thread::sleep(Duration::from_secs(2));
     model.toggle();
     t.expect(wait_until(15.0, || model.snapshot().phase == Phase::Idle), "stopped cleanly");
+}
+
+/// A source that can't start (a stand-in file that couldn't be read).
+struct Broken(String);
+
+impl AudioSource for Broken {
+    fn name(&self) -> String {
+        "broken".into()
+    }
+    fn start(&mut self, _: crate::wire::Sink) -> Result<(), String> {
+        Err(self.0.clone())
+    }
+    fn stop(&mut self) {}
+}
+
+/// The sound check asked for the way the Trailmix window asks (POST /api/recorder/sound-check): it reports
+/// "running", then both sides heard, through the check-in the window reads.
+fn sound_check(t: &mut Test, model: &Arc<Model>, base: &str) {
+    println!("5b. The sound check from the Trailmix window");
+    let blocked = win::mic_blocked();
+    println!("      (this PC's microphone privacy switch: {})", if blocked { "off" } else { "on" });
+    // Refused (409) while the server still counts the last recording as live: asked again until it isn't.
+    let mut asked = None;
+    wait_until(15.0, || {
+        asked = post(&format!("{base}/api/recorder/sound-check"));
+        asked == Some(202) || { thread::sleep(Duration::from_millis(400)); false }
+    });
+    t.expect(asked == Some(202), &format!("Run sound check pressed in the window ({asked:?})"));
+    let reported = |model: &Arc<Model>| {
+        model.check_in();
+        get_json(&format!("{base}/api/recorder")).and_then(|s| s.get("sound_check").cloned()).unwrap_or(Value::Null)
+    };
+    let mut seen = Value::Null;
+    let running = wait_until(5.0, || {
+        seen = reported(model);
+        seen.get("running").and_then(|v| v.as_bool()) == Some(true) || seen.get("at").is_some()
+    });
+    t.expect(running, &format!("the window is told it's running ({seen})"));
+    let done = wait_until(20.0, || {
+        seen = reported(model);
+        seen.get("running").is_none() && seen.get("at").is_some()
+    });
+    let field = |name: &str| seen.get(name).map(|v| v.to_string().trim_matches('"').to_string()).unwrap_or_else(|| "?".into());
+    t.expect(
+        done && field("mic") == "ok" && field("system") == "ok",
+        &format!(
+            "the sound check heard both sides (mic {} at {}, other apps {} at {}{})",
+            field("mic"),
+            field("mic_level"),
+            field("system"),
+            field("system_level"),
+            seen.get("detail").and_then(|d| d.as_str()).filter(|d| !d.is_empty()).map(|d| format!(": {d}")).unwrap_or_default()
+        ),
+    );
+    let kept = model.sound_check_result().unwrap_or(Value::Null);
+    t.expect(kept.get("mic") == seen.get("mic") && kept.get("system") == seen.get("system"), "and the recorder keeps the result");
 }
 
 /// A stand-in for Windows' microphone records (the ConsentStore), so a "call" can start and end on cue.
