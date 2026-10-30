@@ -18,7 +18,7 @@ use crate::model::{Connection, Model, Phase, Snapshot};
 use crate::prefs::{MeetingSource, Prefs};
 use crate::reminder::Reminder;
 use crate::server::{self, Bundled, Server};
-use crate::update::Updater;
+use crate::update::{State as UpdateState, Updater};
 use crate::window;
 
 pub struct AppState {
@@ -250,6 +250,64 @@ fn use_default_shortcuts(app: &AppHandle, model: &Arc<Model>) {
     rebuild_menu(app, model, None);
 }
 
+// MARK: Check for updates
+
+/// The tray's Check for Updates…: the same look Settings → Updates asks for (it happens even in Lockdown
+/// mode), then a card with what it found. A version on offer is also in the tray menu (Update to Trailmix X).
+fn check_for_updates(model: &Arc<Model>) {
+    let Some(updater) = model.updater() else { return };
+    card::note("Checking for updates…", "", 30);
+    updater.check(true);
+    // Another look (the one every 6 hours) may have been under way: wait for its answer.
+    let deadline = std::time::Instant::now() + Duration::from_secs(45);
+    while (updater.is_checking() || updater.state() == UpdateState::Checking) && std::time::Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(200));
+    }
+    let card = update_card(&updater.state(), &model.version, model.recording_anywhere());
+    if card.buttons.is_empty() {
+        card::note(&card.title, &card.detail, card.seconds);
+    } else {
+        card::show(card, move |_, answer| {
+            if answer == Answer::Button(0) {
+                updater.install();
+            }
+        });
+    }
+}
+
+/// What a check found, as a card: up to date, a version to install (with Update, unless something is
+/// recording), or why it couldn't look.
+fn update_card(state: &UpdateState, current: &str, recording: bool) -> Card {
+    let (title, detail) = match state {
+        UpdateState::UpToDate => ("Trailmix is up to date".to_string(), format!("You have the newest version, {current}.")),
+        UpdateState::Available(version) if recording => (
+            format!("Trailmix {version} is available"),
+            format!("Once the recording is over, choose Update to Trailmix {version} in the tray menu."),
+        ),
+        UpdateState::Available(version) => {
+            return Card {
+                title: format!("Trailmix {version} is available"),
+                detail: "It installs in about a minute, and Trailmix opens again by itself.".into(),
+                buttons: vec!["Update".into(), "Later".into()],
+                seconds: 30,
+                ..Card::default()
+            };
+        }
+        UpdateState::Downloading(version, _) | UpdateState::Installing(version) => {
+            (format!("Updating to Trailmix {version}"), "Trailmix opens again by itself when it's done.".to_string())
+        }
+        UpdateState::Offline => (
+            "Couldn't check for updates".to_string(),
+            "Trailmix couldn't reach GitHub. Check that you're online, then try again.".to_string(),
+        ),
+        UpdateState::Failed(why) => ("Couldn't update Trailmix".to_string(), why.clone()),
+        UpdateState::Idle | UpdateState::Checking => {
+            ("Couldn't check for updates".to_string(), "There was no answer in time. Try again in a minute.".to_string())
+        }
+    };
+    Card { title, detail, seconds: 8, ..Card::default() }
+}
+
 // MARK: The tray
 
 fn format_elapsed(elapsed: Duration) -> String {
@@ -371,13 +429,22 @@ fn make_menu(app: &AppHandle, model: &Arc<Model>, apps: &[AudioApp]) -> tauri::R
 
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
-    let update = match model.updater().and_then(|u| u.available()) {
+    let updater = model.updater();
+    // Help → Check for Updates… on the Mac: only an installed Trailmix updates itself.
+    let check = match &updater {
+        Some(_) => Some(MenuItem::with_id(app, "check-update", "Check for Updates…", true, None::<&str>)?),
+        None => None,
+    };
+    let update = match updater.and_then(|u| u.available()) {
         Some(version) => Some(MenuItem::with_id(app, "update", format!("Update to Trailmix {version}"), true, None::<&str>)?),
         None => None,
     };
     let mut items: Vec<&dyn IsMenuItem<Wry>> = vec![&status, &sep1, &record, &mark, &sources, &settings, &sep2];
     if let Some(update) = &update {
         items.push(update);
+    }
+    if let Some(check) = &check {
+        items.push(check);
     }
     items.push(&open);
     items.push(&quit);
@@ -427,6 +494,9 @@ fn on_menu(app: &AppHandle, id: &str) {
             if let Some(updater) = model.updater() {
                 updater.install();
             }
+        }
+        "check-update" => {
+            thread::spawn(move || check_for_updates(&model));
         }
         "reminders" => {
             model.update_prefs(|prefs| {
@@ -560,5 +630,19 @@ mod tests {
         let recording = Snapshot { phase: Phase::Recording, ..idle() };
         assert_eq!(record_text(&recording, &prefs).0, "Stop Recording\tCtrl+Alt+Shift+R");
         assert!(mark_text(&recording, &prefs).1);
+    }
+
+    #[test]
+    fn check_for_updates_says_what_it_found() {
+        let card = update_card(&UpdateState::UpToDate, "0.19.4", false);
+        assert_eq!((card.title.as_str(), card.detail.as_str()), ("Trailmix is up to date", "You have the newest version, 0.19.4."));
+        assert!(card.buttons.is_empty());
+        let card = update_card(&UpdateState::Available("0.20.0".into()), "0.19.4", false);
+        assert_eq!(card.title, "Trailmix 0.20.0 is available");
+        assert_eq!(card.buttons, vec!["Update".to_string(), "Later".to_string()]);
+        let card = update_card(&UpdateState::Available("0.20.0".into()), "0.19.4", true);
+        assert!(card.buttons.is_empty() && card.detail.contains("Update to Trailmix 0.20.0"));
+        assert_eq!(update_card(&UpdateState::Offline, "0.19.4", false).title, "Couldn't check for updates");
+        assert_eq!(update_card(&UpdateState::Failed("Disk full".into()), "0.19.4", false).detail, "Disk full");
     }
 }

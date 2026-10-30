@@ -189,6 +189,11 @@ impl Updater {
         self.lock().state.clone()
     }
 
+    /// A look for a new version is under way (asked for or not).
+    pub fn is_checking(&self) -> bool {
+        self.checking.load(Ordering::SeqCst)
+    }
+
     /// The version on offer, if there is one.
     pub fn available(&self) -> Option<String> {
         match self.state() {
