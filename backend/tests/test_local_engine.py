@@ -153,7 +153,10 @@ def _fake_hub(root, repo: str, files: dict[str, bytes]):
     for name, data in files.items():
         blob = folder / "blobs" / f"sha-{name}"
         blob.write_bytes(data)
-        (snap / name).symlink_to(blob)
+        try:
+            (snap / name).symlink_to(blob)
+        except OSError:  # Windows without the right to make links (Hugging Face copies files there instead)
+            pytest.skip("symbolic links aren't allowed here")
     return folder
 
 
