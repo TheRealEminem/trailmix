@@ -262,8 +262,11 @@ fn no_cancel() -> Option<&'static gio::Cancellable> {
 
 /// A connection of its own to the session bus, Trailmix named to the portal (before anything else is asked of it:
 /// an app not started from its .desktop file has no app id otherwise), and the portal's GlobalShortcuts version.
-fn connect() -> Option<(gio::DBusConnection, Option<u32>)> {
-    let address = gio::dbus_address_get_for_bus_sync(gio::BusType::Session, no_cancel()).ok()?;
+fn connect(address: Option<&str>) -> Option<(gio::DBusConnection, Option<u32>)> {
+    let address = match address {
+        Some(address) => address.to_string(),
+        None => gio::dbus_address_get_for_bus_sync(gio::BusType::Session, no_cancel()).ok()?.to_string(),
+    };
     let flags = gio::DBusConnectionFlags::AUTHENTICATION_CLIENT | gio::DBusConnectionFlags::MESSAGE_BUS_CONNECTION;
     let conn = gio::DBusConnection::for_address_sync(&address, flags, None, no_cancel()).ok()?;
     if let Some(args) = parse("(sa{sv})", &format!("({}, {{}})", quote(APP_ID))) {
@@ -374,14 +377,12 @@ fn bind(wanted: Vec<(i32, Shortcut)>) {
 /// The desktop's answer: which shortcuts it bound, and to what. The rest count as taken (the tray says so).
 fn finished(wanted: &[(i32, Shortcut)], bound: Vec<(i32, String)>) {
     let Some(portal) = PORTAL.get() else { return };
-    {
-        let mut shared = shared(portal);
-        if shared.wanted != wanted {
-            return; // asked again since
-        }
-        shared.bound = bound.clone();
+    let mut shared = shared(portal);
+    if shared.wanted != wanted {
+        return; // asked again since
     }
     hotkeys::set_taken(not_bound(wanted, &bound));
+    shared.bound = bound;
 }
 
 /// Activated: (o session, s shortcut, t timestamp, a{sv}).
@@ -412,15 +413,13 @@ fn changed(params: &Variant) {
     let Some(portal) = PORTAL.get() else { return };
     let session = params.try_child_value(0).and_then(|v| v.str().map(String::from));
     let Some(list) = params.try_child_value(1) else { return };
-    let taken = {
-        let mut shared = shared(portal);
-        if shared.session.is_none() || shared.session != session {
-            return;
-        }
-        shared.bound = bound_shortcuts(&list);
-        not_bound(&shared.wanted, &shared.bound)
-    };
-    hotkeys::set_taken(taken);
+    let mut shared = shared(portal);
+    if shared.session.is_none() || shared.session != session {
+        return;
+    }
+    let bound = bound_shortcuts(&list);
+    hotkeys::set_taken(not_bound(&shared.wanted, &bound));
+    shared.bound = bound;
 }
 
 // MARK: For keys.rs
@@ -435,12 +434,21 @@ pub fn start(pressed: impl Fn(i32) + Send + Sync + 'static) -> bool {
     if super::session() != Session::Wayland || std::env::var_os("TRAILMIX_NO_PORTAL").is_some() {
         return false;
     }
+    start_on(None, pressed)
+}
+
+/// `start` on the session bus at `address` (None: this session's).
+fn start_on(address: Option<&str>, pressed: impl Fn(i32) + Send + Sync + 'static) -> bool {
+    if PORTAL.get().is_some() {
+        return true;
+    }
+    let address = address.map(String::from);
     let context = glib::MainContext::new();
     let (ready_tx, ready_rx) = mpsc::channel::<Option<u32>>();
     let thread_context = context.clone();
     let spawned = thread::Builder::new().name("trailmix-portal".into()).spawn(move || {
         let _ = thread_context.with_thread_default(|| {
-            let Some((conn, version)) = connect() else {
+            let Some((conn, version)) = connect(address.as_deref()) else {
                 let _ = ready_tx.send(None);
                 return;
             };
@@ -617,5 +625,218 @@ mod tests {
     fn text_is_quoted_for_gvariant() {
         assert_eq!(quote("it's"), r"'it\'s'");
         assert_eq!(parse("s", &quote(r"a'b\c")).unwrap().str(), Some(r"a'b\c"));
+    }
+
+    // MARK: End to end, against a stand-in portal on a private session bus
+
+    const STAND_IN: &str = r#"<node>
+      <interface name="org.freedesktop.portal.GlobalShortcuts">
+        <method name="CreateSession"><arg type="a{sv}" direction="in"/><arg type="o" direction="out"/></method>
+        <method name="BindShortcuts">
+          <arg type="o" direction="in"/><arg type="a(sa{sv})" direction="in"/><arg type="s" direction="in"/>
+          <arg type="a{sv}" direction="in"/><arg type="o" direction="out"/>
+        </method>
+        <method name="ConfigureShortcuts"><arg type="o" direction="in"/><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/></method>
+        <property name="version" type="u" access="read"/>
+      </interface>
+      <interface name="org.freedesktop.host.portal.Registry">
+        <method name="Register"><arg type="s" direction="in"/><arg type="a{sv}" direction="in"/></method>
+      </interface>
+    </node>"#;
+
+    /// What the stand-in was asked.
+    #[derive(Default)]
+    struct Asked {
+        app_id: Option<String>,
+        client: String,
+        sessions: Vec<String>,
+        /// Each BindShortcuts: (session, [(name, preferred trigger)]).
+        binds: Vec<(String, Vec<(String, String)>)>,
+        configured: u32,
+    }
+
+    fn session_path(sender: &str, token: &str) -> String {
+        format!("{OBJECT}/session/{}/{token}", sender.trim_start_matches(':').replace('.', "_"))
+    }
+
+    fn token_of(options: &Variant) -> String {
+        dict_get(options, "handle_token").and_then(|v| v.str().map(String::from)).unwrap_or_default()
+    }
+
+    /// A portal of its own on the bus at `address`, answering as KDE's does (binding record and mark to
+    /// Ctrl+Alt+Shift+S and M whatever was asked), on a thread of its own. Returns its connection.
+    fn stand_in(address: &str, asked: Arc<Mutex<Asked>>) -> gio::DBusConnection {
+        let (tx, rx) = mpsc::channel();
+        let address = address.to_string();
+        thread::spawn(move || {
+            let context = glib::MainContext::new();
+            let _ = context.with_thread_default(|| {
+                let flags = gio::DBusConnectionFlags::AUTHENTICATION_CLIENT | gio::DBusConnectionFlags::MESSAGE_BUS_CONNECTION;
+                let conn = gio::DBusConnection::for_address_sync(&address, flags, None, no_cancel()).expect("the stand-in connects");
+                let name = parse("(su)", &format!("({}, 4)", quote(BUS_NAME))).unwrap();
+                conn.call_sync(Some("org.freedesktop.DBus"), "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", Some(&name), Some(ty("(u)")), gio::DBusCallFlags::NONE, 5000, no_cancel())
+                    .expect("the stand-in takes the portal's name");
+                let node = gio::DBusNodeInfo::for_xml(STAND_IN).expect("the stand-in's interfaces");
+                for interface in [INTERFACE, REGISTRY] {
+                    let info = node.lookup_interface(interface).expect("the interface");
+                    let asked = asked.clone();
+                    conn.register_object(
+                        OBJECT,
+                        &info,
+                        move |conn, sender, _path, _interface, method, params, invocation| {
+                            let mut asked = asked.lock().unwrap();
+                            match method {
+                                "Register" => {
+                                    asked.app_id = params.child_value(0).str().map(String::from);
+                                    invocation.return_value(None);
+                                }
+                                "CreateSession" => {
+                                    let options = params.child_value(0);
+                                    let request = request_path(sender, &token_of(&options));
+                                    let token = dict_get(&options, "session_handle_token").and_then(|v| v.str().map(String::from)).unwrap_or_default();
+                                    let session = session_path(sender, &token);
+                                    asked.client = sender.to_string();
+                                    asked.sessions.push(session.clone());
+                                    invocation.return_value(parse("(o)", &format!("(objectpath {})", quote(&request))).as_ref());
+                                    let answer = parse("(ua{sv})", &format!("(0, {{'session_handle': <{}>}})", quote(&session))).unwrap();
+                                    let _ = conn.emit_signal(Some(sender), &request, REQUEST, "Response", Some(&answer));
+                                }
+                                "BindShortcuts" => {
+                                    let session = params.child_value(0).str().unwrap_or_default().to_string();
+                                    let list = params.child_value(1);
+                                    let wanted = (0..list.n_children())
+                                        .map(|i| list.child_value(i))
+                                        .map(|item| {
+                                            let name = item.child_value(0).str().unwrap_or_default().to_string();
+                                            let keys = dict_get(&item.child_value(1), "preferred_trigger").and_then(|v| v.str().map(String::from)).unwrap_or_default();
+                                            (name, keys)
+                                        })
+                                        .collect::<Vec<_>>();
+                                    let request = request_path(sender, &token_of(&params.child_value(3)));
+                                    let bound: Vec<String> = wanted
+                                        .iter()
+                                        .map(|(name, _)| {
+                                            let keys = if name == "record" { "Ctrl+Alt+Shift+S" } else { "Ctrl+Alt+Shift+M" };
+                                            format!("({}, {{'description': <'x'>, 'trigger_description': <{}>}})", quote(name), quote(keys))
+                                        })
+                                        .collect();
+                                    asked.binds.push((session, wanted));
+                                    invocation.return_value(parse("(o)", &format!("(objectpath {})", quote(&request))).as_ref());
+                                    let answer = parse("(ua{sv})", &format!("(0, {{'shortcuts': <@a(sa{{sv}}) [{}]>}})", bound.join(", "))).unwrap();
+                                    let _ = conn.emit_signal(Some(sender), &request, REQUEST, "Response", Some(&answer));
+                                }
+                                "ConfigureShortcuts" => {
+                                    asked.configured += 1;
+                                    invocation.return_value(None);
+                                }
+                                _ => invocation.return_value(None),
+                            }
+                        },
+                        |_, _, _, _, _| Variant::from(2u32),
+                        |_, _, _, _, _, _| false,
+                    )
+                    .expect("the stand-in's object");
+                }
+                let _ = tx.send(conn.clone());
+                loop {
+                    context.iteration(true);
+                }
+            });
+        });
+        rx.recv_timeout(Duration::from_secs(10)).expect("the stand-in portal is up")
+    }
+
+    fn wait(seconds: f64, mut done: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs_f64(seconds);
+        while Instant::now() < deadline {
+            if done() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        done()
+    }
+
+    fn press(portal: &gio::DBusConnection, to: &str, session: &str, name: &str) {
+        let args = parse("(osta{sv})", &format!("(objectpath {}, {}, 1, {{}})", quote(session), quote(name))).unwrap();
+        portal.emit_signal(Some(to), OBJECT, INTERFACE, "Activated", Some(&args)).expect("Activated is sent");
+    }
+
+    #[test]
+    fn shortcuts_go_through_a_stand_in_portal() {
+        // A private session bus, so nothing of this computer's is asked; skipped where there's no dbus-daemon.
+        let daemon = std::process::Command::new("dbus-daemon")
+            .args(["--session", "--nofork", "--print-address=1"])
+            .stdout(std::process::Stdio::piped())
+            .spawn();
+        let Ok(mut daemon) = daemon else {
+            eprintln!("no dbus-daemon here: skipped");
+            return;
+        };
+        let mut address = String::new();
+        std::io::BufRead::read_line(&mut std::io::BufReader::new(daemon.stdout.take().unwrap()), &mut address).unwrap();
+        let address = address.trim().to_string();
+        let asked = Arc::new(Mutex::new(Asked::default()));
+        let portal = stand_in(&address, asked.clone());
+
+        let (tx, rx) = mpsc::channel();
+        let tx = Mutex::new(tx);
+        assert!(start_on(Some(&address), move |id| {
+            let _ = tx.lock().unwrap().send(id);
+        }));
+        assert_eq!(version(), Some(2));
+        assert_eq!(asked.lock().unwrap().app_id.as_deref(), Some(APP_ID), "Trailmix said who it is first");
+
+        // Binding: a session, then both shortcuts with the keys asked for; the desktop's keys come back.
+        let wanted = [(RECORD, Shortcut::RECORD_DEFAULT), (MARK, Shortcut::MARK_DEFAULT)];
+        assert!(register(&wanted).is_empty());
+        assert!(wait(5.0, || trigger_description(RECORD).is_some()), "the desktop's answer arrives");
+        assert_eq!(trigger_description(RECORD).as_deref(), Some("Ctrl+Alt+Shift+S"));
+        assert_eq!(trigger_description(MARK).as_deref(), Some("Ctrl+Alt+Shift+M"));
+        assert!(hotkeys::taken().is_empty());
+        let (client, session) = {
+            let asked = asked.lock().unwrap();
+            assert_eq!(asked.binds.len(), 1);
+            let (bound_in, keys) = &asked.binds[0];
+            assert_eq!(bound_in, &asked.sessions[0]);
+            assert_eq!(keys[0], ("record".to_string(), trigger(Shortcut::RECORD_DEFAULT).unwrap()));
+            assert_eq!(keys[1], ("mark".to_string(), "CTRL+ALT+SHIFT+m".to_string()));
+            (asked.client.clone(), asked.sessions[0].clone())
+        };
+
+        // Presses.
+        press(&portal, &client, &session, "record");
+        assert_eq!(rx.recv_timeout(Duration::from_secs(3)).ok(), Some(RECORD));
+        press(&portal, &client, &session_path(&client, "someone_else"), "mark");
+        assert!(rx.recv_timeout(Duration::from_millis(700)).is_err(), "another session's press isn't ours");
+        press(&portal, &client, &session, "mark");
+        assert_eq!(rx.recv_timeout(Duration::from_secs(3)).ok(), Some(MARK));
+
+        // Paused while a new shortcut is typed, then back, without binding again.
+        assert!(register(&[]).is_empty());
+        press(&portal, &client, &session, "record");
+        assert!(rx.recv_timeout(Duration::from_millis(700)).is_err(), "paused");
+        assert!(register(&wanted).is_empty());
+        press(&portal, &client, &session, "record");
+        assert_eq!(rx.recv_timeout(Duration::from_secs(3)).ok(), Some(RECORD));
+        assert_eq!(asked.lock().unwrap().binds.len(), 1);
+
+        // Different keys: a session binds once, so a new one.
+        let f9 = Shortcut { key: 0x78, mods: 0 };
+        register(&[(RECORD, f9), (MARK, Shortcut::MARK_DEFAULT)]);
+        assert!(wait(5.0, || asked.lock().unwrap().binds.len() == 2), "bound again");
+        {
+            let asked = asked.lock().unwrap();
+            assert_eq!(asked.sessions.len(), 2);
+            assert_eq!(asked.binds[1].0, asked.sessions[1]);
+            assert_eq!(asked.binds[1].1[0].1, "F9");
+        }
+        assert!(wait(5.0, || trigger_description(RECORD).is_some()));
+
+        // Version 2: the desktop's own settings for them.
+        assert!(configure());
+        assert!(wait(5.0, || asked.lock().unwrap().configured == 1), "ConfigureShortcuts was asked for");
+        let _ = daemon.kill();
+        let _ = daemon.wait();
     }
 }
