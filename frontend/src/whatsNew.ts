@@ -9,6 +9,25 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.21.0",
+    items: [
+      {
+        title: "Pick your speech model",
+        body: "Choose the speech model that runs on your computer: smaller and faster, or bigger and more accurate. Automatic still picks one to suit your computer, and a model you no longer use can be removed to free its space.",
+        where: "Settings → Transcription",
+      },
+      {
+        title: "Uses the AI already on your computer",
+        body: "LM Studio, Jan, llama.cpp or vLLM running on your computer now shows up when you choose who writes your notes: pick a model and Use. Trailmix only looks on your own computer.",
+        where: "Settings → AI providers",
+      },
+      {
+        title: "A notes model sized to your computer",
+        body: "Trailmix now counts a graphics card's memory too, and suggests a local notes model to match: qwen3:8b on most 16 GB computers, a 14B one with more room. Models that think first no longer write their thinking into your notes.",
+      },
+    ],
+  },
+  {
     version: "0.20.0",
     items: [
       {

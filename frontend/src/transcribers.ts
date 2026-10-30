@@ -65,9 +65,9 @@ export const TRANSCRIBERS: Transcriber[] = [
     url: "",
     model: "large",
     live: "live",
-    hint: "Your own Mac: run ./trailmix worker on it, then enter its address. Or any OpenAI-compatible server.",
+    hint: "Your own Mac, PC or Linux machine: run Trailmix's transcription worker on it, then enter its address. Or any OpenAI-compatible server.",
     about:
-      "A Mac running ./trailmix worker, or any server with an OpenAI-compatible /audio/transcriptions endpoint (speaches, whisper.cpp). Recordings go only there.",
+      "Any Mac, PC or Linux machine running Trailmix's transcription worker (./trailmix worker), or any server with an OpenAI-compatible /audio/transcriptions endpoint (speaches, whisper.cpp). Recordings go only there.",
   },
 ];
 

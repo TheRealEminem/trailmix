@@ -694,7 +694,7 @@ function TranscribeStep({
             {which.id === "server" && (
               <input
                 className="field h-10 w-full px-3 font-mono"
-                placeholder="http://my-mac.local:8770/v1"
+                placeholder="http://my-computer.local:8770/v1"
                 aria-label="Server address"
                 autoComplete="off"
                 value={address}
