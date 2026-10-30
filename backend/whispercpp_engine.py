@@ -93,7 +93,10 @@ def _load_backends() -> None:
 
             ctypes.CDLL(str(folder / "ggml.dll")).ggml_backend_load_all_from_path(str(folder).encode())
         _backends_loaded = True
-    log.info("whisper.cpp: %s", system_info())
+    try:
+        log.info("whisper.cpp: %s", system_info())
+    except Exception as e:  # (only the log's: never in the way of a transcript)
+        log.warning("whisper.cpp: couldn't say what it runs on: %s", e)
 
 
 def system_info() -> str:
