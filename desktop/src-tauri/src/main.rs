@@ -9,6 +9,9 @@ mod audio;
 // The cards and open at login have a Linux counterpart with the same API (in linux/).
 #[cfg_attr(target_os = "linux", path = "linux/card.rs")]
 mod card;
+mod catchup;
+#[cfg_attr(target_os = "linux", path = "linux/catchup_card.rs")]
+mod catchup_card;
 mod client;
 #[cfg(windows)]
 mod gui;
