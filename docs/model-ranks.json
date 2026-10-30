@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-12",
+  "updated": "2026-10-29",
   "about": "How well each AI model writes meeting notes, tags and sorts them (0-100). Trailmix uses it to offer redoing work an older, weaker model did. Patterns use * wildcards; the first match wins. Unlisted local models are scored by size. Speech-to-text models (Whisper, Gemini transcribe...) are rated too, for how well they transcribe meetings; those scores are a judgment, not a benchmark. A newer copy is fetched from the Trailmix site, so the list can be updated without an app update.",
   "models": [
     {"match": "gemini-3.5-transcribe*", "score": 93},
@@ -66,5 +66,13 @@
     {"match": "phi4:14b*", "score": 66},
     {"match": "phi4", "score": 66},
     {"match": "phi4-mini*", "score": 50}
-  ]
+  ],
+  "recommend": {
+    "about": "Which local notes model to suggest downloading, by how much memory a model can have on the computer (GB: about 70% of a Mac's memory, a graphics card's own memory, or 60% of a PC's memory without one). The biggest entry whose min_gb fits is suggested; size_gb is the download, and min_gb about 1.6 times it (the model, its context window and everything else running).",
+    "notes": [
+      {"model": "qwen2.5:3b", "min_gb": 0, "size_gb": 1.9},
+      {"model": "qwen2.5:7b", "min_gb": 7.5, "size_gb": 4.7},
+      {"model": "qwen2.5:14b", "min_gb": 15, "size_gb": 9.0}
+    ]
+  }
 }
