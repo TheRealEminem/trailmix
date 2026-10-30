@@ -2291,7 +2291,7 @@ export default function Settings({
               label="Endpoint URL"
               hint={
                 needsAddress
-                  ? "Now type your Mac's address, e.g. http://my-mac.tail1234.ts.net:8770/v1 (run ./trailmix worker on that Mac)."
+                  ? "Now type the address of the Mac, PC or Linux machine running the transcription worker (./trailmix worker, or .\\trailmix.ps1 worker on Windows), e.g. http://my-computer.tail1234.ts.net:8770/v1."
                   : !s.transcribe_url
                     ? "Not set yet: recordings can't be transcribed until it is."
                     : "Any OpenAI-compatible /audio/transcriptions service."

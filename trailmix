@@ -8,7 +8,7 @@
 #   ./trailmix logs         follow the server log
 #   ./trailmix autostart on|off   start Trailmix's server when you log in to your Mac
 #   ./trailmix helper       build (if needed) and open Trailmix Helper, the menu bar recorder
-#   ./trailmix worker       run the Mac transcription worker for a server install (port 8770)
+#   ./trailmix worker       run the transcription worker for a server install (port 8770; trailmix.ps1 on Windows)
 #   ./trailmix dev          development mode: backend with reload + Vite on :5173 (foreground)
 #   ./trailmix app          (re)build "Trailmix Dev.app", the double-clickable launcher for this folder
 set -euo pipefail
@@ -27,19 +27,27 @@ AGENT="$HOME/Library/LaunchAgents/local.trailmix.server.plist"
 say() { printf '\033[1;32m›\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 
+# How to install something here: Homebrew on a Mac, the system's packages on Linux.
+install_hint() { if [ "$(uname -s)" = Darwin ]; then echo "brew install $1"; else echo "for example: sudo apt install $2"; fi; }
+
 find_python() {
   for p in python3.14 python3.13 python3.12 python3.11; do
     command -v "$p" >/dev/null && { command -v "$p"; return; }
   done
-  die "Trailmix needs Python 3.11 or newer (brew install python)."
+  die "Trailmix needs Python 3.11 or newer ($(install_hint python 'python3 python3-venv'))."
+}
+
+# The speech engine for this computer: MLX on an Apple silicon Mac, whisper.cpp anywhere else (an Intel Mac, Linux).
+requirements() {
+  if [ "$(uname -s)-$(uname -m)" = Darwin-arm64 ]; then echo requirements.txt; else echo requirements-whispercpp.txt; fi
 }
 
 ensure_backend() {
-  command -v ffmpeg >/dev/null || die "Trailmix needs ffmpeg (brew install ffmpeg)."
+  command -v ffmpeg >/dev/null || die "Trailmix needs ffmpeg ($(install_hint ffmpeg ffmpeg))."
   if [ ! -x "$VENV/bin/uvicorn" ]; then
     say "Setting up the Python environment (first run only)…"
     "$(find_python)" -m venv "$VENV"
-    "$VENV/bin/pip" install -q -r "$ROOT/backend/requirements.txt"
+    "$VENV/bin/pip" install -q -r "$ROOT/backend/$(requirements)"
   fi
 }
 
@@ -160,10 +168,9 @@ case "${1:-open}" in
   logs) tail -n 50 -f "$LOGS/server.log" ;;
   autostart) autostart "${2:-}" ;;
   worker)
+    # On a Mac or Linux (trailmix.ps1 on Windows). It says which speech engine it uses, and the port.
     ensure_backend
-    say "Mac transcription worker on port ${TRAILMIX_WORKER_PORT:-8770} (Ctrl+C to stop)"
-    [ -n "${TRAILMIX_WORKER_TOKEN:-}" ] || say "Tip: set TRAILMIX_WORKER_TOKEN so only your server can use it."
-    cd "$ROOT/backend" && exec "$VENV/bin/uvicorn" mac_worker:app --host "${TRAILMIX_WORKER_HOST:-0.0.0.0}" --port "${TRAILMIX_WORKER_PORT:-8770}"
+    cd "$ROOT/backend" && exec "$VENV/bin/python" -m transcription_worker
     ;;
   dev)
     ensure_backend
