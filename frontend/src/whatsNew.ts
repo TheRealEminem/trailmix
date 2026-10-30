@@ -9,6 +9,15 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.20.0",
+    items: [
+      {
+        title: "Trailmix for Linux",
+        body: "Linux gets a version of its own, in beta: an AppImage that keeps itself up to date, or a .deb or .rpm, for x86_64 and ARM64. Tell a friend who runs Linux.",
+      },
+    ],
+  },
+  {
     version: "0.19.5",
     items: [
       {
