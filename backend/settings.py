@@ -54,6 +54,7 @@ DEFAULTS = {
     "custom_base_url": "",
     "custom_model": "",
     "custom_api_key": "",
+    "custom_context_tokens": 0,         # the server's context window, where it says (local_ai.py); 0: not known
     # Transcription
     "transcribe_engine": "local",       # local (MLX or whisper.cpp on this computer) | remote (OpenAI-compatible endpoint) | gemini (speaker labels)
                                         # | trailmix (Trailmix Cloud)
@@ -183,6 +184,8 @@ def update(changes: dict, internal: bool = False) -> dict:
             raise ValueError(f"Setting {key} must be a {type(DEFAULTS[key]).__name__}")
         if key == "audio_retention_days" and value < -1:
             raise ValueError("audio_retention_days must be -1 (forever), 0 (after transcription) or a number of days")
+        if key == "custom_context_tokens" and value < 0:
+            raise ValueError("custom_context_tokens must be 0 (not known) or a number of tokens")
         if key == "spend_warn_cents" and value < 0:
             raise ValueError("spend_warn_cents must be 0 (never ask) or a number of cents")
         if key == "gemini_transcribe_model" and not value.strip():
