@@ -1,7 +1,7 @@
 //! Checks the shell without a microphone or any audio device (SelfTest.swift): audio files stand in for
-//! the mic and the meeting, a stand-in for Windows' microphone records for a call app, and everything else
-//! is the real thing (model, shortcuts, sound check, reminder card, recorder socket, audio socket, window,
-//! server).
+//! the mic and the meeting, a stand-in for Windows' microphone records for a call app, a stand-in AI for
+//! Catch me up, and everything else is the real thing (model, shortcuts, sound check, reminder card, the
+//! recording card with the live draft and Catch me up, recorder socket, audio socket, window, server).
 //!
 //!   Trailmix.exe --self-test http://127.0.0.1:8797 me.wav them.wav [--no-window] [--shots=<folder>]
 //!   Trailmix.exe --window-test http://127.0.0.1:8765/#meeting-2 window.png [seconds]
@@ -24,6 +24,8 @@ use crate::app::AppState;
 use crate::audio;
 #[cfg(windows)]
 use crate::card::{self, Target};
+use crate::catchup::{self, Target as CardTarget, READING};
+use crate::catchup_card;
 #[cfg(windows)]
 use crate::gui::{self, WS_EX_NOACTIVATE, WS_EX_TOPMOST};
 use crate::hotkeys::{MARK, RECORD};
@@ -160,6 +162,7 @@ pub fn run(app: AppHandle, args: Vec<String>) {
         check(&mut t, &model, &server);
         sound_check(&mut t, &model, &server);
         reminders(&mut t, &model, shots.as_deref());
+        catch_up(&mut t, &model, &server, shots.as_deref());
         if !no_window {
             window_record(&mut t, &app, &model, &server);
         }
@@ -481,6 +484,228 @@ fn reminders(t: &mut Test, model: &Arc<Model>, shots: Option<&Path>) {
 
     watcher.stop();
     win::reg_delete_tree(STAND_IN_ROOT);
+}
+
+// MARK: The live draft and Catch me up, from the tray
+
+/// What the stand-in AI says to every question but "fail".
+const STAND_IN_ANSWER: &str = "- The launch moved to **March** [0:04]\n- Priya updates the docs before the beta [0:09]";
+
+/// A stand-in for an OpenAI-compatible AI on this computer (as Ollama or LM Studio would be): every question gets
+/// the same two points, except "fail", which gets an error. Returns its port.
+fn stand_in_ai() -> Option<u16> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").ok()?;
+    let port = listener.local_addr().ok()?.port();
+    thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            thread::spawn(move || answer_like_an_ai(stream));
+        }
+    });
+    Some(port)
+}
+
+fn answer_like_an_ai(mut stream: std::net::TcpStream) {
+    use std::io::{Read, Write};
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+    let mut data: Vec<u8> = Vec::new();
+    let mut buffer = [0u8; 16384];
+    let mut need: Option<usize> = None;
+    while need.map(|n| data.len() < n).unwrap_or(true) {
+        let got = match stream.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(got) => got,
+        };
+        data.extend_from_slice(&buffer[..got]);
+        if need.is_none() {
+            if let Some(end) = data.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&data[..end]).to_lowercase();
+                let length = head.lines().find_map(|l| l.strip_prefix("content-length:")).and_then(|v| v.trim().parse::<usize>().ok()).unwrap_or(0);
+                need = Some(end + 4 + length);
+            }
+        }
+    }
+    let text = String::from_utf8_lossy(&data);
+    let (status, body) = if !text.contains("/chat/completions") {
+        ("404 Not Found", r#"{"error": {"message": "not here"}}"#.to_string())
+    } else if text.contains("QUESTION: fail") {
+        ("500 Internal Server Error", r#"{"error": {"message": "the stand-in AI is down"}}"#.to_string())
+    } else {
+        let reply = serde_json::json!({
+            "choices": [{"message": {"role": "assistant", "content": STAND_IN_ANSWER}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 20},
+        });
+        ("200 OK", reply.to_string())
+    };
+    let reply = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+    let _ = stream.write_all(reply.as_bytes());
+}
+
+fn put_settings(base: &str, body: &Value) -> Option<i32> {
+    minreq::put(format!("{base}/api/settings"))
+        .with_header("Content-Type", "application/json")
+        .with_body(body.to_string())
+        .with_timeout(10)
+        .send()
+        .ok()
+        .map(|r| r.status_code)
+}
+
+/// Waits for the recording card to show something.
+fn catch_up_card(seconds: f64, mut test: impl FnMut(&catchup_card::Shown) -> bool) -> Option<catchup_card::Shown> {
+    let mut found = None;
+    wait_until(seconds, || {
+        found = catchup_card::current().filter(|s| test(s));
+        found.is_some()
+    });
+    found
+}
+
+/// Clicks something on the recording card: with the real mouse if this computer takes it, else by handing the
+/// card the click. Says which (None: `done` never came true).
+fn tap(target: CardTarget, done: impl Fn() -> bool) -> Option<&'static str> {
+    if catchup_card::press(target, true) && wait_until(3.0, &done) {
+        return Some("clicked with the mouse");
+    }
+    if catchup_card::press(target, false) && wait_until(3.0, &done) {
+        return Some("clicked (handed the click: no mouse input here)");
+    }
+    None
+}
+
+/// Whether the recording card has the keyboard.
+#[cfg(windows)]
+fn card_has_focus() -> bool {
+    let card = catchup_card::window();
+    card != 0 && gui::foreground() == card
+}
+
+#[cfg(not(windows))]
+fn card_has_focus() -> bool {
+    catchup_card::current().map(|s| s.focused).unwrap_or(false)
+}
+
+fn card_shot(t: &mut Test, shots: Option<&Path>, name: &str) {
+    let Some(folder) = shots else { return };
+    let path = folder.join(name);
+    t.expect(catchup_card::save_png(&path), &format!("saved {}", path.display()));
+}
+
+/// The Mac menu's recording panel, from the tray (SelfTest.swift's --catch-up-test): while a recording goes, Live
+/// Draft… shows its last lines; Catch me up with no AI set up says why, as the Mac does; with an AI (a stand-in on
+/// this computer), "What did I miss?" is answered in the card, and a question typed in the box that fails says why.
+/// The card never takes the focus, except while you type in it, and hands it back after. It goes when the recording
+/// ends.
+fn catch_up(t: &mut Test, model: &Arc<Model>, base: &str, shots: Option<&Path>) {
+    println!("9b. Live Draft… from the tray shows the last lines while recording");
+    let c = catchup::begin(model);
+    model.toggle();
+    if !wait_until(20.0, || model.snapshot().phase == Phase::Recording) {
+        t.expect(false, &format!("recording ({})", model.snapshot().error.unwrap_or_else(|| "no error".into())));
+        return;
+    }
+    let id = model.snapshot().meeting_id.unwrap_or(-1);
+    t.expect(wait_until(30.0, || !model.snapshot().drafts.is_empty()), "the live draft is coming");
+    #[cfg(windows)]
+    let before = gui::foreground();
+    c.open(false);
+    let latest = || model.snapshot().drafts.iter().rev().take(3).map(|d| d.text.trim().to_string()).filter(|d| !d.is_empty()).collect::<Vec<_>>();
+    let shown = catch_up_card(10.0, |s| latest().iter().any(|d| s.text.contains(d.as_str())));
+    let Some(shown) = shown else {
+        t.expect(false, &format!("the card shows the newest lines (it shows {:?})", catchup_card::current().map(|s| s.text)));
+        catchup_card::hide();
+        model.stop();
+        wait_until(15.0, || model.snapshot().phase == Phase::Idle);
+        return;
+    };
+    let first: String = shown.text.lines().nth(1).unwrap_or("").chars().take(60).collect();
+    t.expect(true, &format!("the card shows the newest lines: {first}"));
+    t.expect(shown.visible && shown.above && shown.no_activate, "it's above the other windows, and can't take the focus");
+    thread::sleep(Duration::from_millis(500));
+    #[cfg(windows)]
+    t.expect(!card_has_focus(), &format!("the call keeps the focus (in front: {before:#x}, then {:#x})", gui::foreground()));
+    #[cfg(not(windows))]
+    t.expect(!card_has_focus(), "the call keeps the focus");
+    card_shot(t, shots, "smoke-live-draft.png");
+
+    println!("9c. Catch me up with no AI set up says why, as on the Mac");
+    let how = tap(CardTarget::Toggle, || catchup_card::current().map(|s| s.text.contains("▾")).unwrap_or(false));
+    t.expect(how.is_some(), &format!("Catch me up ▸: {}", how.unwrap_or("the card didn't take the click")));
+    let plan = get_json(&format!("{base}/api/meetings/{id}/catch-up")).unwrap_or(Value::Null);
+    let reason = plan.get("reason").and_then(|r| r.as_str()).unwrap_or("").to_string();
+    let ready = plan.get("ready").and_then(|r| r.as_bool());
+    t.expect(ready == Some(false) && !reason.is_empty(), &format!("the server says it can't answer: {reason}"));
+    let says = catch_up_card(10.0, |s| !reason.is_empty() && s.text.contains(&reason));
+    t.expect(says.is_some(), "the card says so, in the same words");
+    if says.is_none() {
+        println!("      (the card shows: {:?})", catchup_card::current().map(|s| s.text));
+    }
+    t.expect(says.map(|s| !s.text.contains("What did I miss?")).unwrap_or(false), "and offers no questions to ask");
+    t.expect(!card_has_focus(), "the call still has the focus");
+    card_shot(t, shots, "smoke-catch-up-no-ai.png");
+
+    println!("9d. With an AI set up, What did I miss? is answered in the card");
+    let saved = get_json(&format!("{base}/api/settings")).unwrap_or(Value::Null);
+    let restore = serde_json::json!({
+        "summary_provider": saved.get("summary_provider").and_then(|v| v.as_str()).unwrap_or("ollama"),
+        "custom_base_url": saved.get("custom_base_url").and_then(|v| v.as_str()).unwrap_or(""),
+        "custom_model": saved.get("custom_model").and_then(|v| v.as_str()).unwrap_or("")
+    });
+    let Some(port) = stand_in_ai() else {
+        t.expect(false, "a stand-in AI to ask");
+        model.stop();
+        wait_until(15.0, || model.snapshot().phase == Phase::Idle);
+        return;
+    };
+    let set = put_settings(base, &serde_json::json!({
+        "summary_provider": "custom", "custom_base_url": format!("http://127.0.0.1:{port}/v1"), "custom_model": "stand-in"
+    }));
+    t.expect(set == Some(200), &format!("notes AI set to a stand-in on this computer, port {port} ({set:?})"));
+    c.load();
+    let offered = catch_up_card(10.0, |s| s.text.contains("What did I miss?") && c.plan().map(|p| p.ready).unwrap_or(false));
+    t.expect(offered.is_some(), &format!("the card offers the quick questions ({:?})", c.plan().map(|p| p.label.or(p.reason))));
+    let how = tap(CardTarget::Quick(0), || c.pending().is_some() || c.last_answer().is_some() || c.error().is_some());
+    t.expect(how.is_some(), &format!("What did I miss?: {}", how.unwrap_or("the card didn't take the click")));
+    let reading = catch_up_card(3.0, |s| s.text.contains(READING)).is_some();
+    println!("      ({})", if reading { "it said \"Reading the meeting so far…\" meanwhile" } else { "the answer came before a look at the card" });
+    let answered = catch_up_card(60.0, |s| s.text.contains("March") && s.text.contains("asked at "));
+    let line = c.last_answer().map(|e| e.a.lines().next().unwrap_or("").to_string()).unwrap_or_default();
+    t.expect(answered.is_some(), &format!("the answer is in the card: {line} ({})", c.error().unwrap_or_else(|| "no error".into())));
+    t.expect(!card_has_focus(), "asking didn't take the focus");
+    card_shot(t, shots, "smoke-catch-up.png");
+
+    println!("9e. A question typed in the box; one that fails says why");
+    #[cfg(windows)]
+    let front = gui::foreground();
+    let real = catchup_card::ask_typed("fail", true);
+    let typed = real || catchup_card::ask_typed("fail", false);
+    t.expect(
+        typed,
+        if real { "clicked into the box (it takes the keyboard), typed and pressed Enter" } else { "typed in the box (handed to it: no keyboard or mouse input here)" },
+    );
+    let failed = catch_up_card(30.0, |s| s.text.contains("stand-in AI is down"));
+    t.expect(failed.is_some(), &format!("the card says why: {}", c.error().unwrap_or_else(|| "no error shown".into())));
+    let back = wait_until(3.0, || !catchup_card::typing() && !card_has_focus());
+    #[cfg(windows)]
+    {
+        if real && front == 0 {
+            // Nothing had the keyboard before (no desktop session in front): there's nothing to hand it back to.
+            t.expect(!catchup_card::typing(), "done typing (nothing had the keyboard before it)");
+        } else {
+            t.expect(back, &format!("the keyboard went back after Enter (in front: {front:#x}, now {:#x})", gui::foreground()));
+        }
+    }
+    #[cfg(not(windows))]
+    t.expect(back, "the keyboard went back after Enter");
+    let _ = put_settings(base, &restore);
+
+    println!("9f. The card closes, and goes by itself when the recording ends");
+    let how = tap(CardTarget::Close, || !catchup_card::is_open());
+    t.expect(how.is_some(), &format!("×: {}", how.unwrap_or("the card didn't take the click")));
+    c.open(true);
+    t.expect(catch_up_card(5.0, |s| s.visible).is_some(), "Catch Me Up… opens it again");
+    model.toggle();
+    t.expect(wait_until(15.0, || model.snapshot().phase == Phase::Idle), "stopped cleanly");
+    t.expect(wait_until(5.0, || !catchup_card::is_open()), "and the card went with the recording");
 }
 
 /// The real Trailmix window and page, the way you use them: Record clicked in the window; the recording

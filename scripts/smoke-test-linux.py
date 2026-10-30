@@ -5,8 +5,9 @@ the app brings its engine up and takes it down with it, then starts the engine i
 does and runs the checks shared with the Mac (scripts/smoke_test.py), records the real mic, all apps' audio and
 one app's on its own (--capture-test) while it plays speech into them and checks what it heard, finds a stand-in
 Zoom holding the mic, runs the shell's own self-test (audio files standing in for the mic and the meeting:
-shortcuts typed with XTest, marks, the live draft, the sound check, the call reminder's cards clicked, Record
-pressed in the window, a transcript made while recording) and takes a picture of its window. Nothing touches
+shortcuts typed with XTest, marks, the live draft, the sound check, the call reminder's cards clicked, the tray's
+live draft and Catch me up card asked with no AI and then a stand-in one, Record pressed in the window, a transcript
+made while recording) and takes a picture of its window. Nothing touches
 your real Trailmix data, display or sound.
 
   python3 scripts/smoke-test-linux.py dist/Trailmix-0.20.0-linux-x86_64.AppImage
@@ -630,7 +631,7 @@ def main(argv: list[str]) -> int:
         print(done.stdout)
         if done.stderr.strip():
             print(done.stderr[-4000:], file=sys.stderr)
-        for card in ("smoke-reminder.png", "smoke-reminder-stop.png"):
+        for card in ("smoke-reminder.png", "smoke-reminder-stop.png", "smoke-live-draft.png", "smoke-catch-up-no-ai.png", "smoke-catch-up.png"):
             if (root / card).is_file():
                 shutil.copy2(root / card, package.parent / card.replace(".png", f"-linux-{app.arch}.png"))
         if done.returncode != 0:
@@ -643,6 +644,8 @@ def main(argv: list[str]) -> int:
             raise Failure(f"the shell's self-test failed (exit {done.returncode})")
         if f"linux-{app.arch})" not in done.stdout:
             raise Failure(f"the app doesn't say it's linux-{app.arch}")
+        if "ok    the answer is in the card" not in done.stdout or "ok    the card says so, in the same words" not in done.stdout:
+            raise Failure("the self-test didn't ask Catch me up from the tray")
 
         log("The window shows the web app")
         shot = root / "window.png"
