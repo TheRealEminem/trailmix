@@ -23,7 +23,9 @@ with the same server and the same web app.
   `--version` in `main.rs`), for CI
   (`scripts/smoke-test-windows.py`) and for checking a real machine.
 
-Build the installer with `python scripts/build-windows.py` (on Windows: Python, Node.js and Rust needed). A plain
+Build the installer with `python scripts/build-windows.py` (on Windows: Python, Node.js and Rust needed, plus Visual
+Studio's C++ tools and the [Vulkan SDK](https://vulkan.lunarg.com/sdk/home#windows) for the x64 build's whisper.cpp,
+which it compiles with GPU support once and keeps in `build/cache`). A plain
 `cargo test` in `src-tauri` wants the staged resources to exist first: `python scripts/build-windows.py --stage-only`,
 or empty `build/windows/{python,backend,ui,bin}` folders and a `build/windows/VERSION` as the CI job makes. The GitHub
 `windows` job in `.github/workflows/release.yml` does that and runs the smoke test on every tag: as a fresh install,
