@@ -177,8 +177,16 @@ pub fn ask_typed(text: &str, real: bool) -> bool {
             })
         })
         .flatten();
-        let Some((x, y)) = point else { return false };
-        if !crate::linux::keys::click_at(x, y) || !crate::selftest::wait_until(2.0, typing) {
+        let Some((x, y)) = point else {
+            println!("      (the box isn't there to click)");
+            return false;
+        };
+        if !crate::linux::keys::click_at(x, y) {
+            println!("      (couldn't click at {x}, {y})");
+            return false;
+        }
+        if !crate::selftest::wait_until(2.0, typing) {
+            println!("      (clicked the box at {x}, {y}, but it didn't start taking the keyboard: {})", focus_report());
             return false;
         }
     }
@@ -191,6 +199,26 @@ pub fn ask_typed(text: &str, real: bool) -> bool {
         true
     })
     .unwrap_or(false)
+}
+
+/// Where the keyboard is, for the self-test's log: the card's X11 window, the one with the keyboard, and whether
+/// the box is being typed in.
+pub fn focus_report() -> String {
+    on_main_wait(|| {
+        LIVE.with(|live| {
+            let live = live.try_borrow().ok()?;
+            let l = live.as_ref()?;
+            Some(format!(
+                "card {:?}, keyboard at {:?}, typing {}, GTK focus {}",
+                x11_id(&l.window),
+                x11_focus(),
+                l.typing,
+                l.window.has_toplevel_focus()
+            ))
+        })
+    })
+    .flatten()
+    .unwrap_or_else(|| "no card".into())
 }
 
 /// Whether the box to type in has the keyboard now.
@@ -328,8 +356,25 @@ fn open() {
     let below = gtk::Box::new(gtk::Orientation::Vertical, 6);
     content.pack_start(&below, false, false, 0);
 
+    // Clicked back into the call while typing: nothing to hand back. (Looked at a moment later, and on X11 asked of
+    // X itself: GTK reports the focus going and coming back as the card takes it.)
     window.connect_focus_out_event(|_, _| {
-        end_typing(false); // clicked back into the call: nothing to hand back
+        glib::timeout_add_local_once(std::time::Duration::from_millis(200), || {
+            let gone = LIVE.with(|live| {
+                let live = live.try_borrow().ok()?;
+                let l = live.as_ref()?;
+                if !l.typing {
+                    return None;
+                }
+                Some(match (x11_id(&l.window), x11_focus()) {
+                    (Some(card), Some(focus)) => card != focus,
+                    _ => !l.window.has_toplevel_focus(),
+                })
+            });
+            if gone == Some(true) {
+                end_typing(false);
+            }
+        });
         glib::Propagation::Proceed
     });
     window.connect_delete_event(|window, _| {
