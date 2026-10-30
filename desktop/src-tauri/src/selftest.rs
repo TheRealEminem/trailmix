@@ -702,7 +702,7 @@ fn catch_up(t: &mut Test, model: &Arc<Model>, base: &str, shots: Option<&Path>) 
         }
     }
     #[cfg(not(windows))]
-    t.expect(back, "the keyboard went back after Enter");
+    t.expect(back, &format!("the keyboard went back after Enter ({})", catchup_card::focus_report()));
     let _ = put_settings(base, &restore);
 
     println!("9f. The card closes, and goes by itself when the recording ends");
