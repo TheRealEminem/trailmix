@@ -44,6 +44,9 @@ export default function SoundCheck({
   const [error, setError] = useState<string | null>(null);
   const words = recorderWords(native.platform);
   const windows = words.os === "windows";
+  // Linux asks no permission either (no prompts, no privacy switch): Windows' wording, with its own settings.
+  const linux = words.os === "linux";
+  const noPrompts = windows || linux;
   const result = native.sound_check;
   const fresh =
     result &&
@@ -63,14 +66,14 @@ export default function SoundCheck({
 
   return (
     <div className="text-hint leading-relaxed text-ink-soft">
-      {!running && !fresh && windows && (
+      {!running && !fresh && noPrompts && (
         <p>
           {brief
             ? "Turn your speakers or headphones up a little: you should hear two chimes."
-            : "Trailmix plays two short chimes and listens for 5 seconds, to make sure both sides of your calls get recorded. Windows doesn't ask first."}
+            : `Trailmix plays two short chimes and listens for 5 seconds, to make sure both sides of your calls get recorded. ${words.osName} doesn't ask first.`}
         </p>
       )}
-      {!running && !fresh && !windows && (
+      {!running && !fresh && !noPrompts && (
         <>
           <p>
             {brief
@@ -99,7 +102,7 @@ export default function SoundCheck({
       {running && (
         <p className="flex items-center gap-2 text-ink">
           <Spinner />{" "}
-          {windows
+          {noPrompts
             ? "Listening… you should hear two chimes."
             : "Listening… you should hear two chimes. Answer any macOS prompts with Allow."}
         </p>
@@ -139,7 +142,14 @@ export default function SoundCheck({
                 </>
               ))}
             {result.mic === "quiet" &&
-              (windows ? (
+              (linux ? (
+                <>
+                  Trailmix barely heard anything. Trailmix records the
+                  microphone your system uses by default: check that it's the
+                  right one in your sound settings (Input), and that it isn't
+                  muted.
+                </>
+              ) : windows ? (
                 <>
                   Trailmix barely heard anything. Trailmix records the
                   microphone Windows uses by default: check that it's the right
@@ -170,7 +180,21 @@ export default function SoundCheck({
             }
           >
             {result.system === "silent" &&
-              (windows ? (
+              (linux ? (
+                <>
+                  Trailmix couldn't hear the chimes it played.
+                  <ol className="mt-1 list-decimal space-y-0.5 pl-5">
+                    <li>
+                      Check that a speaker or headphones are connected and
+                      picked in your sound settings (Output), and not muted.
+                    </li>
+                    <li>
+                      Quit Trailmix ({words.trayName} icon → Quit Trailmix),
+                      open it again, and run the check again.
+                    </li>
+                  </ol>
+                </>
+              ) : windows ? (
                 <>
                   Trailmix couldn't hear the chimes it played.
                   <ol className="mt-1 list-decimal space-y-0.5 pl-5">

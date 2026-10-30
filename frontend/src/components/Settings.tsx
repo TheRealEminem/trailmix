@@ -1135,7 +1135,17 @@ function UpdatesSection({ native }: { native: NativeRecorder | null }) {
     : null;
 
   let status: ReactNode;
-  if (native && !hasCapability(native, "auto_update"))
+  if (native && !hasCapability(native, "auto_update") && native.update?.manual && native.update.state === "available")
+    status = (
+      <span className="font-medium text-forest-deep">
+        Trailmix {native.update.version} is available:{" "}
+        <a href={native.update.notes || "https://github.com/TheRealEminem/trailmix/releases"} target="_blank" rel="noreferrer" className="underline">
+          download it
+        </a>{" "}
+        and install it as you installed this one.
+      </span>
+    );
+  else if (native && !hasCapability(native, "auto_update"))
     status = `${missingCapabilityReason(native, "auto_update")} Download new versions from GitHub.`;
   else if (!u)
     status = native
