@@ -104,3 +104,20 @@ def test_the_worker_without_logging_says_it_on_stderr(monkeypatch, capsys):
     monkeypatch.setattr(engine.log, "hasHandlers", lambda: False)
     engine._say("whisper.cpp on the CPU")
     assert capsys.readouterr().err == "whisper.cpp on the CPU\n"
+
+
+def _extension_in(monkeypatch, folder: Path, *files: str) -> None:
+    for name in files:
+        (folder / name).write_bytes(b"")
+    monkeypatch.setitem(sys.modules, "_pywhispercpp", SimpleNamespace(__file__=str(folder / "_pywhispercpp.so")))
+
+
+def test_a_gpu_build_is_told_by_its_vulkan_backend(monkeypatch, tmp_path):
+    _extension_in(monkeypatch, tmp_path, *engine._GGML, engine._VULKAN)
+    assert engine._ggml_folder() == tmp_path
+
+
+def test_the_linux_wheels_stray_ggml_copies_are_not_a_gpu_build(monkeypatch, tmp_path):
+    # (pywhispercpp's Linux wheel has libggml.so and libggml-base.so next to the extension, besides the ones it uses)
+    _extension_in(monkeypatch, tmp_path, *engine._GGML)
+    assert engine._ggml_folder() is None
