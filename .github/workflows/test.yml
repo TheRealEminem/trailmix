@@ -86,3 +86,22 @@ jobs:
           New-Item -ItemType Directory -Force build/windows/python, build/windows/backend, build/windows/ui, build/windows/bin | Out-Null
           Copy-Item VERSION build/windows/VERSION
       - run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
+
+  # The same desktop shell on Linux: compiles, and its own tests pass (with the Linux parts: the sound server's
+  # apps, the shortcuts' keys, open at login, the AppImage updater's checks).
+  desktop-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libpulse-dev
+      # tauri-build checks that the bundled resources (what scripts/build-linux.py stages) exist, even for a test.
+      - name: Stand-ins for the staged resources
+        run: |
+          mkdir -p build/linux/python build/linux/backend build/linux/ui build/linux/bin
+          cp VERSION build/linux/VERSION
+      - run: cargo test --manifest-path desktop/src-tauri/Cargo.toml

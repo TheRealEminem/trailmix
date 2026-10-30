@@ -1,15 +1,21 @@
-//! Trailmix for Windows: the web app in its own window, a tray icon that records, and the Trailmix server
-//! (with its own Python, speech engine and ffmpeg) started and watched over by this process. The same
+//! Trailmix for Windows and Linux: the web app in its own window, a tray icon that records, and the Trailmix
+//! server (with its own Python, speech engine and ffmpeg) started and watched over by this process. The same
 //! shape as the Mac menu bar app (helper/Sources/TrailmixHelper), talking to the same server API.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
 mod audio;
+// The cards and open at login have a Linux counterpart with the same API (in linux/).
+#[cfg_attr(target_os = "linux", path = "linux/card.rs")]
 mod card;
 mod client;
+#[cfg(windows)]
 mod gui;
 mod hotkeys;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg_attr(target_os = "linux", path = "linux/login.rs")]
 mod login;
 mod model;
 mod prefs;
@@ -18,6 +24,7 @@ mod selftest;
 mod server;
 mod soundcheck;
 mod update;
+#[cfg(windows)]
 mod win;
 mod window;
 mod wire;
@@ -39,6 +46,13 @@ fn main() {
     if args.iter().any(|a| a == "--list-audio") {
         selftest::list_audio();
         return;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if args.iter().any(|a| a == "--capture-test") {
+            std::process::exit(linux::selftest::capture_test(&args));
+        }
+        linux::before_window();
     }
     let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
     if args.iter().any(|a| a == "--version") {

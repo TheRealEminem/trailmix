@@ -35,6 +35,16 @@ pub enum Connection {
     Outdated,
 }
 
+/// What this computer is, as the recorder reports it (and releases are named).
+#[cfg(all(windows, target_arch = "aarch64"))]
+pub const PLATFORM: &str = "windows-arm64";
+#[cfg(all(windows, not(target_arch = "aarch64")))]
+pub const PLATFORM: &str = "windows-x64";
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+pub const PLATFORM: &str = "linux-arm64";
+#[cfg(all(target_os = "linux", not(target_arch = "aarch64")))]
+pub const PLATFORM: &str = "linux-x86_64";
+
 pub type Sources = Vec<(u8, Box<dyn AudioSource>)>;
 pub type MakeSources = Box<dyn Fn(&Prefs) -> Result<Sources, String> + Send>;
 
@@ -162,7 +172,10 @@ impl Model {
             observers: Mutex::new(Vec::new()),
             updater: Mutex::new(None),
             version,
+            #[cfg(windows)]
             machine: std::env::var("COMPUTERNAME").unwrap_or_default(),
+            #[cfg(target_os = "linux")]
+            machine: crate::linux::hostname(),
             server_override,
         })
     }
@@ -258,12 +271,17 @@ impl Model {
     /// Which build of the recorder this is, and what it can do: the web app hides what's missing. (An
     /// installed Trailmix also opens at login and updates itself: `recorder_info` adds those.)
     pub fn capabilities() -> Vec<&'static str> {
-        let mut caps = vec!["system_audio"];
-        if audio::wasapi::process_loopback_supported() {
-            caps.push("per_app_audio");
+        #[cfg(target_os = "linux")]
+        return crate::linux::capabilities();
+        #[cfg(windows)]
+        {
+            let mut caps = vec!["system_audio"];
+            if audio::per_app_supported() {
+                caps.push("per_app_audio");
+            }
+            caps.extend(["hotkeys", "call_reminder", "sound_check"]);
+            caps
         }
-        caps.extend(["hotkeys", "call_reminder", "sound_check"]);
-        caps
     }
 
     pub fn set_updater(&self, updater: Arc<Updater>) {
@@ -307,7 +325,8 @@ impl Model {
             capabilities.push("open_at_login");
         }
         let updater = self.updater();
-        if updater.is_some() {
+        // (A Linux .deb or .rpm install only says an update is out: the package manager installs it.)
+        if updater.as_ref().map(|u| u.installs_itself()).unwrap_or(false) {
             capabilities.push("auto_update");
         }
         json!({
@@ -324,7 +343,7 @@ impl Model {
             "lockdown": updater.as_ref().map(|u| u.lockdown()),
             "update": updater.as_ref().map(|u| u.report()),
             "call_app": self.call_app(),
-            "platform": if cfg!(target_arch = "aarch64") { "windows-arm64" } else { "windows-x64" },
+            "platform": PLATFORM,
             "capabilities": capabilities,
         })
     }
@@ -340,8 +359,11 @@ impl Model {
                 }
             }
         }
-        let name = audio::wasapi::default_microphone();
+        let name = audio::default_microphone();
+        #[cfg(windows)]
         let allowed = !crate::win::mic_blocked();
+        #[cfg(not(windows))]
+        let allowed = true;
         self.lock().mic_cache = Some((Instant::now(), name.clone(), allowed));
         (name, allowed)
     }

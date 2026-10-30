@@ -394,7 +394,7 @@ fn make_menu(app: &AppHandle, model: &Arc<Model>, apps: &[AudioApp]) -> tauri::R
     let source = prefs.meeting_source();
     let all = CheckMenuItem::with_id(app, "source:all", "All apps", true, source == MeetingSource::AllApps, None::<&str>)?;
     let none = CheckMenuItem::with_id(app, "source:none", "Your mic only (in person)", true, source == MeetingSource::None, None::<&str>)?;
-    let per_app = crate::audio::wasapi::process_loopback_supported();
+    let per_app = crate::audio::per_app_supported();
     let mut app_items: Vec<CheckMenuItem<Wry>> = Vec::new();
     for a in apps {
         let label = if a.playing { format!("{} · playing", a.name) } else { a.name.clone() };

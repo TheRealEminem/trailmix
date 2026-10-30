@@ -12,12 +12,20 @@ use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
 pub const LABEL: &str = "main";
-/// Where the bundled loading page lives (Tauri serves `frontendDist` here on Windows).
+/// Where the bundled loading page lives (Tauri serves `frontendDist` here on Windows, tauri:// on Linux).
+#[cfg(windows)]
 const LOADING_PAGE: &str = "http://tauri.localhost/index.html";
+#[cfg(not(windows))]
+const LOADING_PAGE: &str = "tauri://localhost/index.html";
+/// Where the page reaches the trailmix:// protocol.
+#[cfg(windows)]
+const BRIDGE: &str = "http://trailmix.localhost/message";
+#[cfg(not(windows))]
+const BRIDGE: &str = "trailmix://localhost/message";
 
 const BRIDGE_SCRIPT: &str = r#"(() => {
   const send = (message) => {
-    try { fetch('http://trailmix.localhost/message?m=' + encodeURIComponent(String(message)), { mode: 'no-cors' }).catch(() => {}); } catch (e) {}
+    try { fetch('__BRIDGE__?m=' + encodeURIComponent(String(message)), { mode: 'no-cors' }).catch(() => {}); } catch (e) {}
   };
   window.webkit = window.webkit || {};
   window.webkit.messageHandlers = window.webkit.messageHandlers || {};
@@ -35,7 +43,7 @@ fn same_site(a: &Url, b: &Url) -> bool {
 }
 
 fn is_ours(url: &Url) -> bool {
-    if url.scheme() == "about" || url.as_str().starts_with(LOADING_PAGE) || url.host_str() == Some("tauri.localhost") {
+    if url.scheme() == "about" || url.scheme() == "tauri" || url.as_str().starts_with(LOADING_PAGE) || url.host_str() == Some("tauri.localhost") {
         return true;
     }
     match allowed().lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
@@ -53,7 +61,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .min_inner_size(420.0, 560.0)
         .center()
         .visible(false)
-        .initialization_script(BRIDGE_SCRIPT)
+        .initialization_script(BRIDGE_SCRIPT.replace("__BRIDGE__", BRIDGE))
         .on_navigation(move |url| {
             if is_ours(url) {
                 return true;
@@ -125,13 +133,60 @@ pub fn loading_failed(app: &AppHandle, text: &str) {
     }
 }
 
+/// The script `evaluate` runs: the expression's value as JSON text, "null" if it threw.
+fn evaluation(script: &str) -> String {
+    format!("(() => {{ try {{ return JSON.stringify((() => {{ return {script} }})()) ?? 'null' }} catch (e) {{ return 'null' }} }})()")
+}
+
 /// Runs JavaScript in the page and returns its result as JSON text ("null" if there's no page or it threw).
+#[cfg(target_os = "linux")]
+pub fn evaluate(window: &WebviewWindow, script: &str) -> String {
+    use javascriptcore::ValueExt;
+    use webkit2gtk::WebViewExt;
+    let (tx, rx) = mpsc::channel::<String>();
+    let wrapped = evaluation(script);
+    let run = window.with_webview(move |webview| {
+        webview.inner().evaluate_javascript(&wrapped, None, None, None::<&gtk::gio::Cancellable>, move |result| {
+            let _ = tx.send(match result {
+                Ok(value) => value.to_str().to_string(),
+                Err(_) => "null".into(),
+            });
+        });
+    });
+    if run.is_err() {
+        return "null".into();
+    }
+    rx.recv_timeout(Duration::from_secs(15)).unwrap_or_else(|_| "null".into())
+}
+
+/// Saves what the window shows as a PNG, after `wait`.
+#[cfg(target_os = "linux")]
+pub fn snapshot(window: &WebviewWindow, path: &str, wait: Duration) -> bool {
+    use webkit2gtk::{SnapshotOptions, SnapshotRegion, WebViewExt};
+    std::thread::sleep(wait);
+    let (tx, rx) = mpsc::channel::<bool>();
+    let path = path.to_string();
+    let run = window.with_webview(move |webview| {
+        webview.inner().snapshot(SnapshotRegion::Visible, SnapshotOptions::NONE, None::<&gtk::gio::Cancellable>, move |result| {
+            let saved = result
+                .ok()
+                .and_then(|surface| cairo::ImageSurface::try_from(surface).ok())
+                .and_then(|image| std::fs::File::create(&path).ok().map(|mut file| image.write_to_png(&mut file).is_ok()))
+                .unwrap_or(false);
+            let _ = tx.send(saved);
+        });
+    });
+    if run.is_err() {
+        return false;
+    }
+    rx.recv_timeout(Duration::from_secs(20)).unwrap_or(false)
+}
+
+/// Runs JavaScript in the page and returns its result as JSON text ("null" if there's no page or it threw).
+#[cfg(windows)]
 pub fn evaluate(window: &WebviewWindow, script: &str) -> String {
     let (tx, rx) = mpsc::channel::<String>();
-    let wrapped = format!(
-        "(() => {{ try {{ return JSON.stringify((() => {{ return {script} }})()) ?? 'null' }} catch (e) {{ return 'null' }} }})()"
-    );
-    let js = windows::core::HSTRING::from(wrapped);
+    let js = windows::core::HSTRING::from(evaluation(script));
     let run = window.with_webview(move |webview| unsafe {
         let Ok(core) = webview.controller().CoreWebView2() else { return };
         let handler = webview2_com::ExecuteScriptCompletedHandler::create(Box::new(move |outcome: windows::core::Result<()>, result: String| {
@@ -151,6 +206,7 @@ pub fn evaluate(window: &WebviewWindow, script: &str) -> String {
 }
 
 /// Saves what the window shows as a PNG, after `wait`.
+#[cfg(windows)]
 pub fn snapshot(window: &WebviewWindow, path: &str, wait: Duration) -> bool {
     std::thread::sleep(wait);
     let (tx, rx) = mpsc::channel::<bool>();
