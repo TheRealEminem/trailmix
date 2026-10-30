@@ -18,6 +18,7 @@ import httpx
 
 import database as db
 import gemini_client
+import hardware
 import meeting_text
 import platform_words
 import pricing
@@ -29,9 +30,14 @@ OLLAMA_KEEP_ALIVE = os.getenv("OLLAMA_KEEP_ALIVE", "0")  # "0" = unload right af
 TIMEOUT = httpx.Timeout(600, connect=8)
 MAX_TOKENS = 16000
 OLLAMA_NUM_CTX = 16384  # a bigger window costs RAM a 16 GB Mac doesn't have to spare
-# How much text (in tokens) each provider can take in one request. Unknown OpenAI-compatible servers are
-# often small local models, so they get the conservative figure.
-CONTEXT_TOKENS = {"ollama": OLLAMA_NUM_CTX, "custom": 16384, "deepseek": 60000}
+OLLAMA_BIG_CTX = 32768  # where this computer has room for it: an hour and a half of meeting in one request
+BIG_CTX_MEMORY_GB = 32  # hardware.profile()'s ai_memory_gb that leaves that room
+# A model wants about this many times its download in room: itself, its context window, and what else is running.
+# The suggested models' min_gb (model-ranks.json) follow the same rule.
+MODEL_ROOM_FACTOR = 1.6
+# How much text (in tokens) each provider can take in one request (Ollama's is ollama_num_ctx). Unknown
+# OpenAI-compatible servers are often small local models, so they get the conservative figure.
+CONTEXT_TOKENS = {"custom": 16384, "deepseek": 60000}
 DEFAULT_CONTEXT_TOKENS = 120000
 CHARS_PER_TOKEN = 3.0      # meeting transcripts run ~3.1 characters per token; err on the safe side
 RESERVED_TOKENS = 4500     # the reply, the instructions and the meeting description
@@ -116,7 +122,7 @@ def model_for(pid: str, cfg: dict) -> str:
     if pid == "ollama":
         if cfg["ollama_model"]:
             return cfg["ollama_model"]
-        return preferred_ollama_model(_ollama_tags(cfg))
+        return preferred_ollama_model(_ollama_tags(cfg), ollama_room_gb(cfg))
     return cfg[f"{pid}_model"]
 
 
@@ -144,12 +150,22 @@ def _family_rank(name: str) -> int:
     return next((i for i, f in enumerate(_PREFERRED_FAMILIES) if name.startswith(f)), len(_PREFERRED_FAMILIES))
 
 
-def preferred_ollama_model(tags: list[dict]) -> str:
+def ollama_room_gb(cfg: dict) -> float | None:
+    """How much memory a model can have where Ollama runs (hardware.py), or None for Ollama on another machine."""
+    return hardware.profile()["ai_memory_gb"] if cfg.get("ollama_url") and is_local("ollama", cfg) else None
+
+
+def preferred_ollama_model(tags: list[dict], room_gb: float | None = None) -> str:
     """The installed model most likely to write good notes: a known instruction-following family, and within
-    it the biggest size up to ~14B (bigger rarely fits next to everything else in RAM)."""
+    it the biggest that fits in `room_gb` (ollama_room_gb), or up to ~14B where that isn't known (bigger rarely
+    fits next to everything else in RAM)."""
+    def too_big(m: dict) -> bool:
+        if room_gb is None:
+            return ollama_params(m) > 15
+        return (m.get("size") or 0) / 1e9 * MODEL_ROOM_FACTOR > room_gb
+
     def rank(m: dict) -> tuple:
-        size = ollama_params(m)
-        return (_family_rank(m["name"]), size > 15, -size)
+        return (_family_rank(m["name"]), too_big(m), -ollama_params(m))
 
     usable = [m for m in tags if "embed" not in m["name"].lower()]
     return min(usable, key=rank)["name"] if usable else ""
@@ -157,7 +173,7 @@ def preferred_ollama_model(tags: list[dict]) -> str:
 
 def context_chars(pid: str, cfg: dict) -> int:
     """How much transcript (in characters) fits in one request to this provider, leaving room for the rest."""
-    tokens = CONTEXT_TOKENS.get(pid, DEFAULT_CONTEXT_TOKENS)
+    tokens = ollama_num_ctx(cfg) if pid == "ollama" else CONTEXT_TOKENS.get(pid, DEFAULT_CONTEXT_TOKENS)
     return int((tokens - RESERVED_TOKENS) * CHARS_PER_TOKEN)
 
 
@@ -215,9 +231,16 @@ def small_ollama_model(cfg: dict, most_b: float = 4.5) -> dict | None:
     return min(small, key=lambda m: (_family_rank(m["name"]), -ollama_params(m))) if small else None
 
 
+def ollama_num_ctx(cfg: dict) -> int:
+    """The context window to ask Ollama for: twice the usual where it runs on this computer and there's room
+    (a long meeting then fits in one request), the usual elsewhere (another machine's room isn't known)."""
+    room = ollama_room_gb(cfg)
+    return OLLAMA_BIG_CTX if room is not None and room >= BIG_CTX_MEMORY_GB else OLLAMA_NUM_CTX
+
+
 def ollama_ram_needed_gb(cfg: dict) -> float:
     """Estimated RAM to load the chosen model plus its context window."""
-    return (ollama_model_size_gb(cfg) or 0) * 1.1 + 1.5
+    return (ollama_model_size_gb(cfg) or 0) * 1.1 + 1.5 * ollama_num_ctx(cfg) / OLLAMA_NUM_CTX
 
 
 def _ollama(cfg: dict, prompt: str, system: str | None, keep_alive: str, temperature: float = 0.2,
@@ -230,7 +253,10 @@ def _ollama(cfg: dict, prompt: str, system: str | None, keep_alive: str, tempera
         "prompt": prompt,
         "stream": bool(on_text),
         "keep_alive": keep_alive,
-        "options": {"num_ctx": OLLAMA_NUM_CTX, "temperature": temperature},
+        # Models that think first (qwen3, deepseek-r1) would otherwise write their thinking into the notes;
+        # models that don't ignore it.
+        "think": False,
+        "options": {"num_ctx": ollama_num_ctx(cfg), "temperature": temperature},
     }
     if system:
         body["system"] = system

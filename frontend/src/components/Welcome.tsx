@@ -863,7 +863,10 @@ function NotesStep({
     >
       {device && (
         <p className="-mt-3 mb-4 text-hint text-ink-soft">
-          {cap(platformWords().thisComputer)}: {[device.chip, `${device.ram_gb} GB memory`, `${device.disk_free_gb} GB free`].filter(Boolean).join(" · ")}
+          {cap(platformWords().thisComputer)}:{" "}
+          {[device.chip, device.gpu, `${device.ram_gb} GB memory`, `${device.disk_free_gb} GB free`]
+            .filter(Boolean)
+            .join(" · ")}
         </p>
       )}
       <div role="radiogroup" aria-label="Notes" className="space-y-3">
@@ -1023,6 +1026,7 @@ function OllamaSetup({ onReady }: { onReady: () => void }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <button type="button" className="btn btn-sm btn-primary" onClick={() => run(() => api.pullOllamaModel())}>
             Download {o.recommended}
+            {o.recommended_gb ? ` (${o.recommended_gb} GB)` : ""}
           </button>
           <span>Writes good notes and suits {platformWords().thisComputer}.</span>
         </div>
