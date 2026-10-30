@@ -97,13 +97,13 @@ pub fn current() -> Option<Shown> {
             let l = live.as_ref()?;
             let mut lines = Vec::new();
             collect_text(l.window.upcast_ref(), &mut lines);
-            Some(Shown {
-                visible: l.window.is_visible(),
-                above: true,
-                no_activate: !l.window.accepts_focus(),
-                focused: l.window.has_toplevel_focus() || l.window.is_active(),
-                text: lines.join("\n"),
-            })
+            // On X11, whether the keyboard is the card's own: an X server with no window manager (or one where the
+            // focus follows the mouse) sends the keys to whatever the pointer is over, which GTK counts as focus too.
+            let focused = match (x11_id(&l.window), x11_focus()) {
+                (Some(card), Some(focus)) => card == focus,
+                _ => l.window.has_toplevel_focus() || l.window.is_active(),
+            };
+            Some(Shown { visible: l.window.is_visible(), above: true, no_activate: !l.window.accepts_focus(), focused, text: lines.join("\n") })
         })
     })
     .flatten()
@@ -420,6 +420,22 @@ fn end_typing(give_back: bool) {
     if let Some(before) = before.flatten().filter(|_| give_back) {
         x11_set_focus(before);
     }
+}
+
+extern "C" {
+    // GDK's own (libgdk-3, which GTK links): the X11 window behind a GDK one.
+    fn gdk_x11_window_get_xid(window: *mut gtk::gdk::ffi::GdkWindow) -> std::os::raw::c_ulong;
+}
+
+/// The card's X11 window (X11 only).
+fn x11_id(window: &gtk::Window) -> Option<u32> {
+    use gtk::glib::translate::ToGlibPtr;
+    if crate::linux::session() != crate::linux::Session::X11 {
+        return None;
+    }
+    let gdk_window = window.window()?;
+    let raw: *mut gtk::gdk::ffi::GdkWindow = gdk_window.to_glib_none().0;
+    Some(unsafe { gdk_x11_window_get_xid(raw) } as u32)
 }
 
 /// The window with the keyboard now (X11 only).

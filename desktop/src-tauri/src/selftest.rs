@@ -668,6 +668,7 @@ fn catch_up(t: &mut Test, model: &Arc<Model>, base: &str, shots: Option<&Path>) 
     c.load();
     let offered = catch_up_card(10.0, |s| s.text.contains("What did I miss?") && c.plan().map(|p| p.ready).unwrap_or(false));
     t.expect(offered.is_some(), &format!("the card offers the quick questions ({:?})", c.plan().map(|p| p.label.or(p.reason))));
+    thread::sleep(Duration::from_millis(800)); // (it grew upwards: let it settle where it goes before clicking)
     let how = tap(CardTarget::Quick(0), || c.pending().is_some() || c.last_answer().is_some() || c.error().is_some());
     t.expect(how.is_some(), &format!("What did I miss?: {}", how.unwrap_or("the card didn't take the click")));
     let reading = catch_up_card(3.0, |s| s.text.contains(READING)).is_some();
@@ -681,6 +682,7 @@ fn catch_up(t: &mut Test, model: &Arc<Model>, base: &str, shots: Option<&Path>) 
     println!("9e. A question typed in the box; one that fails says why");
     #[cfg(windows)]
     let front = gui::foreground();
+    thread::sleep(Duration::from_millis(800));
     let real = catchup_card::ask_typed("fail", true);
     let typed = real || catchup_card::ask_typed("fail", false);
     t.expect(
