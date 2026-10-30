@@ -21,7 +21,7 @@
         "bundleMediaFramework": false
       },
       "deb": {
-        "depends": ["libayatana-appindicator3-1", "libpulse0"],
+        "depends": ["libpulse0"],
         "section": "sound"
       },
       "rpm": {
