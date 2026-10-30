@@ -189,6 +189,18 @@ fn window_in_front(app: &AppHandle) -> bool {
 /// "Type the new shortcut": a card that takes the keyboard (the shortcuts are off meanwhile, so pressing
 /// the current one doesn't start a recording, as on the Mac).
 fn change_shortcut(app: &AppHandle, which: i32) {
+    // Through the GlobalShortcuts portal (Wayland) the desktop keeps the keys: they're changed in its settings.
+    #[cfg(target_os = "linux")]
+    if crate::linux::portal::active() {
+        if !crate::linux::portal::configure() {
+            card::note(
+                "Your desktop keeps Trailmix's shortcuts",
+                "Change them in its settings: Keyboard, then Shortcuts (Trailmix is listed there).",
+                8,
+            );
+        }
+        return;
+    }
     let model = app.state::<AppState>().model.clone();
     hotkeys::register(&[]);
     let what = if which == RECORD { "Start / stop" } else { "Mark moment" };
@@ -376,6 +388,15 @@ fn mark_text(snapshot: &Snapshot, prefs: &Prefs) -> (String, bool) {
 }
 
 fn shortcut_label(what: &str, shortcut: Shortcut, id: i32) -> String {
+    // Through the GlobalShortcuts portal (Wayland), the keys are what the desktop bound, if it has.
+    #[cfg(target_os = "linux")]
+    if crate::linux::portal::active() {
+        return match crate::linux::portal::trigger_description(id) {
+            Some(keys) => format!("{what} shortcut: {keys}…"),
+            None if hotkeys::taken().contains(&id) => format!("{what} shortcut: not set up in your desktop…"),
+            None => format!("{what} shortcut: {}…", shortcut.display()),
+        };
+    }
     let taken = if hotkeys::taken().contains(&id) { " (taken by another app)" } else { "" };
     format!("{what} shortcut: {}{taken}…", shortcut.display())
 }
@@ -624,11 +645,12 @@ mod tests {
     #[test]
     fn the_menu_shows_the_shortcuts() {
         let prefs = Prefs::default();
-        assert_eq!(status_text(&idle(), &prefs), "Ready · Ctrl+Alt+Shift+R to record");
-        assert_eq!(record_text(&idle(), &prefs), ("Record\tCtrl+Alt+Shift+R".to_string(), true));
+        let record = Shortcut::RECORD_DEFAULT.display(); // (Ctrl+Alt+Shift+R; S on Linux)
+        assert_eq!(status_text(&idle(), &prefs), format!("Ready · {record} to record"));
+        assert_eq!(record_text(&idle(), &prefs), (format!("Record\t{record}"), true));
         assert_eq!(mark_text(&idle(), &prefs), ("Mark Moment\tCtrl+Alt+Shift+M".to_string(), false));
         let recording = Snapshot { phase: Phase::Recording, ..idle() };
-        assert_eq!(record_text(&recording, &prefs).0, "Stop Recording\tCtrl+Alt+Shift+R");
+        assert_eq!(record_text(&recording, &prefs).0, format!("Stop Recording\t{record}"));
         assert!(mark_text(&recording, &prefs).1);
     }
 
