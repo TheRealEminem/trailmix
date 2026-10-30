@@ -66,7 +66,7 @@ def snapshot() -> dict:
         "memory_pressure": memory_pressure(),
         "audio_gb": round(dir_size(db.AUDIO_DIR) / GB, 2),
         "headroom_gb": HEADROOM_GB,
-        "final_model_gb": local_engine.FINAL_MODEL_RAM_GB,
+        "final_model_gb": local_engine.final_model_ram_gb(),
         "ollama_model_gb": round(llm_engine.ollama_model_size_gb(settings.get_all()) or 0, 1),
     }
 

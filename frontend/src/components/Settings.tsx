@@ -18,6 +18,7 @@ import type {
   ProviderId,
   RecordingLaws as RecordingLawsT,
   Settings as SettingsT,
+  SpeechModels,
   Tracker,
 } from "../api";
 import { tildePath } from "../format";
@@ -915,6 +916,96 @@ const callApps = (native: NativeRecorder) =>
   recorderWords(native.platform).os === "macos" ? "Zoom, Teams, FaceTime, Slack" : "Zoom, Teams, Slack, WhatsApp";
 
 /** "Zoom call started. Record it?": the menu bar recorder's reminder, switched here (or in its menu). */
+const AUTOMATIC = "automatic";
+
+/**
+ * Settings → Transcription, on this computer: which accurate speech model to use. "Automatic" lets the engine pick
+ * for the hardware; another one downloads when it's picked, and one downloaded but not used can be removed.
+ */
+function SpeechModelPicker({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT>) => Promise<void> }) {
+  const [st, setSt] = useState<SpeechModels | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const final = st?.models.find((m) => m.kind === "final");
+  const busy = !!final?.downloading;
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api
+        .speechModels()
+        .then((v) => alive && setSt(v))
+        .catch(() => undefined);
+    load();
+    const t = setInterval(load, busy ? 1500 : 15000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [busy, s.local_speech_model]);
+  if (!st?.choices.length) return null;
+
+  const auto = st.choices.find((c) => c.id === st.automatic);
+  const current = st.choices.find((c) => c.in_use);
+  const spare = st.choices.filter((c) => c.installed && !c.in_use);
+  const act = async (call: () => Promise<SpeechModels>) => {
+    setError(null);
+    try {
+      setSt(await call());
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  const pick = (v: string) =>
+    act(async () => {
+      await save({ local_speech_model: v === AUTOMATIC ? "" : v });
+      return api.downloadSpeechModels();
+    });
+  const hint = current
+    ? `${current.speed}. ${current.size_gb} GB download, about ${current.ram_gb} GB of memory while it transcribes.` +
+      (busy ? ` Downloading${final?.progress != null ? ` (${Math.round(final.progress * 100)}%)` : "…"}` : "") +
+      (!busy && !current.installed ? " It downloads before the next transcript." : "")
+    : undefined;
+
+  return (
+    <>
+      <Row label="Speech model" hint={hint}>
+        <Select
+          label="Speech model"
+          value={st.chosen && st.choices.some((c) => c.id === st.chosen) ? st.chosen : AUTOMATIC}
+          onChange={(v) => void pick(v)}
+          className="w-full sm:w-72"
+          options={[
+            {
+              value: AUTOMATIC,
+              label: `Automatic${auto ? ` (${auto.label})` : ""}`,
+              hint: `Picked for ${platformWords().thisComputer}`,
+            },
+            ...st.choices.map((c) => ({
+              value: c.id,
+              label: c.label,
+              hint: `${c.size_gb} GB · ${c.speed}${c.installed ? " · downloaded" : ""}`,
+            })),
+          ]}
+        />
+      </Row>
+      {(spare.length > 0 || error) && (
+        <div className="space-y-1.5 py-3 text-hint text-ink-soft">
+          {spare.map((c) => (
+            <p key={c.id} className="flex flex-wrap items-center gap-x-3">
+              <span>
+                Also downloaded: {c.label} ({c.size_gb} GB)
+              </span>
+              <button type="button" className="text-forest underline" onClick={() => void act(() => api.removeSpeechModel(c.id))}>
+                Remove
+              </button>
+            </p>
+          ))}
+          {error && <p className="text-trail-deep">{error}</p>}
+        </div>
+      )}
+    </>
+  );
+}
+
 function CallReminders({ native }: { native: NativeRecorder }) {
   const [on, setOn] = useState<boolean | null>(null); // until the recorder reports the change
   useEffect(() => {
@@ -2084,6 +2175,9 @@ export default function Settings({
             ]}
           />
         </Row>
+        {s.transcribe_engine === "local" && health?.transcription.local_available && (
+          <SpeechModelPicker s={s} save={save} />
+        )}
         {s.transcribe_engine === "trailmix" && (
           <p className="py-3.5 text-hint leading-relaxed text-ink-soft">
             {!s.secret_hints?.cloud_token

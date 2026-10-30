@@ -9,6 +9,17 @@ NAME = "MLX"
 LIVE_MODEL = "mlx-community/whisper-base-mlx"
 FINAL_MODEL = "mlx-community/whisper-large-v3-turbo"
 FINAL_MODEL_RAM_GB = 3.0  # rough peak, for the RAM gate
+# The accurate models it offers in Settings, smallest first (download size and rough peak memory in GB).
+MODELS = [
+    {"id": "mlx-community/whisper-small-mlx", "label": "Whisper Small", "size_gb": 0.5, "ram_gb": 1.0,
+     "speed": "Fastest, least accurate"},
+    {"id": "mlx-community/distil-whisper-large-v3", "label": "Distil-Whisper Large v3", "size_gb": 1.5, "ram_gb": 2.5,
+     "speed": "Fast, English only"},
+    {"id": FINAL_MODEL, "label": "Whisper Large v3 Turbo", "size_gb": 1.6, "ram_gb": FINAL_MODEL_RAM_GB,
+     "speed": "Fast and accurate"},
+    {"id": "mlx-community/whisper-large-v3-mlx", "label": "Whisper Large v3", "size_gb": 3.1, "ram_gb": 5.0,
+     "speed": "Most accurate, about twice as slow"},
+]
 
 
 def run(audio: np.ndarray, model: str, prompt: str | None, language: str | None, meeting: bool = False) -> list[dict]:

@@ -59,6 +59,7 @@ DEFAULTS = {
     "transcribe_engine": "local",       # local (MLX or whisper.cpp on this computer) | remote (OpenAI-compatible endpoint) | gemini (speaker labels)
                                         # | trailmix (Trailmix Cloud)
     "transcribe_url": "",               # e.g. https://api.openai.com/v1 or http://my-mac:8770/v1
+    "local_speech_model": "",           # the accurate local model picked in Settings (local_engine.catalog); "": automatic
     "transcribe_api_key": "",
     "transcribe_model": "whisper-1",
     "transcribe_live_model": "",        # empty = same as transcribe_model
