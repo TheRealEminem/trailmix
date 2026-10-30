@@ -9,3 +9,8 @@ anthropic>=1.0
 fpdf2>=2.8
 pypdfium2>=4.30  # attachments: PDF text, previews and flattening
 pillow-heif>=0.18  # attachments: iPhone (HEIC) photos
+# attachments: reading photos and scanned pages on this computer where Apple's text recognition isn't (ocr.py; its
+# models download on first use, through huggingface_hub, which also fetches the speech models)
+onnxruntime>=1.20; sys_platform != "darwin"
+huggingface_hub
+pyyaml

@@ -105,3 +105,73 @@ jobs:
           mkdir -p build/linux/python build/linux/backend build/linux/ui build/linux/bin
           cp VERSION build/linux/VERSION
       - run: cargo test --manifest-path desktop/src-tauri/Cargo.toml
+
+  # Self-hosting: the Docker image builds and transcribes speech by itself with whisper.cpp's tiny model, and the
+  # transcription worker in the same image answers too.
+  docker:
+    runs-on: ubuntu-latest
+    env:
+      TINY: ggerganov/whisper.cpp:ggml-tiny.bin
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t trailmix .
+      - run: docker image ls trailmix
+      - name: Start the server
+        run: |
+          docker run -d --name trailmix -p 127.0.0.1:8765:8765 -e TRAILMIX_WHISPER_MODEL=$TINY -e TRAILMIX_LIVE_MODEL=$TINY \
+            -e TRAILMIX_WHISPER_RAM_GB=0.5 -e TRAILMIX_SWAP_DISK_FREE=0 -e OLLAMA_URL=http://127.0.0.1:9 trailmix
+          for _ in $(seq 1 60); do curl -fs -o /dev/null http://127.0.0.1:8765/api/auth && exit 0; sleep 1; done
+          exit 1
+      - run: python3 scripts/smoke_test.py transcribe http://127.0.0.1:8765 scripts/fixtures/them.wav login Wednesday pricing
+      - name: The transcription worker in the same image
+        run: |
+          docker run -d --name worker -p 127.0.0.1:8770:8770 -e TRAILMIX_WORKER_TOKEN=ci -e TRAILMIX_WHISPER_MODEL=$TINY \
+            trailmix python -m transcription_worker
+          for _ in $(seq 1 30); do curl -fs -o health.json -H "Authorization: Bearer ci" http://127.0.0.1:8770/health && break; sleep 1; done
+          grep -q '"engine":"whisper.cpp"' health.json
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8770/health)" = 401   # the token is needed
+          curl -fsS -H "Authorization: Bearer ci" -F file=@scripts/fixtures/them.wav -F model=large \
+            http://127.0.0.1:8770/v1/audio/transcriptions | tee said.json
+          grep -qi wednesday said.json
+      - if: failure()
+        run: docker logs trailmix; docker logs worker || true
+
+  # The transcription worker that a Mac, PC or Linux machine runs for a server install, on real speech with
+  # whisper.cpp; on Windows also started the way trailmix.ps1 starts it, from nothing.
+  worker:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-whispercpp.txt
+      - run: pip install -r backend/requirements-whispercpp.txt imageio-ffmpeg pytest  # ffmpeg from imageio-ffmpeg, as on Windows
+      - run: python -m pytest -q backend/tests/test_transcription_worker.py
+        env:
+          TRAILMIX_ENGINE_TEST: "1"
+      - name: trailmix.ps1 worker
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:TRAILMIX_WORKER_PORT = "8771"
+          $env:TRAILMIX_WORKER_TOKEN = "ci"
+          $worker = Start-Process powershell -PassThru -NoNewWindow -RedirectStandardOutput worker.log -RedirectStandardError worker.err `
+            -ArgumentList "-ExecutionPolicy", "Bypass", "-File", ".\trailmix.ps1", "worker"
+          $headers = @{ Authorization = "Bearer ci" }
+          $health = $null
+          foreach ($i in 1..300) {
+            try { $health = Invoke-RestMethod -Headers $headers http://127.0.0.1:8771/health; break } catch { Start-Sleep 2 }
+          }
+          Get-Content worker.log, worker.err -ErrorAction SilentlyContinue
+          if (-not $health -or $health.engine -ne "whisper.cpp") { throw "The worker didn't start: $($health | ConvertTo-Json)" }
+          $form = @{ file = Get-Item scripts/fixtures/them.wav; model = "ggerganov/whisper.cpp:ggml-tiny.bin" }
+          $said = Invoke-RestMethod -Method Post -Headers $headers -Form $form http://127.0.0.1:8771/v1/audio/transcriptions
+          $said.text
+          if ($said.text -notmatch "Wednesday") { throw "The transcript doesn't have Wednesday" }
+          Stop-Process -Id $worker.Id -Force
