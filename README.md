@@ -53,7 +53,7 @@ sets up Python and builds the web app, which takes a minute or two. Quit from **
 ./trailmix stop | restart | status | logs
 ./trailmix autostart on      # start the server when you log in
 ./trailmix dev               # development: backend with reload + Vite on :5173
-./trailmix worker            # transcription worker for a server install (see docs/self-hosting.md)
+./trailmix worker            # transcription worker for a server install (.\trailmix.ps1 worker on Windows)
 ./trailmix app               # build "Trailmix Dev.app", a launcher for this folder (DEV badge on its icon)
 ./trailmix helper            # build and open Trailmix Helper, the menu bar recorder (below)
 ```
@@ -61,8 +61,9 @@ sets up Python and builds the web app, which takes a minute or two. Quit from **
 Requires Python 3.11+, Node 18+, `ffmpeg` (`brew install ffmpeg`), and either Ollama with a model pulled or an
 API key for a cloud provider. First use downloads the Whisper models (base ≈ 150 MB, large-v3-turbo ≈ 1.6 GB).
 
-**Self-hosting** on your own server, with your Mac (or a cloud API) doing transcription and summaries: see
-[docs/self-hosting.md](docs/self-hosting.md).
+**Self-hosting** on your own server or NAS with Docker: it transcribes by itself with whisper.cpp
+(`docker compose up -d`), or hands transcription and summaries to a faster Mac, PC or Linux machine of yours
+running the transcription worker, or to a cloud API. See [docs/self-hosting.md](docs/self-hosting.md).
 
 ## Features
 

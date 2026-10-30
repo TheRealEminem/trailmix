@@ -1,4 +1,6 @@
 # Self-hosted Trailmix. Copy .env.example to .env, fill it in, then: docker compose up -d
+# It transcribes by itself (whisper.cpp; the models download into the data volume the first time), or sends audio
+# to a transcription worker or a cloud API: see docs/self-hosting.md.
 # The port is bound to localhost on purpose: put Tailscale (recommended) or a reverse proxy with
 # HTTPS in front of it. Browsers only allow microphone capture over HTTPS (or on localhost).
 services:
@@ -9,6 +11,8 @@ services:
     environment:
       TRAILMIX_ACCESS_TOKEN: ${TRAILMIX_ACCESS_TOKEN:?Set TRAILMIX_ACCESS_TOKEN in .env}
       # Starting values for Settings; anything you change in the UI wins.
+      # local: on this server | remote: TRAILMIX_TRANSCRIBE_URL (empty: remote if a URL is set, else local)
+      TRAILMIX_TRANSCRIBE_ENGINE: ${TRAILMIX_TRANSCRIBE_ENGINE:-}
       TRAILMIX_TRANSCRIBE_URL: ${TRAILMIX_TRANSCRIBE_URL:-}
       TRAILMIX_TRANSCRIBE_API_KEY: ${TRAILMIX_TRANSCRIBE_API_KEY:-}
       TRAILMIX_TRANSCRIBE_MODEL: ${TRAILMIX_TRANSCRIBE_MODEL:-large}
