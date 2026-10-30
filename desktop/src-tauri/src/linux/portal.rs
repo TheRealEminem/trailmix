@@ -8,6 +8,10 @@
 //! (ConfigureShortcuts). A session's shortcuts can only be bound once, so asking for different keys starts a new
 //! session. Presses arrive as the Activated signal.
 //!
+//! The portal only gives shortcuts to an app it knows by an app id, which an app outside a sandbox gets from its
+//! .desktop file (Registry.Register): the .deb and .rpm install /usr/share/applications/Trailmix.desktop, and an
+//! AppImage writes its own into ~/.local/share/applications when there's none.
+//!
 //! It runs on a D-Bus connection and a thread of its own (with its own GLib main context, where the portal's answers
 //! and the presses are delivered), not GTK's, and runs nothing privileged.
 
@@ -260,9 +264,54 @@ fn no_cancel() -> Option<&'static gio::Cancellable> {
     None
 }
 
+/// The marker in the Trailmix.desktop an AppImage writes for itself.
+const APPIMAGE_MARK: &str = "X-Trailmix-AppImage=true";
+
+/// The Trailmix.desktop an AppImage writes for itself, so the portal knows it by name: the portal needs an app id
+/// for shortcuts, and takes one only for an app with a .desktop file (the .deb and .rpm install theirs). It's
+/// also the AppImage's entry in the desktop's app menu.
+pub fn appimage_entry(appimage: &std::path::Path) -> String {
+    format!(
+        "[Desktop Entry]\nType=Application\nName=Trailmix\nComment=Records your meetings and writes the notes\nExec={}\nIcon=Trailmix\nTerminal=false\nCategories=AudioVideo;Audio;Office;\n{APPIMAGE_MARK}\n",
+        crate::login::quoted(appimage)
+    )
+}
+
+/// Whether to (re)write the AppImage's own Trailmix.desktop: there's none anywhere, or there's ours and it starts
+/// another file. One installed by a package (or by you) is left alone.
+pub fn appimage_entry_needed(existing: Option<&str>, appimage: &std::path::Path) -> bool {
+    match existing {
+        None => true,
+        Some(text) => text.contains(APPIMAGE_MARK) && text != appimage_entry(appimage),
+    }
+}
+
+/// For an AppImage: writes ~/.local/share/applications/Trailmix.desktop if no Trailmix.desktop is installed.
+fn appimage_desktop_file() {
+    let Some(appimage) = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from).filter(|p| p.is_file()) else { return };
+    let home = super::xdg_dir("XDG_DATA_HOME", ".local/share").join("applications").join("Trailmix.desktop");
+    let dirs = std::env::var("XDG_DATA_DIRS").ok().filter(|d| !d.is_empty()).unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+    let installed = dirs.split(':').map(|d| std::path::Path::new(d).join("applications").join("Trailmix.desktop")).find(|p| p.is_file());
+    if installed.is_some() {
+        return;
+    }
+    let existing = std::fs::read_to_string(&home).ok();
+    if appimage_entry_needed(existing.as_deref(), &appimage) {
+        if let Some(dir) = home.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if std::fs::write(&home, appimage_entry(&appimage)).is_ok() {
+            thread::sleep(Duration::from_millis(500)); // (for the portal to see it)
+        }
+    }
+}
+
 /// A connection of its own to the session bus, Trailmix named to the portal (before anything else is asked of it:
 /// an app not started from its .desktop file has no app id otherwise), and the portal's GlobalShortcuts version.
 fn connect(address: Option<&str>) -> Option<(gio::DBusConnection, Option<u32>)> {
+    if address.is_none() {
+        appimage_desktop_file();
+    }
     let address = match address {
         Some(address) => address.to_string(),
         None => gio::dbus_address_get_for_bus_sync(gio::BusType::Session, no_cancel()).ok()?.to_string(),
@@ -634,6 +683,18 @@ mod tests {
     fn text_is_quoted_for_gvariant() {
         assert_eq!(quote("it's"), r"'it\'s'");
         assert_eq!(parse("s", &quote(r"a'b\c")).unwrap().str(), Some(r"a'b\c"));
+    }
+
+    #[test]
+    fn an_appimage_names_itself_for_the_portal() {
+        let appimage = std::path::Path::new("/home/me/Apps/Trailmix-linux-x86_64.AppImage");
+        let entry = appimage_entry(appimage);
+        assert!(entry.contains("Exec=\"/home/me/Apps/Trailmix-linux-x86_64.AppImage\"\n"));
+        assert!(entry.starts_with("[Desktop Entry]\n") && entry.contains("Name=Trailmix\n"));
+        assert!(appimage_entry_needed(None, appimage), "none yet");
+        assert!(!appimage_entry_needed(Some(&entry), appimage), "ours, up to date");
+        assert!(appimage_entry_needed(Some(&appimage_entry(std::path::Path::new("/tmp/old.AppImage"))), appimage), "ours, moved");
+        assert!(!appimage_entry_needed(Some("[Desktop Entry]\nName=Trailmix\nExec=trailmix\n"), appimage), "yours: left alone");
     }
 
     // MARK: End to end, against a stand-in portal on a private session bus

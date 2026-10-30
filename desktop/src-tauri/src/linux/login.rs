@@ -21,7 +21,7 @@ fn target(exe: &Path) -> PathBuf {
 
 /// A path as a desktop entry's Exec wants it: in double quotes, with ", `, $ and \ escaped (and the
 /// backslashes escaped again, as every string in the file is).
-fn quoted(path: &Path) -> String {
+pub(crate) fn quoted(path: &Path) -> String {
     let mut out = String::from("\"");
     for c in path.to_string_lossy().chars() {
         match c {
