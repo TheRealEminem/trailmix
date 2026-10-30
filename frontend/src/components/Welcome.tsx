@@ -25,7 +25,7 @@ import {
   UsersIcon,
   WaveIcon,
 } from "./icons";
-import { cap, platformWords } from "../platform";
+import { cap, platformWords, recorderWords } from "../platform";
 import { TRANSCRIBERS, transcriberFor } from "../transcribers";
 import type { Transcriber } from "../transcribers";
 import { Ambient, Logo, TrailScene } from "./illustrations";
@@ -1141,7 +1141,7 @@ function DoneStep({
         You're all set{first ? <span data-private="your details">, {first}</span> : null}.
       </h1>
       <p className="hero-sub mt-2">
-        Start your call as usual (Zoom, Meet, Teams, FaceTime), then press <b className="font-medium text-ink">Start recording</b>
+        Start your call as usual (Zoom, Meet, Teams, {recorderWords(native?.platform).os === "macos" ? "FaceTime" : "Slack"}), then press <b className="font-medium text-ink">Start recording</b>
         {native?.shortcut_record && hasCapability(native, "hotkeys") ? (
           <>
             {" "}
