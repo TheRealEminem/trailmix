@@ -7,12 +7,14 @@ Trailmix server with its own Python, whisper.cpp and ffmpeg, and the web app, so
   python scripts/build-windows.py --arch arm64     for ARM PCs (Snapdragon and the like), built on one (or set TRAILMIX_ARCH)
   set TRAILMIX_VERSION=0.19.0-build.7 ...          another version (semver: X.Y.Z, with an optional -suffix)
   python scripts/build-windows.py --stage-only     only stage build/windows (no Rust build, no installer)
+  set TRAILMIX_GPU_WHISPER=1 ...                   x64: whisper.cpp on the GPU (Vulkan), on the CPU without one
 
 Needs: Windows, Python 3.9+, Node.js, Rust (cargo) and internet access (downloads the Python runtime once
-into build/cache, plus Python packages and Rust crates). Both builds compile whisper.cpp. The x64 one, with
-GPU support (Vulkan), needs Visual Studio's C++ tools and the Vulkan SDK (VULKAN_SDK set to it, as its installer
-does), and keeps what it compiled in build/cache. The ARM one, as there's no ARM wheel, needs Visual Studio's
-ARM64 C++ tools and its Clang tools (clang-cl). The installer is unsigned for now.
+into build/cache, plus Python packages and Rust crates). The ARM build compiles whisper.cpp, as there's no ARM
+wheel: that needs Visual Studio's ARM64 C++ tools and its Clang tools (clang-cl). So does the x64 one with GPU
+support (TRAILMIX_GPU_WHISPER=1 or --gpu-whisper; release.yml's GPU_WHISPER switch), which needs Visual Studio's
+C++ tools and the Vulkan SDK (VULKAN_SDK set to it, as its installer does), and keeps what it compiled in
+build/cache. The installer is unsigned for now.
 """
 import hashlib
 import json
@@ -65,15 +67,18 @@ FF_NAME = "ffmpeg-n8.1.2-50-g1a748fe2cd-winarm64-lgpl-8.1"
 FF_SHA256 = "0ad4d6e7342d6d77bbae4ac230964ebd51bdd6192414392e5f521d295b39b111"
 FF_URL = f"https://github.com/BtbN/FFmpeg-Builds/releases/download/{FF_RELEASE}/{FF_NAME}.zip"
 
-# whisper.cpp for x64 PCs, compiled from pywhispercpp's source (the checksum is PyPI's) with ggml's backends as DLLs of
-# their own: the CPU one in a variant for each generation of x64 CPUs, of which the best for the PC is loaded, and
-# Vulkan for the GPU (NVIDIA, AMD and Intel graphics alike), which loads only where a graphics driver provides Vulkan
-# (vulkan-1.dll). Without one, or without a GPU, whisper.cpp runs on the CPU. whispercpp_engine.py loads them.
+# With GPU_WHISPER (TRAILMIX_GPU_WHISPER=1, release.yml's GPU_WHISPER switch; x64 only), whisper.cpp for x64 PCs is
+# compiled from pywhispercpp's source (the checksum is PyPI's) with ggml's backends as DLLs of their own: the CPU one
+# in a variant for each generation of x64 CPUs, of which the best for the PC is loaded, and Vulkan for the GPU
+# (NVIDIA, AMD and Intel graphics alike), which loads only where a graphics driver provides Vulkan (vulkan-1.dll).
+# Without one, or without a GPU, whisper.cpp runs on the CPU. whispercpp_engine.py loads them. Without GPU_WHISPER,
+# it's pywhispercpp's wheel, which runs on the CPU only.
+GPU_WHISPER = ARCH == "x64" and (os.environ.get("TRAILMIX_GPU_WHISPER") == "1" or "--gpu-whisper" in sys.argv)
 PWCPP_VERSION = "1.5.1"  # (whisper.cpp 1.8.5)
 PWCPP_SHA256 = "5df897e5dd9d9f16804fc937bd85b9f5880a0b29a55f8843585e0e03d76195e5"
 PWCPP_URL = ("https://files.pythonhosted.org/packages/9f/35/610787a277e177e6b7983277a35a2969c0876b46c0d889bc6a0c4b4ac4a7/"
              f"pywhispercpp-{PWCPP_VERSION}.tar.gz")
-WHISPER_CMAKE_ARGS = ["-DGGML_NATIVE=OFF", "-DGGML_VULKAN=ON", "-DGGML_BACKEND_DL=ON", "-DGGML_CPU_ALL_VARIANTS=ON"]
+WHISPER_CMAKE_ARGS = ["-DGGML_NATIVE=OFF", "-DGGML_OPENMP=ON", "-DGGML_VULKAN=ON", "-DGGML_BACKEND_DL=ON", "-DGGML_CPU_ALL_VARIANTS=ON"]
 VULKAN_SDK_VERSION = "1.4.363.0"  # the one CI builds with (.github/workflows)
 
 
@@ -403,7 +408,11 @@ def bundle_runtime(site: Path, python: Path) -> None:
 
 def install_packages(py: Path) -> None:
     reqs = str(ROOT / "backend" / "requirements-whispercpp.txt")
-    if ARCH == "x64":
+    if ARCH == "x64" and not GPU_WHISPER:
+        env = {**os.environ, "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PIP_NO_INPUT": "1"}
+        run([str(py), "-m", "pip", "install", "-q", "--no-compile", "-r", reqs], env=env)
+        return
+    if GPU_WHISPER:
         whisper = whisper_cpp_vulkan(py)
         wheel = next(whisper.glob("pywhispercpp-*.whl"))
         env = {**os.environ, "PIP_DISABLE_PIP_VERSION_CHECK": "1", "PIP_NO_INPUT": "1"}
@@ -447,7 +456,7 @@ def check_packages(py: Path) -> None:
     site = py.parent / "Lib" / "site-packages"
     dlls = sorted(site.glob("*.dll"))  # whisper.cpp's (and the runtime bundled with them)
     print(f"whisper.cpp's DLLs ({sum(p.stat().st_size for p in dlls) / 1e6:.0f} MB): {', '.join(p.name for p in dlls)}", flush=True)
-    if ARCH == "x64":
+    if GPU_WHISPER:
         vulkan = site / "ggml-vulkan.dll"
         if not vulkan.is_file() or not list(site.glob("ggml-cpu-*.dll")):
             die("whisper.cpp's backends (ggml-vulkan.dll, ggml-cpu-*.dll) aren't bundled")
