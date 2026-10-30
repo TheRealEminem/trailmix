@@ -170,7 +170,7 @@ pub fn ask_typed(text: &str, real: bool) -> bool {
             LIVE.with(|live| {
                 let live = live.try_borrow().ok()?;
                 let l = live.as_ref()?;
-                if !l.entry.is_sensitive() || !l.entry.is_visible() {
+                if !l.entry.is_sensitive() || !WidgetExt::is_visible(&l.entry) {
                     return None;
                 }
                 screen_center(&l.window, l.entry.upcast_ref())
@@ -185,7 +185,7 @@ pub fn ask_typed(text: &str, real: bool) -> bool {
     let text = text.to_string();
     on_main_wait(move || {
         let entry = LIVE.with(|live| live.try_borrow().ok().and_then(|l| l.as_ref().map(|l| l.entry.clone())));
-        let Some(entry) = entry.filter(|e| e.is_sensitive() && e.is_visible()) else { return false };
+        let Some(entry) = entry.filter(|e| e.is_sensitive() && WidgetExt::is_visible(e)) else { return false };
         entry.set_text(&text);
         WidgetExt::activate(&entry);
         true
