@@ -33,7 +33,7 @@ import { CONSENT, Source, entryFor, guess, regionOptions, stamp } from "./Record
 import SoundCheck, { soundCheckPassed } from "./SoundCheck";
 import CloudPanel from "./Cloud";
 import { FoundServers, usesLocalServer } from "./LocalServers";
-import { Collapse, Segmented, Select, Spinner, Switch } from "./ui";
+import { Collapse, CopyButton, Segmented, Select, Spinner, Switch } from "./ui";
 
 /** The home-screen checklist this replaced: closing it meant "I've done setup", so it still does. */
 const OLD_CHECKLIST_CLOSED = "trailmix.setupDismissed";
@@ -955,7 +955,37 @@ function NotesStep({
 }
 
 /**
- * Getting Ollama and a good notes model onto this Mac, in place: install, download, ready. `onReady` when a
+ * Where Trailmix can't install or start Ollama itself (Linux: Ollama's installer needs root), the command to run
+ * yourself, to copy, and Ollama's page about it. The status is asked for every few seconds, so this moves on by
+ * itself once Ollama answers.
+ */
+function OllamaCommand({ command, page, installing }: { command: string; page?: string | null; installing: boolean }) {
+  const w = platformWords();
+  return (
+    <div>
+      <p>
+        {installing
+          ? `Ollama installs with one command. Run it in ${w.terminal} (it asks for your password, as installing software does):`
+          : `Ollama is installed but not running. Start it in ${w.terminal}:`}
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <code className="min-w-0 break-all rounded bg-surface-subtle px-2 py-1 font-mono text-ui">{command}</code>
+        <CopyButton text={command} />
+      </div>
+      <p className="mt-2 flex flex-wrap items-center gap-x-2 text-hint text-ink-soft">
+        <Spinner /> Waiting for Ollama to answer: this moves on by itself.
+        {page && (
+          <a className="text-forest underline decoration-forest/30 underline-offset-2" href={page} target="_blank" rel="noreferrer">
+            Ollama's instructions
+          </a>
+        )}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Getting Ollama and a good notes model onto this computer, in place: install, download, ready. `onReady` when a
  * download or install finishes, since that changes what the app can do.
  */
 function OllamaSetup({ onReady }: { onReady: () => void }) {
@@ -1009,7 +1039,10 @@ function OllamaSetup({ onReady }: { onReady: () => void }) {
           <Bar progress={o.install.progress} />
         </>
       )}
-      {!o.reachable && !o.install?.active && (
+      {!o.reachable && !o.install?.active && (o.install_command || o.start_command) && (
+        <OllamaCommand command={(o.install_command || o.start_command)!} page={o.install_page} installing={!!o.install_command} />
+      )}
+      {!o.reachable && !o.install?.active && !o.install_command && !o.start_command && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           {o.can_install ? (
             <button type="button" className="btn btn-sm btn-primary" onClick={() => run(api.installOllama)}>
