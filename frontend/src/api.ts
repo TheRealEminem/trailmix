@@ -842,6 +842,8 @@ export interface UpdateInfo {
   going_back?: boolean;
   /** Lockdown mode: no automatic checks (checking by hand still works) */
   lockdown?: boolean;
+  /** a Linux .deb or .rpm install: it only says a new version is out (notes is where to get it) */
+  manual?: boolean;
 }
 
 export interface SoundCheckResult {
