@@ -179,9 +179,24 @@ pub const WM_HOTKEY: u32 = 0x0312;
 pub const WM_USER: u32 = 0x0400;
 pub const WM_APP: u32 = 0x8000;
 pub const MA_NOACTIVATE: isize = 3;
+pub const MA_ACTIVATE: isize = 1;
+pub const WM_ACTIVATE: u32 = 0x0006;
+pub const WA_INACTIVE: usize = 0;
+pub const WM_SETFONT: u32 = 0x0030;
+pub const WM_CTLCOLOREDIT: u32 = 0x0133;
+pub const WM_MOUSEWHEEL: u32 = 0x020A;
+pub const EM_SETCUEBANNER: u32 = 0x1501;
+pub const KEYEVENTF_UNICODE: u32 = 0x4;
+pub const VK_RETURN: u32 = 0x0D;
 pub const PM_NOREMOVE: u32 = 0;
 
 pub const WS_POPUP: u32 = 0x8000_0000;
+pub const WS_CHILD: u32 = 0x4000_0000;
+pub const WS_VISIBLE: u32 = 0x1000_0000;
+pub const WS_CLIPCHILDREN: u32 = 0x0200_0000;
+pub const ES_AUTOHSCROLL: u32 = 0x0080;
+pub const SW_HIDE: i32 = 0;
+pub const SWP_NOZORDER: u32 = 0x0004;
 pub const WS_EX_TOPMOST: u32 = 0x0000_0008;
 pub const WS_EX_TOOLWINDOW: u32 = 0x0000_0080;
 pub const WS_EX_NOACTIVATE: u32 = 0x0800_0000;
@@ -200,6 +215,9 @@ pub const IDC_HAND: usize = 32649;
 pub const HTCLIENT: isize = 1;
 
 pub const DT_CENTER: u32 = 0x1;
+pub const DT_RIGHT: u32 = 0x2;
+pub const DT_EDITCONTROL: u32 = 0x2000;
+pub const DT_END_ELLIPSIS: u32 = 0x8000;
 pub const DT_VCENTER: u32 = 0x4;
 pub const DT_WORDBREAK: u32 = 0x10;
 pub const DT_SINGLELINE: u32 = 0x20;
@@ -263,6 +281,17 @@ extern "system" {
     pub fn FrameRect(hdc: isize, rect: *const Rect, brush: isize) -> i32;
     pub fn DrawTextW(hdc: isize, text: *const u16, count: i32, rect: *mut Rect, format: u32) -> i32;
     pub fn MessageBeep(kind: u32) -> i32;
+    pub fn SendMessageW(hwnd: Hwnd, msg: u32, wparam: usize, lparam: isize) -> isize;
+    pub fn SetWindowTextW(hwnd: Hwnd, text: *const u16) -> i32;
+    pub fn GetWindowTextW(hwnd: Hwnd, text: *mut u16, max: i32) -> i32;
+    pub fn GetWindowTextLengthW(hwnd: Hwnd) -> i32;
+    pub fn SetFocus(hwnd: Hwnd) -> Hwnd;
+    pub fn GetFocus() -> Hwnd;
+    pub fn EnableWindow(hwnd: Hwnd, enable: i32) -> i32;
+    pub fn IsWindow(hwnd: Hwnd) -> i32;
+    pub fn GetCursorPos(point: *mut Point) -> i32;
+    pub fn ScreenToClient(hwnd: Hwnd, point: *mut Point) -> i32;
+    pub fn MoveWindow(hwnd: Hwnd, x: i32, y: i32, w: i32, h: i32, repaint: i32) -> i32;
 }
 
 #[link(name = "kernel32")]
@@ -303,6 +332,11 @@ extern "system" {
     pub fn CreateDIBSection(hdc: isize, info: *const BitmapInfo, usage: u32, bits: *mut *mut c_void, section: isize, offset: u32) -> isize;
     pub fn BitBlt(hdc: isize, x: i32, y: i32, w: i32, h: i32, src: isize, sx: i32, sy: i32, rop: u32) -> i32;
     pub fn GdiFlush() -> i32;
+    pub fn SetBkColor(hdc: isize, color: u32) -> u32;
+    pub fn SaveDC(hdc: isize) -> i32;
+    pub fn RestoreDC(hdc: isize, saved: i32) -> i32;
+    pub fn IntersectClipRect(hdc: isize, left: i32, top: i32, right: i32, bottom: i32) -> i32;
+    pub fn Polygon(hdc: isize, points: *const Point, count: i32) -> i32;
 }
 
 #[link(name = "dwmapi")]
@@ -357,6 +391,24 @@ pub fn scale() -> f64 {
 
 pub fn foreground() -> Hwnd {
     unsafe { GetForegroundWindow() }
+}
+
+/// Types text as a keyboard would (each character as itself, whatever the layout). False if Windows didn't take it.
+pub fn type_text(text: &str) -> bool {
+    let mut inputs = Vec::new();
+    for unit in text.encode_utf16() {
+        for flags in [KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP] {
+            inputs.push(Input { kind: INPUT_KEYBOARD, u: InputUnion { ki: KeybdInput { vk: 0, scan: unit, flags, time: 0, extra: 0 } } });
+        }
+    }
+    unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<Input>() as i32) == inputs.len() as u32 }
+}
+
+/// Presses and lets go of a key (VK_RETURN, say).
+pub fn press_key(vk: u16) -> bool {
+    let key = |flags: u32| Input { kind: INPUT_KEYBOARD, u: InputUnion { ki: KeybdInput { vk, scan: 0, flags, time: 0, extra: 0 } } };
+    let inputs = [key(0), key(KEYEVENTF_KEYUP)];
+    unsafe { SendInput(2, inputs.as_ptr(), std::mem::size_of::<Input>() as i32) == 2 }
 }
 
 /// A real left click at a point on the screen, as if with the mouse. False if Windows didn't take it

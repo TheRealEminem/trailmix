@@ -665,7 +665,7 @@ fn adler32(data: &[u8]) -> u32 {
     (b << 16) | a
 }
 
-fn png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+pub(crate) fn png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
     let mut raw = Vec::with_capacity(rgba.len() + height as usize);
     for row in rgba.chunks_exact((width * 4) as usize) {
         raw.push(0); // no filter

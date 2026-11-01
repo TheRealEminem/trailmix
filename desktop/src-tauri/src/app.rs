@@ -13,6 +13,7 @@ use tauri::{AppHandle, Manager, Wry};
 
 use crate::audio::apps::{self, AudioApp};
 use crate::card::{self, Answer, Card};
+use crate::catchup;
 use crate::hotkeys::{self, Shortcut, MARK, RECORD};
 use crate::model::{Connection, Model, Phase, Snapshot};
 use crate::prefs::{MeetingSource, Prefs};
@@ -39,6 +40,8 @@ struct Tray {
     status: MenuItem<Wry>,
     record: MenuItem<Wry>,
     mark: MenuItem<Wry>,
+    /// Live Draft… and Catch Me Up… (catchup.rs).
+    live: [MenuItem<Wry>; 2],
     reminders: CheckMenuItem<Wry>,
     apps: Vec<AudioApp>,
     source: String,
@@ -50,6 +53,7 @@ struct Items {
     status: MenuItem<Wry>,
     record: MenuItem<Wry>,
     mark: MenuItem<Wry>,
+    live: [MenuItem<Wry>; 2],
     reminders: CheckMenuItem<Wry>,
 }
 
@@ -77,6 +81,11 @@ pub fn launch(app: &AppHandle, at_login: bool) -> tauri::Result<()> {
         model.set_updater(updater.clone());
     }
     start_hotkeys(app, &model);
+    let handle = app.clone();
+    catchup::begin(&model).set_opener(move |id| {
+        let handle = handle.clone();
+        thread::spawn(move || open_trailmix(&handle, Some(format!("meeting-{id}").as_str())));
+    });
     build_tray(app, &model)?;
     let handle = app.clone();
     model.observe(move || refresh_tray(&handle));
@@ -375,6 +384,11 @@ fn mark_text(snapshot: &Snapshot, prefs: &Prefs) -> (String, bool) {
     (format!("Mark Moment\t{}", prefs.shortcut_mark.display()), live)
 }
 
+/// Live Draft… and Catch Me Up…: the recording card (catchup.rs), while something records.
+fn live_enabled(snapshot: &Snapshot) -> bool {
+    catchup::live_meeting(snapshot).is_some()
+}
+
 fn shortcut_label(what: &str, shortcut: Shortcut, id: i32) -> String {
     let taken = if hotkeys::taken().contains(&id) { " (taken by another app)" } else { "" };
     format!("{what} shortcut: {}{taken}…", shortcut.display())
@@ -388,6 +402,10 @@ fn make_menu(app: &AppHandle, model: &Arc<Model>, apps: &[AudioApp]) -> tauri::R
     let record = MenuItem::with_id(app, "record", text, enabled, None::<&str>)?;
     let (text, enabled) = mark_text(&snapshot, &prefs);
     let mark = MenuItem::with_id(app, "mark", text, enabled, None::<&str>)?;
+    let live = [
+        MenuItem::with_id(app, "live-draft", "Live Draft…", live_enabled(&snapshot), None::<&str>)?,
+        MenuItem::with_id(app, "catch-up", "Catch Me Up…", live_enabled(&snapshot), None::<&str>)?,
+    ];
     let open = MenuItem::with_id(app, "open", "Open Trailmix", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Trailmix", true, None::<&str>)?;
 
@@ -439,7 +457,7 @@ fn make_menu(app: &AppHandle, model: &Arc<Model>, apps: &[AudioApp]) -> tauri::R
         Some(version) => Some(MenuItem::with_id(app, "update", format!("Update to Trailmix {version}"), true, None::<&str>)?),
         None => None,
     };
-    let mut items: Vec<&dyn IsMenuItem<Wry>> = vec![&status, &sep1, &record, &mark, &sources, &settings, &sep2];
+    let mut items: Vec<&dyn IsMenuItem<Wry>> = vec![&status, &sep1, &record, &mark, &live[0], &live[1], &sources, &settings, &sep2];
     if let Some(update) = &update {
         items.push(update);
     }
@@ -449,7 +467,7 @@ fn make_menu(app: &AppHandle, model: &Arc<Model>, apps: &[AudioApp]) -> tauri::R
     items.push(&open);
     items.push(&quit);
     let menu = Menu::with_items(app, &items)?;
-    Ok(Items { menu, status, record, mark, reminders })
+    Ok(Items { menu, status, record, mark, live, reminders })
 }
 
 fn build_tray(app: &AppHandle, model: &Arc<Model>) -> tauri::Result<()> {
@@ -471,7 +489,7 @@ fn build_tray(app: &AppHandle, model: &Arc<Model>) -> tauri::Result<()> {
     let state = app.state::<AppState>();
     let source = model.prefs().source;
     *state.tray.lock().unwrap_or_else(|e| e.into_inner()) =
-        Some(Tray { icon, status: items.status, record: items.record, mark: items.mark, reminders: items.reminders, apps, source });
+        Some(Tray { icon, status: items.status, record: items.record, mark: items.mark, live: items.live, reminders: items.reminders, apps, source });
     Ok(())
 }
 
@@ -484,6 +502,12 @@ fn on_menu(app: &AppHandle, id: &str) {
         }
         "mark" => {
             thread::spawn(move || model.mark_moment());
+        }
+        "live-draft" | "catch-up" => {
+            let expanded = id == "catch-up";
+            if let Some(c) = catchup::shared() {
+                thread::spawn(move || c.open(expanded));
+            }
         }
         "open" => {
             let app = app.clone();
@@ -527,10 +551,10 @@ fn refresh_tray(app: &AppHandle) {
     let Some(state) = app.try_state::<AppState>() else { return };
     let snapshot = state.model.snapshot();
     let prefs = state.model.prefs();
-    let (icon, status, record, mark, reminders) = {
+    let (icon, status, record, mark, live, reminders) = {
         let tray = state.tray.lock().unwrap_or_else(|e| e.into_inner());
         let Some(tray) = tray.as_ref() else { return };
-        (tray.icon.clone(), tray.status.clone(), tray.record.clone(), tray.mark.clone(), tray.reminders.clone())
+        (tray.icon.clone(), tray.status.clone(), tray.record.clone(), tray.mark.clone(), tray.live.clone(), tray.reminders.clone())
     };
     let _ = status.set_text(status_text(&snapshot, &prefs));
     let (text, enabled) = record_text(&snapshot, &prefs);
@@ -539,6 +563,9 @@ fn refresh_tray(app: &AppHandle) {
     let (text, enabled) = mark_text(&snapshot, &prefs);
     let _ = mark.set_text(text);
     let _ = mark.set_enabled(enabled);
+    for item in &live {
+        let _ = item.set_enabled(live_enabled(&snapshot));
+    }
     let _ = reminders.set_checked(prefs.call_reminders);
     let tooltip = match snapshot.phase {
         Phase::Recording => format!("Trailmix · recording {}", snapshot.elapsed.map(format_elapsed).unwrap_or_default()),
@@ -563,6 +590,7 @@ fn rebuild_menu(app: &AppHandle, model: &Arc<Model>, apps: Option<Vec<AudioApp>>
             current.status = items.status;
             current.record = items.record;
             current.mark = items.mark;
+            current.live = items.live;
             current.reminders = items.reminders;
             current.apps = apps;
             current.source = model.prefs().source;
