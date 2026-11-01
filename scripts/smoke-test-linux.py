@@ -650,11 +650,18 @@ def main(argv: list[str]) -> int:
 
         log("The window shows the web app")
         shot = root / "window.png"
-        done = app.run(["--window-test", URL, str(shot), "6"], env, 180)
-        print(done.stdout.strip())
-        if done.returncode != 0 or not shot.is_file() or shot.stat().st_size < 1000:
+        # A second go if the first doesn't: on ARM, in a bare container with no graphics driver, WebKit now and then
+        # dies opening its first window (a different distro each time). Twice in a row is a failure.
+        for attempt in (1, 2):
+            shot.unlink(missing_ok=True)
+            done = app.run(["--window-test", URL, str(shot), "6"], env, 180)
+            print(done.stdout.strip())
+            if done.returncode == 0 and shot.is_file() and shot.stat().st_size >= 1000:
+                break
             print(done.stderr[-3000:], file=sys.stderr)
-            raise Failure("the window didn't show the web app")
+            if attempt == 2:
+                raise Failure(f"the window didn't show the web app (exit {done.returncode})")
+            print(f"! the window didn't show the web app (exit {done.returncode}): once more", flush=True)
         kept = package.parent / f"smoke-window-linux-{app.arch}.png"
         shutil.copy2(shot, kept)
         print(f"saved {kept}")
