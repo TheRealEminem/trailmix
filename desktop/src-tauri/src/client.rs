@@ -25,6 +25,9 @@ pub struct LiveRecording {
     pub duration: f64,
     #[serde(default)]
     pub has_system: bool,
+    /// It makes a live draft (the tray's live draft card says when it doesn't).
+    #[serde(default)]
+    pub draft: bool,
     #[serde(default)]
     pub drafts: Vec<DraftLine>,
 }
@@ -129,6 +132,20 @@ impl Client {
 
     pub fn stop(&self, id: i64) -> Result<(), ServerError> {
         self.call("POST", &format!("meetings/{id}/stop"), None, 8).map(|_| ())
+    }
+
+    /// Catch me up, before asking: who would answer, about what it costs, and the answers so far (catch_up.py).
+    pub fn catch_up_plan(&self, id: i64) -> Result<Value, ServerError> {
+        self.call("GET", &format!("meetings/{id}/catch-up"), None, 15)?.json().map_err(|e| ServerError::Rejected(format!("Trailmix's answer made no sense: {e}")))
+    }
+
+    /// Asks a quick question ("missed", "explain", "decided") or your own ("question"): the answer, as it's kept
+    /// with the meeting. Answers can take a while (a model on this computer may have to load first).
+    pub fn catch_up(&self, id: i64, kind: &str, question: &str) -> Result<Value, ServerError> {
+        let body = serde_json::json!({"kind": kind, "question": question});
+        self.call("POST", &format!("meetings/{id}/catch-up"), Some(&body), 180)?
+            .json()
+            .map_err(|e| ServerError::Rejected(format!("Trailmix's answer made no sense: {e}")))
     }
 
     /// Tells the server this recorder is here and what it would record; returns the commands waiting for
