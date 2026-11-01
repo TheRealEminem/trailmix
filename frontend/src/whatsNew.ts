@@ -9,6 +9,28 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.22.0",
+    items: [
+      {
+        title: "Photos and scanned pages read on Windows and Linux",
+        body: "Attach a photo of a whiteboard or a scanned PDF and Trailmix reads its text on your own PC, as it already did on a Mac. iPhone photos (HEIC) open everywhere too.",
+        where: "Settings → Attachments",
+      },
+      {
+        title: "Catch me up from the tray",
+        body: "On Windows and Linux, \"Catch Me Up…\" and \"Live Draft…\" in the tray menu show the live transcript and answer \"What did I miss?\" while you record, without bringing up the window.",
+      },
+      {
+        title: "Linux on more computers",
+        body: "Trailmix for Linux now runs on Ubuntu 22.04 and Debian 12 as well, keyboard shortcuts work on Wayland desktops that support them, and the record shortcut is Ctrl+Alt+Shift+S so it doesn't collide with GNOME's screen recorder. Setting up Ollama shows the one command to run.",
+      },
+      {
+        title: "A home server transcribes by itself",
+        body: "The Docker image now transcribes on its own, even on a small NAS, and the transcription worker runs on any Mac, PC or Linux machine.",
+      },
+    ],
+  },
+  {
     version: "0.21.0",
     items: [
       {
