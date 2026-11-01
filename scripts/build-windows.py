@@ -244,6 +244,9 @@ def trim(python: Path) -> None:
     for p in list(site.rglob("tests")) + list(site.rglob("test")):
         if p.is_dir():
             rmtree(p)
+    # onnxruntime's tools for converting, quantizing and tuning models (about 9 MB): text recognition only runs one.
+    for name in ("transformers", "quantization", "tools"):
+        rmtree(site / "onnxruntime" / name)
     for p in list(python.rglob("__pycache__")):
         rmtree(p)
 
