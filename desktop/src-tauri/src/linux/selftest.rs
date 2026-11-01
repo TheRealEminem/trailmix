@@ -40,9 +40,14 @@ pub fn list_audio() {
         Err(e) => println!("Sound server: {e}"),
     }
     let started = hotkeys::start(|_| {});
+    if super::portal::active() {
+        println!("Shortcuts: through the desktop's GlobalShortcuts portal (version {})", super::portal::version().unwrap_or(0));
+    }
     for (what, shortcut) in [("Start / stop", Shortcut::RECORD_DEFAULT), ("Mark moment", Shortcut::MARK_DEFAULT)] {
         let free = if !started {
-            "can't be had here (global shortcuts need an X11 session)"
+            "can't be had here (global shortcuts need an X11 session, or the GlobalShortcuts portal on Wayland)"
+        } else if super::portal::active() {
+            "asked of the desktop when the app starts"
         } else if hotkeys::is_free(shortcut) {
             "free"
         } else {
@@ -60,6 +65,11 @@ pub fn shortcuts(t: &mut Test, model: &Arc<Model>) {
     t.expect(hotkeys::start(move |id| hotkeys::act(&pressed, id, false)), &format!("the shortcut thread is up ({:?} session)", super::session()));
     let prefs = model.prefs();
     let taken = hotkeys::apply(model);
+    if super::portal::active() {
+        // (The desktop binds them, often after asking you: nothing to check by grabbing here.)
+        println!("   asked the desktop's GlobalShortcuts portal for {} and {}", prefs.shortcut_record.display(), prefs.shortcut_mark.display());
+        return;
+    }
     t.expect(
         taken.is_empty(),
         &format!(

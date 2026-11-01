@@ -3,6 +3,7 @@
 //! (card.rs) and open at login (login.rs) are here too, standing in for the Windows modules of the same names.
 
 pub mod keys;
+pub mod portal;
 pub mod selftest;
 
 use std::path::PathBuf;
@@ -56,8 +57,9 @@ pub fn before_window() {
 }
 
 /// What this recorder can do on this computer, for the web app (it hides the rest). Only what really works
-/// here: other apps' audio needs a sound server, the shortcuts need X11 (or a desktop with the global
-/// shortcuts portal), the call reminder needs the sound server's list of who's recording.
+/// here: other apps' audio needs a sound server, the shortcuts need X11 or a desktop with the GlobalShortcuts
+/// portal (and are known once the app has started them), the call reminder needs the sound server's list of
+/// who's recording.
 pub fn capabilities() -> Vec<&'static str> {
     let mut caps = Vec::new();
     let sound = pulse::available();

@@ -52,7 +52,9 @@ walks you through the macOS permission prompts and System Settings; on Windows i
 
 The same Tauri app, built for Linux by `python3 scripts/build-linux.py` (on Linux: Python, Node.js, Rust and the
 libraries Tauri builds against: `libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libpulse-dev`)
-into `dist/Trailmix-<version>-linux-<x86_64|arm64>.AppImage`, `.deb` and `.rpm`, each with a `.sha256`. Everything
+into `dist/Trailmix-<version>-linux-<x86_64|arm64>.AppImage`, `.deb` and `.rpm`, each with a `.sha256`. Releases are
+built on Ubuntu 22.04, so they run on glibc 2.35 and later (Ubuntu 22.04, Debian 12, Fedora 40 and newer);
+`TRAILMIX_MAX_GLIBC=2.35` makes the build check it. Everything
 shared stays shared; what's Windows-only is behind `cfg(windows)`, and Linux has its own counterparts in `linux/`
 (behind `cfg(target_os = "linux")`):
 
@@ -64,8 +66,13 @@ shared stays shared; what's Windows-only is behind `cfg(windows)`, and Linux has
   server converts to the wire format itself. `audio/apps_linux.rs` lists the apps playing (sink inputs, by
   `application.process.binary`) and the apps recording from a mic (source outputs), for the call reminder.
 - `linux/keys.rs` is the global shortcuts: an X11 key grab on the root window (a combination another app has
-  grabbed is reported as taken). On Wayland a grab only sees keys typed into X11 apps, so there the shortcuts are
-  off and the web app doesn't offer them (the GlobalShortcuts portal isn't used yet).
+  grabbed is reported as taken). On Wayland a grab only sees keys typed into X11 apps, so there `linux/portal.rs`
+  asks the desktop's GlobalShortcuts portal instead (KDE Plasma 6, GNOME 48 and later, Hyprland): the desktop binds
+  them (often asking you first) and keeps them, so the tray's Settings opens the desktop's own settings for them
+  (portal version 2) or says where they are. Without the portal they're off and the web app doesn't offer them.
+  Linux's defaults are Ctrl+Alt+Shift+S (Start / stop) and Ctrl+Alt+Shift+M (Mark moment): GNOME has
+  Ctrl+Alt+Shift+R for its screen recorder and KDE has Meta with R for Spectacle's, and neither has any other
+  Ctrl+Alt+Shift letter. Settings saved with the old Ctrl+Alt+Shift+R move to S once.
 - `linux/card.rs` draws the cards with GTK (no frame, kept above, never taking the focus except the shortcut
   card). On X11 they sit bottom right; on Wayland the desktop places them.
 - `linux/login.rs` is open at login: `~/.config/autostart/trailmix.desktop`, starting the AppImage (or
