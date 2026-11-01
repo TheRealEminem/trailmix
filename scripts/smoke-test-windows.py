@@ -3,8 +3,9 @@
 into a temporary folder, checks the app brings its engine up and takes it down with it, then starts the
 engine inside the install the way the app does and runs the checks shared with the Mac (scripts/smoke_test.py),
 the shell's own self-test (audio files standing in for the mic and the meeting: start and stop with the global
-shortcut, marks, the live draft, the sound check, the call reminder's cards driven by a stand-in Zoom, Record pressed in the window,
-a transcript made while recording) and a look at its window, and last uninstalls it. Nothing touches your real
+shortcut, marks, the live draft, the sound check, the call reminder's cards driven by a stand-in Zoom, the tray's
+live draft and Catch me up card asked with no AI and then a stand-in one, Record pressed in the window, a transcript
+made while recording) and a look at its window, and last uninstalls it. Nothing touches your real
 Trailmix data. (The self-test registers Trailmix's shortcuts, so quit Trailmix before running this on your own PC.)
 
   python scripts/smoke-test-windows.py dist/Trailmix-0.19.0-windows-x64.exe     (or -windows-arm64.exe, on an ARM PC)
@@ -425,7 +426,8 @@ def main(argv: list[str]) -> int:
         print(done.stdout)
         if done.stderr.strip():
             print(done.stderr[-4000:], file=sys.stderr)
-        for card in ("smoke-reminder.png", "smoke-reminder-stop.png"):  # the call reminder's cards, kept with the build to look at
+        # the call reminder's cards and the recording card, kept with the build to look at
+        for card in ("smoke-reminder.png", "smoke-reminder-stop.png", "smoke-live-draft.png", "smoke-catch-up-no-ai.png", "smoke-catch-up.png"):
             if (root / card).is_file():
                 shutil.copy2(root / card, installer.parent / card)
         if done.returncode != 0:
@@ -434,6 +436,8 @@ def main(argv: list[str]) -> int:
             raise Failure(f"the app doesn't say it's windows-{arch}")
         if "ok    the sound check heard both sides" not in done.stdout:
             raise Failure("the self-test didn't run the sound check")
+        if "ok    the answer is in the card" not in done.stdout or "ok    the card says so, in the same words" not in done.stdout:
+            raise Failure("the self-test didn't ask Catch me up from the tray")
 
         log("The window shows the web app")
         shot = root / "window.png"
