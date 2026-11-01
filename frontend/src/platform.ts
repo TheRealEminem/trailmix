@@ -32,6 +32,8 @@ export interface PlatformWords {
   fileManager: string;
   /** what to open to start Trailmix: "Trailmix.app", "Trailmix" */
   appName: string;
+  /** where you'd run a command yourself: "Terminal", "PowerShell", "a terminal" */
+  terminal: string;
 }
 
 const WORDS: Record<OS, PlatformWords> = {
@@ -47,6 +49,7 @@ const WORDS: Record<OS, PlatformWords> = {
     trayWhere: "at the top of the screen",
     fileManager: "Finder",
     appName: "Trailmix.app",
+    terminal: "Terminal",
   },
   windows: {
     os: "windows",
@@ -60,6 +63,7 @@ const WORDS: Record<OS, PlatformWords> = {
     trayWhere: "in the system tray, by the clock",
     fileManager: "File Explorer",
     appName: "Trailmix",
+    terminal: "PowerShell",
   },
   linux: {
     os: "linux",
@@ -73,6 +77,7 @@ const WORDS: Record<OS, PlatformWords> = {
     trayWhere: "in the tray",
     fileManager: "your file manager",
     appName: "Trailmix",
+    terminal: "a terminal",
   },
   unknown: {
     os: "unknown",
@@ -86,6 +91,7 @@ const WORDS: Record<OS, PlatformWords> = {
     trayWhere: "in the menu bar or system tray",
     fileManager: "your file manager",
     appName: "Trailmix",
+    terminal: "a terminal",
   },
 };
 

@@ -1,7 +1,8 @@
 //! Global keyboard shortcuts (HotKeys.swift): Ctrl+Alt+Shift+R starts and stops a recording and
 //! Ctrl+Alt+Shift+M marks a moment, from any app. RegisterHotKey on a thread of their own, which gets
 //! WM_HOTKEY when one is pressed; a shortcut another app already has can't be registered, and is reported.
-//! On Linux, an X11 key grab does the same (linux/keys.rs); what a press does is shared.
+//! On Linux, an X11 key grab does the same (linux/keys.rs), or on Wayland the desktop's GlobalShortcuts portal
+//! (linux/portal.rs); there Start / stop is Ctrl+Alt+Shift+S (see RECORD_DEFAULT). What a press does is shared.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 #[cfg(windows)]
@@ -50,7 +51,16 @@ pub struct Shortcut {
 }
 
 impl Shortcut {
-    pub const RECORD_DEFAULT: Shortcut = Shortcut { key: b'R' as u32, mods: MOD_CONTROL | MOD_ALT | MOD_SHIFT };
+    /// Ctrl+Alt+Shift+R, as on the Mac: Windows' Start / stop (and Linux's, at first).
+    pub const RECORD_R: Shortcut = Shortcut { key: b'R' as u32, mods: MOD_CONTROL | MOD_ALT | MOD_SHIFT };
+    #[cfg(not(target_os = "linux"))]
+    pub const RECORD_DEFAULT: Shortcut = Shortcut::RECORD_R;
+    /// On Linux, Ctrl+Alt+Shift+S ("start / stop"): GNOME has Ctrl+Alt+Shift+R for its screen recorder, and KDE
+    /// has Meta+R, Meta+Shift+R, Meta+Alt+R and Meta+Ctrl+R for Spectacle's. Neither has a Ctrl+Alt+Shift letter
+    /// shortcut but GNOME's R (theirs with Ctrl+Alt+Shift are arrows, Tab, Escape, Delete, Page Up and Page Down),
+    /// so S and M are free on both.
+    #[cfg(target_os = "linux")]
+    pub const RECORD_DEFAULT: Shortcut = Shortcut { key: b'S' as u32, mods: MOD_CONTROL | MOD_ALT | MOD_SHIFT };
     pub const MARK_DEFAULT: Shortcut = Shortcut { key: b'M' as u32, mods: MOD_CONTROL | MOD_ALT | MOD_SHIFT };
 
     /// From a key press, if it makes a sensible global shortcut: Ctrl, Alt or Win with a key, or a function
@@ -269,6 +279,12 @@ pub fn register(wanted: &[(i32, Shortcut)]) -> Vec<i32> {
     taken
 }
 
+/// What the desktop didn't bind, when it answers later (the GlobalShortcuts portal, on Wayland).
+#[cfg(target_os = "linux")]
+pub fn set_taken(ids: Vec<i32>) {
+    *TAKEN.lock().unwrap_or_else(|e| e.into_inner()) = ids;
+}
+
 /// The shortcuts the last `register` couldn't have.
 pub fn taken() -> Vec<i32> {
     TAKEN.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -395,7 +411,11 @@ mod tests {
 
     #[test]
     fn shortcuts_read_the_windows_way() {
+        assert_eq!(Shortcut::RECORD_R.display(), "Ctrl+Alt+Shift+R");
+        #[cfg(not(target_os = "linux"))]
         assert_eq!(Shortcut::RECORD_DEFAULT.display(), "Ctrl+Alt+Shift+R");
+        #[cfg(target_os = "linux")]
+        assert_eq!(Shortcut::RECORD_DEFAULT.display(), "Ctrl+Alt+Shift+S", "GNOME's screen recorder has R");
         assert_eq!(Shortcut::MARK_DEFAULT.display(), "Ctrl+Alt+Shift+M");
         assert_eq!(Shortcut { key: 0x78, mods: MOD_WIN | MOD_SHIFT }.display(), format!("{WIN_NAME}+Shift+F9"));
         assert_eq!(Shortcut { key: 0x20, mods: MOD_CONTROL | MOD_ALT }.display(), "Ctrl+Alt+Space");
@@ -421,8 +441,8 @@ mod tests {
 
     #[test]
     fn shortcuts_are_saved_as_numbers() {
-        let text = serde_json::to_string(&Shortcut::RECORD_DEFAULT).unwrap();
+        let text = serde_json::to_string(&Shortcut::RECORD_R).unwrap();
         assert_eq!(text, r#"{"key":82,"mods":7}"#);
-        assert_eq!(serde_json::from_str::<Shortcut>(&text).unwrap(), Shortcut::RECORD_DEFAULT);
+        assert_eq!(serde_json::from_str::<Shortcut>(&text).unwrap(), Shortcut::RECORD_R);
     }
 }
