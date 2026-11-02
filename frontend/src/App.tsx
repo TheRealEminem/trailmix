@@ -880,6 +880,7 @@ export default function App() {
                 setJustImported(true);
                 void refreshList();
               }}
+              onChanged={() => void refreshList()}
               onOpenMeeting={openMeeting}
               onError={fail}
             />

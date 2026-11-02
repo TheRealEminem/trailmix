@@ -287,6 +287,7 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
             _drafts.pop(meeting_id, None)
     _export(meeting_id, cfg)
     db.update_meeting(meeting_id, status="done", wait_reason=None)
+    duplicates.after_processing(meeting_id, cfg)  # a copy that came in while this was busy merges now
     if stats:
         m = db.get_meeting(meeting_id) or m
         telemetry.send("meeting_processed", {

@@ -20,6 +20,10 @@ export interface MeetingListItem {
   workspace_id: number | null;
   /** An import waiting for you to choose which AI processes it. */
   ask_first: number;
+  /** Its topic tags, most telling first. */
+  tags: string[];
+  /** Copies merged into it by themselves that you haven't reviewed yet. */
+  merges_to_review: number;
 }
 
 export type WorkspaceColor = "forest" | "sky" | "sun" | "trail" | "ink";
@@ -122,7 +126,7 @@ export interface FileImport {
   skipped: boolean;
 }
 
-export interface SearchHit extends MeetingListItem {
+export interface SearchHit extends Omit<MeetingListItem, "tags" | "merges_to_review"> {
   /** Contains  …  around matched words. */
   snippet: string;
 }
@@ -545,8 +549,8 @@ export interface Meeting extends MeetingListItem {
   summary_model: string | null;
   /** The AI picked for its notes when it isn't the default, e.g. "Google Gemini · gemini-3.6-flash". */
   notes_with: string | null;
-  /** Copies of this meeting merged into it (Granola's, a pasted one), oldest first. offset: seconds its transcript was moved. */
-  merged: { from: string; title: string; at: string; offset: number }[];
+  /** Copies of this meeting merged into it (Granola's, a pasted one), oldest first. */
+  merged: MergedCopy[];
   /** A meeting that looks like the same one (you're asked whether to merge them). */
   duplicate_of: { id: number; title: string; from: string; created_at: string } | null;
   tags: string[];
@@ -747,6 +751,42 @@ export interface Preflight {
   } | null;
   as_of: string;
   recording: boolean;
+}
+
+/** A copy of a meeting that was merged into it (duplicates.py), kept so the merge can be undone. */
+export interface MergedCopy {
+  /** Where the copy came from: "Granola", "a pasted transcript", "Trailmix"… */
+  from: string;
+  source: string;
+  title: string;
+  created_at: string;
+  minutes: number;
+  /** When it was merged. */
+  at: string;
+  /** Seconds its transcript was moved to line up with the recording. */
+  offset: number;
+  /** Share of words the two had in common (null when merged by hand). */
+  score: number | null;
+  /** The meeting's title before the merge. */
+  title_before: string;
+  /** What the meeting took from the copy. */
+  took: { transcript: boolean; notes: boolean; title: boolean };
+  /** You looked at it and kept it. */
+  reviewed: boolean;
+  /** The newest merge: the one Undo takes back. */
+  last: boolean;
+}
+
+/** A meeting with merges waiting for review: the meeting that stayed, and what came into it. */
+export interface MergeToReview {
+  id: number;
+  title: string;
+  created_at: string;
+  /** Where the meeting itself came from ("Trailmix" for a recording). */
+  label: string;
+  has_audio: boolean;
+  minutes: number;
+  merged: MergedCopy[];
 }
 
 /** One meeting found twice. keep: the meeting that stays (the one with the recording). */
@@ -1148,6 +1188,9 @@ export const api = {
       json("POST", pairs === "all" ? { all: true } : { pairs }),
     ),
   keepApart: (a: number, b: number) => request<void>("/duplicates/apart", json("POST", { a, b })),
+  mergesToReview: () => request<{ meetings: MergeToReview[] }>("/merges"),
+  /** The merges into this meeting are right: they stop asking for review. */
+  keepMerged: (id: number) => request<void>(`/meetings/${id}/merges/keep`, json("POST")),
   /** Undoes the last merge into this meeting; returns the meeting that came back. */
   unmerge: (id: number) => request<{ id: number }>(`/meetings/${id}/unmerge`, json("POST")),
   retitle: (id: number) => request<{ title: string }>(`/meetings/${id}/retitle`, json("POST")),
