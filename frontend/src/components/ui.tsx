@@ -517,17 +517,40 @@ export function SpeakerChip({ speaker, name }: { speaker: string; name?: string 
   return <span className={`chip max-w-[8rem] truncate ${cls}`}>{name || speaker}</span>;
 }
 
+/** The clipboard API, else the older copy command: a web view may allow only one of them. */
+export async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    // below
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.style.position = "fixed";
+  area.style.opacity = "0";
+  document.body.append(area);
+  area.select();
+  const ok = document.execCommand("copy");
+  area.remove();
+  if (!ok) throw new Error("Couldn't copy");
+}
+
 export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"yes" | "failed" | null>(null);
   useEffect(() => {
     if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 1600);
+    const t = setTimeout(() => setCopied(null), copied === "yes" ? 1600 : 4000);
     return () => clearTimeout(t);
   }, [copied]);
   return (
-    <button type="button" className="btn btn-sm btn-ghost" onClick={() => navigator.clipboard.writeText(text).then(() => setCopied(true))}>
-      {copied ? <CheckIcon size={16} className="animate-check-pop text-forest" /> : <CopyIcon size={16} />}
-      {copied ? "Copied" : label}
+    <button
+      type="button"
+      className="btn btn-sm btn-ghost"
+      onClick={() => copyText(text).then(() => setCopied("yes"), () => setCopied("failed"))}
+    >
+      {copied === "yes" ? <CheckIcon size={16} className="animate-check-pop text-forest" /> : <CopyIcon size={16} />}
+      {copied === "yes" ? "Copied" : copied === "failed" ? "Couldn't copy: select it and copy" : label}
     </button>
   );
 }
