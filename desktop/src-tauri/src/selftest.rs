@@ -774,12 +774,22 @@ fn window_record(t: &mut Test, app: &AppHandle, model: &Arc<Model>, base: &str) 
 /// Ollama step, its Copy button and "Ollama's instructions"), WebKitGTK's defaults.
 fn window_links(t: &mut Test, win: &tauri::WebviewWindow) {
     window::catch_links();
+    // A link over the whole page, clicked with the mouse: a page's own script can't open a window (only a real
+    // click can), so clicking it from here would prove nothing.
     let link = "https://ollama.com/download/linux";
     let _ = window::evaluate(
         win,
-        &format!("(() => {{ const a = document.createElement('a'); a.href = {link:?}; a.target = '_blank'; document.body.append(a); a.click(); a.remove(); return true }})()"),
+        &format!("(() => {{ const a = document.createElement('a'); a.id = 'self-test-link'; a.href = {link:?}; a.target = '_blank'; a.style.cssText = 'position:fixed;inset:0;z-index:2147483647'; document.body.append(a); return true }})()"),
     );
-    t.expect(wait_until(5.0, || window::caught_links().iter().any(|u| u == link)), "a link for a new window opens in the browser");
+    let _ = win.set_focus();
+    thread::sleep(Duration::from_millis(500));
+    let clicked = match (win.inner_position(), win.inner_size()) {
+        (Ok(at), Ok(size)) => click_screen(at.x + size.width as i32 / 2, at.y + size.height as i32 / 2),
+        _ => false,
+    };
+    let opened = clicked && wait_until(5.0, || window::caught_links().iter().any(|u| u == link));
+    let _ = window::evaluate(win, "(document.getElementById('self-test-link')?.remove(), true)");
+    t.expect(opened, if clicked { "a link for a new window opens in the browser" } else { "a link for a new window opens in the browser (couldn't click)" });
 
     let _ = window::evaluate(
         win,
@@ -791,6 +801,17 @@ fn window_links(t: &mut Test, win: &tauri::WebviewWindow) {
         copied != "\"waiting\""
     });
     t.expect(copied == "\"ok\"", &format!("the page can copy to the clipboard ({copied})"));
+}
+
+/// A real left click at a point on the screen.
+#[cfg(windows)]
+fn click_screen(x: i32, y: i32) -> bool {
+    gui::click_at(x, y)
+}
+
+#[cfg(target_os = "linux")]
+fn click_screen(x: i32, y: i32) -> bool {
+    crate::linux::keys::click_at(x, y)
 }
 
 /// --window-test <url> <out.png> [seconds]: opens the window at a URL and saves what it shows.
