@@ -197,6 +197,10 @@ async def _sources_loop():
             await run_in_threadpool(sources.sync_all)
         except Exception:
             log.exception("Syncing other note takers failed")
+        try:
+            await run_in_threadpool(lambda: duplicates.settle(settings.get_all()))
+        except Exception:
+            log.exception("Merging copies of the same meeting failed")
         await asyncio.sleep(SYNC_EVERY_S)
 
 
@@ -389,9 +393,7 @@ def _present(m: dict) -> dict:
     out["keep_audio"] = bool(m.get("keep_audio"))
     out["ask_first"] = bool(m.get("ask_first"))
     # Copies of this meeting merged into it (newest last), and a copy it may be the same as (you're asked).
-    out["merged"] = [{"from": duplicates._label(r["meeting"]), "title": r["meeting"]["title"], "at": r["at"],
-                      "offset": r.get("offset") or 0}
-                     for r in (json.loads(m["merged_json"]) if m.get("merged_json") else [])]
+    out["merged"] = duplicates.present(m)
     other = db.get_meeting(m["duplicate_of"]) if m.get("duplicate_of") else None
     out["duplicate_of"] = ({"id": other["id"], "title": other["title"], "from": duplicates._label(other),
                             "created_at": other["created_at"]} if other else None)
@@ -1709,6 +1711,22 @@ def merge_duplicates(body: MergeRequest):
 def keep_duplicates_apart(body: ApartRequest):
     """Not the same meeting after all: never suggested or merged again."""
     duplicates.keep_apart(body.a, body.b)
+
+
+@app.get("/api/merges")
+def merges_to_review():
+    """Copies merged by themselves that you haven't looked at yet: what went into what."""
+    return {"meetings": duplicates.to_review()}
+
+
+@app.post("/api/meetings/{meeting_id}/merges/keep", status_code=204)
+def keep_merged(meeting_id: int):
+    """The merge into this meeting is right: it stops asking for review."""
+    _get_or_404(meeting_id)
+    try:
+        duplicates.keep_merged(meeting_id)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
 
 
 @app.post("/api/meetings/{meeting_id}/unmerge")

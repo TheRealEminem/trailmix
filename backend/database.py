@@ -377,10 +377,17 @@ def count_meetings() -> int:
 def list_meetings() -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, title, created_at, duration_sec, status, workspace_id, ask_first FROM meetings "
-            "ORDER BY created_at DESC, id DESC"
+            "SELECT id, title, created_at, duration_sec, status, workspace_id, ask_first, tags_json, "
+            # copies merged in by themselves that you haven't looked at yet (duplicates.py)
+            "(SELECT count(*) FROM json_each(merged_json) WHERE json_extract(value, '$.reviewed') IS NOT 1) "
+            "AS merges_to_review FROM meetings ORDER BY created_at DESC, id DESC"
         ).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        m = dict(r)
+        m["tags"] = json.loads(m.pop("tags_json") or "[]")
+        out.append(m)
+    return out
 
 
 def get_meeting(meeting_id: int) -> dict | None:
