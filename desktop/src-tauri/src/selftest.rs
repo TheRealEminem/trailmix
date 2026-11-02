@@ -738,6 +738,7 @@ fn window_record(t: &mut Test, app: &AppHandle, model: &Arc<Model>, base: &str) 
     let script = window::evaluate(&win, "document.querySelector('script[src*=\"assets/\"]')?.getAttribute('src')");
     let src = serde_json::from_str::<String>(&script).unwrap_or_else(|_| "?".into());
     t.expect(src != "?" && html.contains(&src), &format!("the window runs the current web app ({src})"));
+    window_links(t, &win);
 
     thread::sleep(Duration::from_secs(6));
     let _ = window::evaluate(&win, "document.querySelector('[data-testid=record]').click()");
@@ -767,6 +768,29 @@ fn window_record(t: &mut Test, app: &AppHandle, model: &Arc<Model>, base: &str) 
     });
     let shown: String = transcript.chars().take(80).collect::<String>().replace('\n', " ");
     t.expect(done && !transcript.starts_with("error") && !transcript.is_empty(), &format!("the transcript arrived: {shown}"));
+}
+
+/// A link for a new window goes to the browser, and the page can copy: both did nothing on Linux (Setup's
+/// Ollama step, its Copy button and "Ollama's instructions"), WebKitGTK's defaults.
+fn window_links(t: &mut Test, win: &tauri::WebviewWindow) {
+    window::catch_links();
+    let link = "https://ollama.com/download/linux";
+    let _ = window::evaluate(
+        win,
+        &format!("(() => {{ const a = document.createElement('a'); a.href = {link:?}; a.target = '_blank'; document.body.append(a); a.click(); a.remove(); return true }})()"),
+    );
+    t.expect(wait_until(5.0, || window::caught_links().iter().any(|u| u == link)), "a link for a new window opens in the browser");
+
+    let _ = window::evaluate(
+        win,
+        "(window.__copied = 'waiting', navigator.clipboard.writeText('Trailmix self-test').then(() => (window.__copied = 'ok'), (e) => (window.__copied = String(e))), true)",
+    );
+    let mut copied = String::new();
+    wait_until(5.0, || {
+        copied = window::evaluate(win, "window.__copied");
+        copied != "\"waiting\""
+    });
+    t.expect(copied == "\"ok\"", &format!("the page can copy to the clipboard ({copied})"));
 }
 
 /// --window-test <url> <out.png> [seconds]: opens the window at a URL and saves what it shows.
