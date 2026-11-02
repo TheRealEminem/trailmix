@@ -4,7 +4,7 @@ import type { ProblemReport } from "../api";
 import { platformWords } from "../platform";
 import { screenText } from "../screenText";
 import { CloseIcon, CopyIcon, ReportIcon } from "./icons";
-import { Spinner, Switch } from "./ui";
+import { copyText, Spinner, Switch } from "./ui";
 
 const REPO = "TheRealEminem/trailmix";
 
@@ -196,7 +196,7 @@ export default function ReportButton({ page, meetingId }: { page: string; meetin
                   <button
                     className="btn btn-md btn-soft"
                     onClick={() =>
-                      void navigator.clipboard.writeText(`${title}\n\n${body}`).then(() => {
+                      void copyText(`${title}\n\n${body}`).then(() => {
                         setCopied(true);
                         setTimeout(() => setCopied(false), 1500);
                       })

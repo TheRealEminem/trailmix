@@ -7,6 +7,7 @@ use std::borrow::Cow;
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::Duration;
 
+use tauri::webview::NewWindowResponse;
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
@@ -52,9 +53,31 @@ fn is_ours(url: &Url) -> bool {
     }
 }
 
+/// Links the self-test caught instead of opening: it runs on build machines, where a browser opening helps nobody.
+static CAUGHT: Mutex<Option<Vec<String>>> = Mutex::new(None);
+
+/// From now on, links that would open in the browser are only noted (for the self-test; see `caught_links`).
+pub fn catch_links() {
+    *CAUGHT.lock().unwrap_or_else(|e| e.into_inner()) = Some(Vec::new());
+}
+
+/// The links caught since `catch_links`.
+pub fn caught_links() -> Vec<String> {
+    CAUGHT.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default()
+}
+
+fn open_outside(app: &AppHandle, url: &str) {
+    if let Some(caught) = CAUGHT.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+        caught.push(url.to_string());
+        return;
+    }
+    let _ = app.opener().open_url(url, None::<&str>);
+}
+
 /// Makes the window (hidden) showing the loading page. Closing it hides it; the app lives on in the tray.
 pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let opener = app.clone();
+    let new_window_opener = app.clone();
     let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html".into()))
         .title("Trailmix")
         .inner_size(1280.0, 860.0)
@@ -66,9 +89,17 @@ pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
             if is_ours(url) {
                 return true;
             }
-            let _ = opener.opener().open_url(url.as_str(), None::<&str>);
+            open_outside(&opener, url.as_str());
             false
         })
+        // A link for a new window (target=_blank, window.open) opens in your browser too, as on the Mac: without
+        // this, WebKitGTK drops it, so Setup's "Get Ollama" and "Ollama's instructions" did nothing on Linux.
+        .on_new_window(move |url, _| {
+            open_outside(&new_window_opener, url.as_str());
+            NewWindowResponse::Deny
+        })
+        // The page's Copy buttons: page access to the clipboard is off by default on Linux and Windows.
+        .enable_clipboard_access()
         .build()?;
     let hide = window.clone();
     window.on_window_event(move |event| {
