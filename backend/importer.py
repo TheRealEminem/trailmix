@@ -7,7 +7,7 @@ import logging
 import re
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 import httpx
 
@@ -15,6 +15,7 @@ import database as db
 import duplicates
 import pipeline
 import settings
+import itertools
 
 
 # Where an imported transcript (and notes) came from, as shown in "Transcribed with" and "Notes by".
@@ -34,7 +35,7 @@ class ImportError_(Exception):
 # ── Turning a transcript into a meeting ─────────────────────────────────
 
 def _iso(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return dt.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _parse_time(text: str | None) -> datetime | None:
@@ -163,7 +164,7 @@ def parse_text(text: str, my_names: set[str] = frozenset()) -> list[dict]:
         end = start + max(1.0, len(said.split()) / WORDS_PER_SECOND)
         segments.append({"start": round(start, 2), "end": round(end, 2), "speaker": speaker, "text": said})
         clock = end
-    for a, b in zip(segments, segments[1:]):  # a turn ends where the next one begins
+    for a, b in itertools.pairwise(segments):  # a turn ends where the next one begins
         if a["start"] <= b["start"] < a["end"]:
             a["end"] = b["start"]
     return segments
@@ -276,7 +277,7 @@ def _import_granola_note(key: str, note_id: str, keep_summary: bool) -> int | No
     if not segments:
         return None
     event = note.get("calendar_event") or {}
-    when = _parse_time(event.get("scheduled_start_time")) or _parse_time(note.get("created_at")) or datetime.now(timezone.utc)
+    when = _parse_time(event.get("scheduled_start_time")) or _parse_time(note.get("created_at")) or datetime.now(UTC)
     summary = (note.get("summary_markdown") or note.get("summary_text") or "").strip() if keep_summary else ""
     return save_imported(note.get("title") or event.get("event_title") or "", when, segments, "granola", note_id, summary)
 

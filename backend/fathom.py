@@ -7,12 +7,13 @@ meeting become You, everyone else Them.
 """
 import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 import httpx
 
 import database as db
 import importer
+import itertools
 
 API = "https://api.fathom.ai/external/v1"
 _HEAVY_GAP_S = 2.1      # transcript and summary calls: 30 a minute
@@ -79,10 +80,10 @@ def segments(items: list[dict], recorded_by: dict) -> list[dict]:
             continue
         speaker = i.get("speaker") or {}
         mine = ((speaker.get("matched_calendar_invitee_email") or "").lower() == me_email and me_email) or \
-            (speaker.get("display_name") or "").strip().lower() == me_name and me_name
+            ((speaker.get("display_name") or "").strip().lower() == me_name and me_name)
         out.append({"start": _seconds(i["timestamp"]), "end": 0.0, "speaker": "You" if mine else "Them",
                     "text": text})
-    for a, b in zip(out, out[1:]):
+    for a, b in itertools.pairwise(out):
         a["end"] = max(a["start"], b["start"])
     if out:
         last = out[-1]
@@ -117,9 +118,9 @@ def import_note(key: str, note: dict, keep_summary: bool) -> int | None:
             text = ((_get(key, f"/recordings/{note['id']}/summary").get("summary") or {})
                     .get("markdown_formatted") or "")
             ended = importer._parse_time(note.get("ended")) or importer._parse_time(note["when"])
-            if not text.strip() and ended and datetime.now(timezone.utc) - ended < _NOT_READY:
+            if not text.strip() and ended and datetime.now(UTC) - ended < _NOT_READY:
                 return None
-        when = importer._parse_time(note["when"]) or datetime.now(timezone.utc)
+        when = importer._parse_time(note["when"]) or datetime.now(UTC)
         notes_md = summary(text, note["action_items"]) if text.strip() else ""
         meeting_id = importer.save_imported(note["title"], when, segs, "fathom", note["id"], notes_md)
         time.sleep(_HEAVY_GAP_S)

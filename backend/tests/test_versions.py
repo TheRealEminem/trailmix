@@ -1,5 +1,4 @@
 import json
-import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,7 +7,6 @@ import compare
 import database as db
 import main
 import pipeline
-import transcribe_gemini
 
 
 @pytest.fixture

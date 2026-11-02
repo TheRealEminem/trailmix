@@ -499,7 +499,7 @@ function UpgradesSection({ organize, onChanged }: { organize: ReturnType<typeof 
       .catch(() => setUp(null));
   useEffect(() => {
     void load();
-  }, [job?.active]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [job?.active]);
   if (!up) return null;
   const from = (counts: Record<string, number>) =>
     Object.entries(counts)

@@ -144,7 +144,7 @@ def preflight(meetings: list[dict], cfg: dict, engine: str | None = None, transc
         "notes": {
             "options": [{"provider": pid, "label": llm_engine.label(pid, cfg), "kind": info["kind"],
                          "local": llm_engine.runs_here(pid, cfg), "model": llm_engine.model_name(pid, cfg),
-                         **dict(zip(("ready", "reason"), llm_engine.configured(pid, cfg)))}
+                         **dict(zip(("ready", "reason"), llm_engine.configured(pid, cfg), strict=True))}
                         for pid, info in llm_engine.PROVIDERS.items() if pid != "trailmix" or cloud.offered(cfg)],
             "plan": notes_plan(meetings, provider, plan_cfg),
         },

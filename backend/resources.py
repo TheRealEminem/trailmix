@@ -14,6 +14,7 @@ import local_engine
 import model_ranks
 import platform_words
 import settings
+import contextlib
 
 GB = 1024**3
 # Extra free RAM to keep for macOS and your other apps on top of what a model needs.
@@ -45,10 +46,8 @@ def dir_size(path) -> int:
     total = 0
     for root, _, files in os.walk(path):
         for name in files:
-            try:
+            with contextlib.suppress(OSError):
                 total += os.path.getsize(os.path.join(root, name))
-            except OSError:
-                pass
     return total
 
 

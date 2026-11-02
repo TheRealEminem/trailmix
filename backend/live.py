@@ -155,8 +155,8 @@ class LiveSession:
         self.clip_seconds = 0.0  # audio sent for near-live captions
         self._clip_usage: dict = {}  # tokens a general model reported for them
         # The accurate model, transcribing for keeps while the meeting runs (see the module docstring).
-        self.final = self.near_live or bool(cfg.get("live_final")) and (
-            cfg["transcribe_engine"] == "remote" or (cfg["transcribe_engine"] == "local" and local_engine.available()))
+        self.final = self.near_live or (bool(cfg.get("live_final")) and (
+            cfg["transcribe_engine"] == "remote" or (cfg["transcribe_engine"] == "local" and local_engine.available())))
         self.final_segments: dict[int, list[dict]] = {0: [], 1: []}
         self.final_complete = True  # False once any chunk was skipped: then the pipeline redoes it all
         self._step_lock = threading.Lock()  # one draft_step at a time; finish() waits for the running one
@@ -207,7 +207,7 @@ class LiveSession:
             return
         f = self._files.get(ch)
         if f is None:
-            f = self._files[ch] = open(store.pcm_path(self.folder, store.TRACKS[ch]), "ab")
+            f = self._files[ch] = open(store.pcm_path(self.folder, store.TRACKS[ch]), "ab")  # noqa: SIM115  (open for the whole recording)
         f.write(pcm)
         f.flush()  # hand it to the OS now; a crash of this process then loses nothing
         samples = np.frombuffer(pcm, dtype=np.int16)
