@@ -9,6 +9,15 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.23.2",
+    items: [
+      {
+        title: "Links and Copy work on Windows and Linux",
+        body: "Links to other sites, like Ollama's install instructions, API key pages and attachments, open in your browser. Before, they did nothing on Linux, and opened in a small window of their own on Windows. Copy buttons, like the one beside Ollama's install command, copy again.",
+      },
+    ],
+  },
+  {
     version: "0.23.1",
     items: [
       {
