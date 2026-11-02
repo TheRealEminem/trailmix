@@ -15,14 +15,14 @@ RUN npm run build
 FROM python:3.12-slim AS python
 ARG WHISPERCPP=1
 WORKDIR /build
-COPY backend/requirements-server.txt backend/requirements-whispercpp.txt ./
+COPY backend/requirements-server.txt backend/requirements-whispercpp.txt backend/constraints.txt ./
 RUN python -m venv /venv \
  && reqs=$([ "$WHISPERCPP" = 1 ] && echo requirements-whispercpp.txt || echo requirements-server.txt) \
- && /venv/bin/pip install --no-cache-dir --no-compile --only-binary pywhispercpp -r "$reqs" \
+ && /venv/bin/pip install --no-cache-dir --no-compile --only-binary pywhispercpp -c constraints.txt -r "$reqs" \
  && /venv/bin/pip uninstall -y -q pip
 # A static ffmpeg with the Opus encoder, from the imageio-ffmpeg wheel (as the Linux app bundles it): a tenth of
 # the size of Debian's ffmpeg package and its libraries.
-RUN pip install --no-cache-dir -q --no-deps --only-binary :all: --target /tmp/ff imageio-ffmpeg \
+RUN pip install --no-cache-dir -q --no-deps --only-binary :all: --target /tmp/ff -c constraints.txt imageio-ffmpeg \
  && install -m 755 "$(ls /tmp/ff/imageio_ffmpeg/binaries/ffmpeg-linux* | tail -n 1)" /usr/local/bin/ffmpeg \
  && ffmpeg -hide_banner -encoders | grep -q ' libopus '
 

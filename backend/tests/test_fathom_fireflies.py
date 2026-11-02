@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 import pytest
 
@@ -69,7 +69,7 @@ def fake_fathom(monkeypatch, meetings, summary="## Key Takeaways\n- Prices go up
 
 
 def test_fathom_meetings_come_in_with_you_them_and_tasks(fresh_db, monkeypatch):
-    start = datetime(2026, 10, 1, 15, tzinfo=timezone.utc)
+    start = datetime(2026, 10, 1, 15, tzinfo=UTC)
     calls = fake_fathom(monkeypatch, [fathom_meeting(11, start), fathom_meeting(12, start - timedelta(days=1))])
     notes = fathom.notes("fk", start - timedelta(days=7))
     assert [n["id"] for n in notes] == ["11", "12"]  # both pages
@@ -85,7 +85,7 @@ def test_fathom_meetings_come_in_with_you_them_and_tasks(fresh_db, monkeypatch):
 
 
 def test_fathom_notes_still_being_written_wait(fresh_db, monkeypatch):
-    just_now = datetime.now(timezone.utc) - timedelta(minutes=40)
+    just_now = datetime.now(UTC) - timedelta(minutes=40)
     fake_fathom(monkeypatch, [fathom_meeting(21, just_now)], summary=None)
     note = fathom.notes("fk", None)[0]
     assert fathom.import_note("fk", note, keep_summary=True) is None
@@ -102,7 +102,7 @@ def test_fathom_refuses_a_bad_key(fresh_db, monkeypatch):
 
 def fake_fireflies(monkeypatch, listed: int, status="processed", sentences=None, asked=None):
     asked = asked if asked is not None else []
-    when = datetime(2026, 10, 2, 9, tzinfo=timezone.utc)
+    when = datetime(2026, 10, 2, 9, tzinfo=UTC)
 
     def post(url, json=None, headers=None, timeout=None):
         assert url == fireflies.API and headers == {"Authorization": "Bearer ffk"}
@@ -129,7 +129,7 @@ def fake_fireflies(monkeypatch, listed: int, status="processed", sentences=None,
 
 def test_fireflies_lists_in_pages_of_50(fresh_db, monkeypatch):
     asked = fake_fireflies(monkeypatch, listed=60)
-    notes = fireflies.notes("ffk", datetime(2026, 10, 1, tzinfo=timezone.utc))
+    notes = fireflies.notes("ffk", datetime(2026, 10, 1, tzinfo=UTC))
     assert len(notes) == 60 and [a["skip"] for a in asked] == [0, 50]
     assert asked[0]["fromDate"] == "2026-10-01T00:00:00.000Z"
 

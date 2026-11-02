@@ -93,7 +93,7 @@ const escape = (text: string) => text.replace(/[\\*`~[\]]/g, (c) => `\\${c}`);
  * where markdown expects them. */
 function inlineMd(nodes: JSONContent[] = []): string {
   let out = "";
-  let stack: { name: MarkName; href: string }[] = [];
+  const stack: { name: MarkName; href: string }[] = [];
   let pendingSpace = "";
   const closeTo = (keep: number) => {
     while (stack.length > keep) {

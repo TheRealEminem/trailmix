@@ -12,8 +12,8 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Callable
+from datetime import datetime, timedelta, UTC
+from collections.abc import Callable
 
 import database as db
 import importer
@@ -78,7 +78,7 @@ STARTS = {"now": timedelta(0), "week": timedelta(days=7), "all": None}
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ── Sync ────────────────────────────────────────────────────────────────

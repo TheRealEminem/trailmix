@@ -18,7 +18,7 @@ import os
 import re
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 import database as db
@@ -44,7 +44,7 @@ NOT_ALLOWED = ("Trailmix isn't allowed to read this folder. Allow it in System S
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
 def _excluded(cfg: dict) -> list[Path]:
@@ -106,7 +106,7 @@ _scan_lock = threading.Lock()
 def _import(path: Path, st: os.stat_result, root: Path, cfg: dict) -> tuple[str, int | None, str | None]:
     """(state, meeting id, note) for one settled file."""
     name = name_for(path, root)
-    when = datetime.fromtimestamp(st.st_mtime, timezone.utc)
+    when = datetime.fromtimestamp(st.st_mtime, UTC)
     if file_import.kind(path.name) == "recording":
         meeting_id = file_import.recording_from(name, path, when)
         return ("imported", meeting_id, None) if meeting_id else ("skipped", None, "imported before")
@@ -114,9 +114,10 @@ def _import(path: Path, st: os.stat_result, root: Path, cfg: dict) -> tuple[str,
         return "skipped", None, "too big for a transcript"
     data = path.read_bytes()
     my_names = {cfg["your_name"]}
-    if path.suffix.lower() in (".txt", ".md"):
-        if not any(s.get("speaker") for s in file_import.parse_transcript(path.name, data, my_names)):
-            return "skipped", None, "doesn't look like a transcript (no speakers)"
+    if path.suffix.lower() in (".txt", ".md") and not any(
+        s.get("speaker") for s in file_import.parse_transcript(path.name, data, my_names)
+    ):
+        return "skipped", None, "doesn't look like a transcript (no speakers)"
     meeting_id = file_import.import_transcript(name, data, when, my_names)
     return ("imported", meeting_id, None) if meeting_id else ("skipped", None, "imported before")
 
@@ -190,7 +191,7 @@ def add(path: str, existing: bool = False) -> str:
         try:
             files = list(_files(p, _excluded(cfg)))
         except PermissionError:
-            raise ValueError(NOT_ALLOWED)
+            raise ValueError(NOT_ALLOWED) from None
         db.add_watched_files([(str(f), st.st_size, "before", None, None) for f, st in files])
     settings.update({"watch_folders": cfg["watch_folders"] + [str(p)]})
     return str(p)

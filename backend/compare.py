@@ -48,7 +48,7 @@ def inline(a_text: str, b_text: str) -> list[dict]:
     """The two transcripts as one stream for display: [{"op": "equal"|"delete"|"insert", "text"}], where `delete`
     is only in A and `insert` only in B. Long agreeing stretches are shortened to their ends ("…")."""
     a, b = a_text.split(), b_text.split()
-    key = lambda toks: [" ".join(words(t)) for t in toks]  # noqa: E731  compare without case and punctuation
+    key = lambda toks: [" ".join(words(t)) for t in toks]  # compare without case and punctuation
     matcher = SequenceMatcher(None, key(a), key(b), autojunk=False)
     out: list[dict] = []
     ops = matcher.get_opcodes()

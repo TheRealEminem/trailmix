@@ -139,7 +139,7 @@ class Reader:
             return ""
         crops = [_crop(image, box) for box in boxes]
         read = self._read_lines(crops)
-        found = [(box, text) for box, (text, score) in zip(boxes, read) if text.strip() and score >= MIN_SCORE]
+        found = [(box, text) for box, (text, score) in zip(boxes, read, strict=True) if text.strip() and score >= MIN_SCORE]
         return "\n".join(_as_lines(found))
 
     # Finding where the lines are: a map of how likely each spot is to be text, cut into blobs, each blob's
@@ -241,7 +241,7 @@ def _blobs(bitmap) -> list:
         return i
 
     first = np.searchsorted(rows, np.arange(h + 1))  # where each row's runs begin
-    rs, ss, es = rows.tolist(), starts.tolist(), ends.tolist()
+    ss, es = starts.tolist(), ends.tolist()
     for r in range(1, h):
         i, i_end = first[r], first[r + 1]
         j, j_end = first[r - 1], first[r]
@@ -264,7 +264,7 @@ def _mean_inside(prob, rows, starts, ends) -> float:
     import numpy as np
 
     total = 0.0
-    for r, s, e in zip(rows.tolist(), starts.tolist(), ends.tolist()):
+    for r, s, e in zip(rows.tolist(), starts.tolist(), ends.tolist(), strict=True):
         total += float(prob[r, s:e].sum())
     return total / max(1, int(np.sum(ends - starts)))
 
@@ -276,7 +276,7 @@ def _min_rect(rows, starts, ends):
 
     # A row's leftmost and rightmost pixels are all the outline needs.
     by_row: dict[int, list[int]] = {}
-    for r, s, e in zip(rows.tolist(), starts.tolist(), ends.tolist()):
+    for r, s, e in zip(rows.tolist(), starts.tolist(), ends.tolist(), strict=True):
         lo_hi = by_row.setdefault(r, [s, e - 1])
         lo_hi[0], lo_hi[1] = min(lo_hi[0], s), max(lo_hi[1], e - 1)
     pts = sorted({(x, r) for r, (lo, hi) in by_row.items() for x in (lo, hi)})

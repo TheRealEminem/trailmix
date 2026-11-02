@@ -1,4 +1,5 @@
 import importer
+import itertools
 
 
 def test_granola_copy_transcript_format():
@@ -10,7 +11,7 @@ Them: Sounds good."""
     segs = importer.parse_text(text)
     assert [s["speaker"] for s in segs] == ["You", "Them", "You", "Them"]
     assert segs[2]["text"] == "Yes. I think we ship Tuesday, and Priya updates the docs."
-    assert all(a["start"] < b["start"] for a, b in zip(segs, segs[1:]))
+    assert all(a["start"] < b["start"] for a, b in itertools.pairwise(segs))
 
 
 def test_names_and_timestamps():

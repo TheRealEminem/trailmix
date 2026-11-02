@@ -51,7 +51,7 @@ def _regions(active: np.ndarray, score: np.ndarray, frame: int, total: int) -> l
         return []
     frame_s = frame / SR
     edges = np.diff(np.concatenate(([0], active.astype(np.int8), [0])))
-    runs = list(zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)))
+    runs = list(zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1), strict=True))  # padded: every run closes
 
     merged: list[list[int]] = []
     gap = int(MERGE_GAP_S / frame_s)

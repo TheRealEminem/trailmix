@@ -3,6 +3,7 @@ import json
 import pytest
 
 import telemetry
+from datetime import UTC
 
 CFG = {"share_stats": True, "stats_notice_seen": True, "install_id": "abc123", "stats_last_daily": "",
        "transcribe_engine": "local", "live_final": True, "live_notes": "auto", "summary_provider": "ollama",
@@ -57,8 +58,8 @@ def test_the_daily_summary_holds_nothing_personal(posthog, monkeypatch):
 
 
 def test_the_daily_summary_goes_once_a_day(posthog, monkeypatch):
-    from datetime import datetime, timezone
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    from datetime import datetime
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     monkeypatch.setattr(telemetry.settings, "get_all", lambda: {**CFG, "stats_last_daily": today})
     telemetry.daily()
     assert not posthog

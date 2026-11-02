@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 import pytest
 
@@ -43,7 +43,7 @@ class FakeGranola:
 
 
 def ago(**kw) -> datetime:
-    return datetime.now(timezone.utc) - timedelta(**kw)
+    return datetime.now(UTC) - timedelta(**kw)
 
 
 def test_turned_on_from_now_brings_in_only_new_meetings(fresh_db, monkeypatch):
@@ -72,7 +72,7 @@ def test_later_syncs_look_back_a_day_from_the_last_one(fresh_db, monkeypatch):
     sources.sync("granola")
     sources.sync("granola")
     assert g.asked_after[0] is None
-    assert timedelta(hours=23) < datetime.now(timezone.utc) - g.asked_after[1] < timedelta(hours=25)
+    assert timedelta(hours=23) < datetime.now(UTC) - g.asked_after[1] < timedelta(hours=25)
 
 
 def test_turned_on_in_settings_without_a_start_begins_now(fresh_db, monkeypatch):

@@ -213,6 +213,7 @@ export default function Recorder(p: Props) {
   const remote = p.health?.transcription.engine === "remote";
 
   // Press M (while this window is focused) to flag the current moment.
+  const { onMark } = p;
   useEffect(() => {
     if (!recording) return;
     const onKey = (e: KeyboardEvent) => {
@@ -226,11 +227,11 @@ export default function Recorder(p: Props) {
         !e.altKey &&
         e.key.toLowerCase() === "m"
       )
-        p.onMark();
+        onMark();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [recording, p.onMark]);
+  }, [recording, onMark]);
 
   if (recording) return <Notepad p={p} />;
 

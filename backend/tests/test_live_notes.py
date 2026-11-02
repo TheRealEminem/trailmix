@@ -111,7 +111,7 @@ def _run_tick(monkeypatch, session, cfg, replies):
 
 def test_notes_wait_for_ten_minutes_of_transcript(mac, monkeypatch):
     mac.ram = 32
-    prompts, saved = _run_tick(monkeypatch, _session(590, [(5, "Hello")]), CFG, [])
+    prompts, _saved = _run_tick(monkeypatch, _session(590, [(5, "Hello")]), CFG, [])
     assert not prompts and live_notes.status(7)["notes_status"] == "First notes at 10:00"
 
 
@@ -181,7 +181,7 @@ def test_a_long_meeting_is_written_from_the_notes_taken_during_it(monkeypatch):
     transcript = "\n".join(f"[{i // 60:02d}:{i % 60:02d}] You: " + "word " * 30 for i in range(0, 2400, 6))
     early = ([{"start": 0, "end": 1800, "text": "- the first half hour"}], 1800)
     drafts = []
-    summary, _, _ = llm_engine.summarize(transcript, CFG, "auto", "general", [], want_title=False,
+    _summary, _, _ = llm_engine.summarize(transcript, CFG, "auto", "general", [], want_title=False,
                                          on_draft=drafts.append, early_notes=early)
     notes_calls = [c for c in calls if "TRANSCRIPT (PART" in c]
     assert notes_calls and "[28:30]" in notes_calls[0] and "[10:00]" not in "".join(notes_calls)  # only the rest

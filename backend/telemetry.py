@@ -22,7 +22,7 @@ import sys
 import uuid
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 import httpx
 import psutil
@@ -78,7 +78,7 @@ def send(event: str, props: dict | None = None, cfg: dict | None = None) -> bool
     properties = {**_base(), **(props or {}), "$process_person_profile": False, "$geoip_disable": True,
                   "$lib": "trailmix"}
     body = {"api_key": KEY, "event": event, "distinct_id": _install_id(cfg),
-            "timestamp": datetime.now(timezone.utc).isoformat(), "properties": properties}
+            "timestamp": datetime.now(UTC).isoformat(), "properties": properties}
     _sent.append({"event": event, "at": body["timestamp"], "properties": properties})
     _pool.submit(_post, body)
     return True
@@ -135,7 +135,7 @@ def setup(cfg: dict) -> dict:
 
 
 def usage() -> dict:
-    week = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
+    week = (datetime.now(UTC) - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
     with db.connect() as conn:
         total = conn.execute("SELECT count(*) FROM meetings").fetchone()[0]
         recent_count = conn.execute("SELECT count(*) FROM meetings WHERE created_at >= ?", (week,)).fetchone()[0]
@@ -150,7 +150,7 @@ def daily_properties(cfg: dict) -> dict:
 def daily() -> None:
     """Once a day while Trailmix runs: that this copy is in use, on what, set up how."""
     cfg = settings.get_all()
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     if not enabled(cfg) or cfg["stats_last_daily"] == today:
         return
     if send("app_active", daily_properties(cfg), cfg):

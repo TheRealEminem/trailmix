@@ -14,6 +14,7 @@ stretch it skipped is transcribed again as a smaller request and put in its plac
 Returns the same [{start, end, speaker, text}] segments as the other engines, with speakers named
 "Speaker 1", "Speaker 2"... in order of first appearance.
 """
+import contextlib
 import base64
 import json
 import re
@@ -128,10 +129,8 @@ def upload(data: bytes, mime: str, api_key: str, name: str = "audio") -> dict:
 
 def delete_file(file: dict, api_key: str) -> None:
     """The audio shouldn't sit on Google's servers any longer than it takes to transcribe it."""
-    try:
+    with contextlib.suppress(GeminiError):  # Google removes uploads itself after 48 hours anyway
         _request("DELETE", f"{gemini_client.base(api_key)}/v1beta/{file['name']}", api_key, retries=0, timeout=30)
-    except GeminiError:
-        pass  # Google removes uploads itself after 48 hours
 
 
 # ── Transcription request and response ──────────────────────────────────
@@ -234,7 +233,7 @@ def call_llm(file: dict, mime: str, api_key: str, language: str | None, model: s
             cand = j["candidates"][0]
             text = "".join(p.get("text", "") for p in cand["content"]["parts"] if not p.get("thought"))
         except (KeyError, IndexError):
-            raise GeminiError("Gemini returned no transcript (it may have blocked the audio)")
+            raise GeminiError("Gemini returned no transcript (it may have blocked the audio)") from None
         if cand.get("finishReason") == "MAX_TOKENS":
             raise GeminiError("This stretch of audio was too long for the model to transcribe in one go")
         try:
@@ -414,7 +413,7 @@ def find_gaps(audio: np.ndarray, words: list[dict]) -> list[tuple[float, float]]
     regions = [(a / SR, b / SR) for a, b in vad.speech_regions(audio)]
     total = len(audio) / SR
     gaps, reach = [], 0.0
-    for start, end in sorted((w["start"], w["end"]) for w in words) + [(total, total)]:
+    for start, end in [*sorted((w["start"], w["end"]) for w in words), (total, total)]:
         if start - reach >= GAP_S:
             speech = sum(max(0.0, min(b, start) - max(a, reach)) for a, b in regions)
             if speech >= GAP_SPEECH_S:

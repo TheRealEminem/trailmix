@@ -53,7 +53,7 @@ def test_long_transcripts_are_summarized_in_parts(monkeypatch):
     monkeypatch.setattr(llm_engine, "context_chars", lambda pid, cfg: 5000)
     cfg = {"summary_provider": "ollama", "summary_fallback": "none", "custom_template": ""}
     transcript = "\n".join(f"[{i // 60:02d}:{i % 60:02d}] You: " + "word " * 30 for i in range(400))
-    summary, used, title = llm_engine.summarize(transcript, cfg, "auto", "general", [], want_title=False)
+    summary, used, _title = llm_engine.summarize(transcript, cfg, "auto", "general", [], want_title=False)
     assert summary.startswith("## Overview") and used == "ollama"
     assert len(calls) > 2 and all(len(c) < 5000 + 3000 for c in calls)
     final = calls[-1]

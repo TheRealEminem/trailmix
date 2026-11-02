@@ -7,7 +7,7 @@ After retention:  the whole folder is deleted (the audio_retention_days setting;
 import os
 import shutil
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from pathlib import Path
 
 import numpy as np
@@ -116,7 +116,7 @@ def sweep_expired() -> int:
     days = retention_days()
     if days < 0:
         return 0
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
     cleaned = 0
     for m in db.meetings_with_audio():
         if m["status"] not in ("done", "error"):

@@ -16,6 +16,7 @@ from difflib import SequenceMatcher
 import database as db
 import llm_engine
 import meeting_text
+import contextlib
 
 MAX_OPEN = 3
 NAME = re.compile(r"\b[A-ZÀ-ɏ][a-zÀ-ɏ'’\-]{2,}(?:[ \t]+[A-ZÀ-ɏ][a-zÀ-ɏ'’\-]{2,})?\b")
@@ -112,10 +113,8 @@ def seeded() -> list[str]:
         out += _DISTINCT.findall(w.get("about") or "")
     with db.connect() as conn:
         for (names,) in conn.execute("SELECT speaker_names_json FROM meetings WHERE speaker_names_json IS NOT NULL"):
-            try:
+            with contextlib.suppress(ValueError):
                 out += [v.strip() for k, v in json.loads(names).items() if isinstance(v, str) and v.strip() not in ("", k)]
-            except ValueError:
-                pass
     return list(dict.fromkeys(w for w in out if w and len(w) <= 40))
 
 

@@ -77,7 +77,7 @@ def test_a_corrected_name_is_corrected_in_the_other_questions_too(fresh_db, ai):
     mid = meeting("## Overview\nStacy Hollis reviewed the pitch.")
     questions.ask_about(mid, CFG)
     questions.answer(by_kind(mid)["spelling"]["id"], "yes")
-    assert [o["label"] for o in by_kind(mid)["them"]["options"]][0] == "Stacey Hollis"
+    assert next(o["label"] for o in by_kind(mid)["them"]["options"]) == "Stacey Hollis"
 
 
 def test_misheard_words_are_checked_against_the_meeting_and_never_asked_twice(fresh_db, ai):
