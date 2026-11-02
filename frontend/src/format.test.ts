@@ -40,10 +40,10 @@ describe("dayGroup", () => {
     expect(dayGroup(at(2026, 10, 28), now)).toBe("Yesterday");
   });
 
-  test("the weekday within a week, the month within the year, month and year before that", () => {
+  test("the weekday within a week, then the day itself, with the year when it isn't this one", () => {
     expect(dayGroup(at(2026, 10, 26), now)).toBe(new Date(2026, 9, 26).toLocaleDateString(undefined, { weekday: "long" }));
-    expect(dayGroup(at(2026, 10, 2), now)).toBe(new Date(2026, 9, 2).toLocaleDateString(undefined, { month: "long" }));
-    expect(dayGroup(at(2025, 12, 24), now)).toBe(new Date(2025, 11, 24).toLocaleDateString(undefined, { month: "long", year: "numeric" }));
+    expect(dayGroup(at(2026, 10, 2), now)).toBe(new Date(2026, 9, 2).toLocaleDateString(undefined, { month: "short", day: "numeric" }));
+    expect(dayGroup(at(2025, 12, 24), now)).toBe(new Date(2025, 11, 24).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }));
   });
 
   test("a date in the future counts as today", () => {

@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """The release gate on Windows (scripts/smoke-test.sh is the Mac's): installs the built installer silently
-into a temporary folder, checks the app brings its engine up and takes it down with it, then starts the
+into a temporary folder, says what its whisper.cpp runs on (the GPU or the CPU), checks the app brings its engine
+up and takes it down with it, then starts the
 engine inside the install the way the app does and runs the checks shared with the Mac (scripts/smoke_test.py),
-the shell's own self-test (audio files standing in for the mic and the meeting: hotkey-style start and stop,
-marks, the live draft, Record pressed in the window, a transcript made while recording) and a look at its
-window, and last uninstalls it. Nothing touches your real Trailmix data.
+the shell's own self-test (audio files standing in for the mic and the meeting: start and stop with the global
+shortcut, marks, the live draft, the sound check, the call reminder's cards driven by a stand-in Zoom, the tray's
+live draft and Catch me up card asked with no AI and then a stand-in one, Record pressed in the window, a transcript
+made while recording) and a look at its window, and last uninstalls it. Nothing touches your real
+Trailmix data. (The self-test registers Trailmix's shortcuts, so quit Trailmix before running this on your own PC.)
 
-  python scripts/smoke-test-windows.py dist/Trailmix-0.19.0-windows-x64.exe
+  python scripts/smoke-test-windows.py dist/Trailmix-0.19.0-windows-x64.exe     (or -windows-arm64.exe, on an ARM PC)
   python scripts/smoke-test-windows.py dist/Trailmix-0.19.0-windows-x64.exe previous/Trailmix-0.18.0-windows-x64.exe
 
 With a previous installer it first installs that one and lets its own updater install the new one from a
@@ -45,8 +48,33 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 APPROVED_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
 
 
+MACHINES = {"x64": 0x8664, "arm64": 0xAA64}  # PE header machine types
+
+
 class Failure(Exception):
     pass
+
+
+def pe_machine(path: Path) -> int:
+    with open(path, "rb") as f:
+        head = f.read(4096)
+    pe = int.from_bytes(head[0x3C:0x40], "little")
+    return int.from_bytes(head[pe + 4:pe + 6], "little")
+
+
+def check_arch(install: Path, arch: str) -> None:
+    """The parts that run are built for this arch: an x64 one in the ARM installer would still pass every other
+    check here (Windows on ARM emulates x64), only slowly."""
+    site = install / "python" / "Lib" / "site-packages"
+    if not list(site.glob("_pywhispercpp*.pyd")):
+        raise Failure("the install has no whisper.cpp")
+    parts = [install / "Trailmix.exe", install / "python" / "python.exe", install / "bin" / "ffmpeg.exe",
+             *(install / "python").glob("python3*.dll"), *site.glob("_pywhispercpp*.pyd"),
+             *site.glob("*.dll")]  # (whisper.cpp's, and the runtime DLLs bundled with it)
+    wrong = [str(p.relative_to(install)) for p in parts if pe_machine(p) != MACHINES[arch]]
+    if wrong:
+        raise Failure(f"not built for {arch}: {', '.join(wrong)}")
+    print(f"built for {arch}: {len(parts)} binaries checked")
 
 
 def log(text: str) -> None:
@@ -95,21 +123,43 @@ def tail(path: Path, lines: int = 60) -> str:
         return "(no log)"
 
 
-def start_engine(install: Path, env: dict, log_path: Path) -> subprocess.Popen:
-    """The engine exactly as the app runs it (desktop/src-tauri/src/server.rs), without the app around it."""
+def engine_env(install: Path, env: dict) -> dict:
+    """The environment the app gives its engine (desktop/src-tauri/src/server.rs)."""
     system_root = os.environ.get("SystemRoot", r"C:\Windows")
-    engine_env = {k: v for k, v in env.items() if not k.upper().startswith("PYTHON")}
-    engine_env.update({
+    found = {k: v for k, v in env.items() if not k.upper().startswith("PYTHON")}
+    found.update({
         "PATH": f"{install / 'bin'};{system_root}\\System32;{system_root}",
         "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1", "PYTHONUNBUFFERED": "1", "PYTHONUTF8": "1",
         "TRAILMIX_UI_DIR": str(install / "ui"),
     })
+    return found
+
+
+def start_engine(install: Path, env: dict, log_path: Path) -> subprocess.Popen:
+    """The engine exactly as the app runs it (desktop/src-tauri/src/server.rs), without the app around it."""
     out = open(log_path, "ab")
     return subprocess.Popen(
         [str(install / "python" / "python.exe"), "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", str(PORT)],
-        cwd=install / "backend", env=engine_env, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
+        cwd=install / "backend", env=engine_env(install, env), stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
     )
+
+
+def whisper_cpp_runs_on(install: Path, env: dict) -> str:
+    """What the install's whisper.cpp runs on, and what it found, as the engine sees it: on a PC without a GPU (or
+    without Vulkan, as on GitHub's runners), the CPU."""
+    done = subprocess.run([str(install / "python" / "python.exe"), "-c", "import whispercpp_engine; print(whispercpp_engine.system_info())"],
+                          cwd=install / "backend", env=engine_env(install, env), capture_output=True, text=True, timeout=120,
+                          encoding="utf-8", errors="replace")
+    if done.returncode != 0 or "CPU :" not in done.stdout:
+        raise Failure(f"whisper.cpp didn't say what it runs on (exit {done.returncode}): {done.stdout.strip()}\n{done.stderr[-3000:]}")
+    info = done.stdout.strip()
+    # A GPU build (GPU_WHISPER) on GitHub's runners, which have no GPU: the transcripts that follow are then the proof
+    # that it falls back to the CPU.
+    gpu_build = (install / "python" / "Lib" / "site-packages" / "ggml-vulkan.dll").is_file()
+    if gpu_build and os.environ.get("GITHUB_ACTIONS") == "true" and not info.startswith("on the CPU"):
+        raise Failure(f"on GitHub's runner (no GPU), the GPU build's whisper.cpp should run on the CPU: {info}")
+    return f"(the GPU build, with Vulkan) {info}" if gpu_build else info
 
 
 def install_silently(installer: Path, folder: Path) -> None:
@@ -313,10 +363,10 @@ def main(argv: list[str]) -> int:
     processes: list[subprocess.Popen] = []
     exe = install / "Trailmix.exe"
     new_version = old_version = ""
+    arch = arch_of(installer)
     try:
         if previous:
             new_version = installer_version(installer)
-            arch = arch_of(installer)
             log(f"Installing the previous version from {previous.name} silently into {install}")
             install_silently(previous, install)
             old_version = app_version(exe) or installer_version(previous)
@@ -366,6 +416,8 @@ def main(argv: list[str]) -> int:
             if not part.exists():
                 raise Failure(f"the install has no {part.relative_to(install)}")
         print(f"installed: {sum(p.stat().st_size for p in install.rglob('*') if p.is_file()) / 1e6:.0f} MB")
+        check_arch(install, arch)
+        print(f"whisper.cpp {whisper_cpp_runs_on(install, env)}")
 
         log("The app starts its engine, and takes it down with it")
         app_env = {**env, "TRAILMIX_SERVER_URL": APP_URL, "TRAILMIX_DATA_DIR": str(app_data)}
@@ -388,14 +440,28 @@ def main(argv: list[str]) -> int:
         smoke_test.transcribe(URL, str(them), ["login", "Wednesday", "pricing"])
         smoke_test.meetings(URL)
 
-        log("The shell's self-test (audio files stand in for the mic and the meeting)")
-        done = subprocess.run([str(exe), "--self-test", URL, str(me), str(them)], env=env, capture_output=True, text=True,
-                              timeout=1500, encoding="utf-8", errors="replace")
+        log("An iPhone photo read on this PC (text recognition; its model downloads the first time)")
+        smoke_test.read_photo(URL, str(SCRIPTS.parent / "backend" / "tests" / "fixtures" / "ocr-line.heic"),
+                              ["roadmap", "Pricing", "Q3"])
+
+        log("The shell's self-test (audio files stand in for the mic and the meeting, a stand-in Zoom for a call)")
+        done = subprocess.run([str(exe), "--self-test", URL, str(me), str(them), f"--shots={root}"], env=env, capture_output=True,
+                              text=True, timeout=1500, encoding="utf-8", errors="replace")
         print(done.stdout)
         if done.stderr.strip():
             print(done.stderr[-4000:], file=sys.stderr)
+        # the call reminder's cards and the recording card, kept with the build to look at
+        for card in ("smoke-reminder.png", "smoke-reminder-stop.png", "smoke-live-draft.png", "smoke-catch-up-no-ai.png", "smoke-catch-up.png"):
+            if (root / card).is_file():
+                shutil.copy2(root / card, installer.parent / card)
         if done.returncode != 0:
             raise Failure(f"the shell's self-test failed (exit {done.returncode})")
+        if f"windows-{arch})" not in done.stdout:
+            raise Failure(f"the app doesn't say it's windows-{arch}")
+        if "ok    the sound check heard both sides" not in done.stdout:
+            raise Failure("the self-test didn't run the sound check")
+        if "ok    the answer is in the card" not in done.stdout or "ok    the card says so, in the same words" not in done.stdout:
+            raise Failure("the self-test didn't ask Catch me up from the tray")
 
         log("The window shows the web app")
         shot = root / "window.png"
@@ -404,8 +470,9 @@ def main(argv: list[str]) -> int:
         print(done.stdout.strip())
         if done.returncode != 0 or not shot.is_file() or shot.stat().st_size < 1000:
             raise Failure("the window didn't show the web app")
-        shutil.copy2(shot, installer.parent / "smoke-window.png")  # kept with the build, to look at
-        print(f"saved {installer.parent / 'smoke-window.png'}")
+        kept = installer.parent / f"smoke-window-{arch}.png"
+        shutil.copy2(shot, kept)  # kept with the build, to look at
+        print(f"saved {kept}")
 
         meetings_before = count_meetings()
         kill_tree(engine)

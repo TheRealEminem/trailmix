@@ -27,7 +27,7 @@ def fake_model(monkeypatch):
     """Every stretch of audio is "speech", and the model reports how many seconds it was given."""
     calls = []
 
-    def transcribe_final(audio, prompt=None):
+    def transcribe_final(audio, prompt=None, model=None):
         calls.append(len(audio) / SR)
         return [{"start": 0.0, "end": len(audio) / SR, "text": f"heard {len(audio) / SR:.0f} seconds"}]
 
@@ -83,7 +83,7 @@ def test_a_missed_chunk_means_transcribing_it_all_afterwards(fresh_db, fake_mode
     db.update_meeting(mid, audio_dir=str(folder), status="recording")
     session = live.LiveSession(mid, folder, draft=False, cfg={"live_final": True, "transcribe_engine": "local"})
 
-    def broken(audio, prompt=None):
+    def broken(audio, prompt=None, model=None):
         raise RuntimeError("out of memory")
 
     monkeypatch.setattr(live.local_engine, "transcribe_final", broken)
@@ -126,6 +126,16 @@ def test_memory_gate_lets_macos_swap_unless_it_is_dire(monkeypatch):
     assert f"more than {platform_words.this_computer()} can spare" in resources.check(15, "The summary model")
 
 
+def test_a_small_server_can_still_run_a_small_model(monkeypatch):
+    monkeypatch.setattr(resources, "_disk_free_share", lambda: 0.5)
+    monkeypatch.setattr(resources, "memory_pressure", lambda: 1)
+    monkeypatch.setattr(resources.psutil, "virtual_memory", lambda: _VM(0.6, total_gb=2))  # a 2 GB NAS
+    assert resources.check(0.5, "The transcription model") is None  # the tiny model: swap if need be
+    assert "can spare" in resources.check(1.6, "The transcription model")  # turbo doesn't fit
+    monkeypatch.setattr(resources.psutil, "virtual_memory", lambda: _VM(1, total_gb=8))
+    assert "can spare" in resources.check(6.5, "The summary model")  # 8 GB and up: 2 GB kept, as before
+
+
 def test_cuts_land_at_pauses_or_between_words():
     talk = speech(10, pause_at=3).astype(np.float32) / 32768.0
     assert live.find_cut(talk[:int(4.5 * SR)]) == int(3.5 * SR)  # the pause
@@ -139,7 +149,7 @@ def test_cuts_land_at_pauses_or_between_words():
 def test_each_chunk_gets_what_was_just_said_as_context(fresh_db, fake_model, monkeypatch):
     prompts = []
 
-    def transcribe_final(audio, prompt=None):
+    def transcribe_final(audio, prompt=None, model=None):
         prompts.append(prompt)
         return [{"start": 0.0, "end": 1.0, "text": f"part {len(prompts)}"}]
 

@@ -139,3 +139,89 @@ def test_a_new_recording_takes_granola_notes_instead_of_writing_its_own(fresh_db
     pipeline._run_stages(rec, frozenset(), frozenset())
     m = db.get_meeting(rec)
     assert "Granola notes" in m["summary"] and m["status"] == "done" and len(db.list_meetings()) == 1
+
+
+def test_a_copy_that_comes_in_while_the_recording_is_busy_merges_when_it_is_done(fresh_db, monkeypatch):
+    """Granola's copy arrives (the look a few minutes after a recording) while the recording's notes are still being
+    written: the merge used to be put off and never happen, leaving the meeting in the list twice."""
+    said = talk(1)
+    rec = recording(heard(said, 2), summary=None)
+    db.update_meeting(rec, status="summarizing")
+    g = granola(heard(said, 3))
+    assert g != rec and len(db.list_meetings()) == 2                       # busy: not yet
+
+    monkeypatch.setattr(pipeline.llm_engine, "summarize", lambda *a, **kw: ("## Overview\nTrailmix notes", "ollama", None))
+    monkeypatch.setattr(pipeline.llm_engine, "is_local", lambda *a, **kw: False)
+    monkeypatch.setattr(pipeline.workspaces, "after_notes", lambda *a, **kw: None)
+    monkeypatch.setattr(pipeline.telemetry, "send", lambda *a, **kw: None)
+    db.update_meeting(rec, status="queued")
+    pipeline._run_stages(rec, frozenset(), frozenset())                     # the recording's notes are written
+    m = db.get_meeting(rec)
+    assert len(db.list_meetings()) == 1 and db.get_meeting(g) is None
+    assert "Granola notes" in m["summary"] and m["status"] == "done"
+
+
+def test_settle_merges_copies_left_in_the_library_but_not_ones_you_kept_apart(fresh_db):
+    settings.update({"duplicates": "keep"})
+    a = recording(heard(talk(1), 2))
+    granola(heard(talk(1), 3), note_id="g1")
+    b = recording(heard(talk(5), 2))
+    gb = granola(heard(talk(5), 3), note_id="g2")
+    duplicates.keep_apart(b, gb)
+    assert len(db.list_meetings()) == 4
+
+    assert duplicates.settle(settings.get_all()) == 0                       # you'd rather keep both: left alone
+    settings.update({"duplicates": "merge"})
+    assert duplicates.settle(settings.get_all()) == 1
+    assert {m["id"] for m in db.list_meetings()} == {a, b, gb}
+
+
+def test_reviewing_a_merge_shows_what_went_into_what_and_keep_clears_it(fresh_db):
+    said = talk(1)
+    rec = recording(heard(said, 2))
+    granola(heard(said, 3))
+    client = TestClient(main.app)
+
+    waiting = client.get("/api/merges").json()["meetings"]
+    assert [w["id"] for w in waiting] == [rec]
+    came = waiting[0]["merged"][0]
+    assert came["from"] == "Granola" and came["title"] == "Cinder Labs check-in" and came["title_before"] == "Meeting Oct 03"
+    assert came["took"] == {"transcript": True, "notes": True, "title": True} and not came["reviewed"] and came["last"]
+    assert db.list_meetings()[0]["merges_to_review"] == 1
+
+    assert client.post(f"/api/meetings/{rec}/merges/keep").status_code == 204
+    assert client.get("/api/merges").json()["meetings"] == []
+    assert db.list_meetings()[0]["merges_to_review"] == 0
+    assert client.get(f"/api/meetings/{rec}").json()["merged"][0]["reviewed"]
+
+    back = client.post(f"/api/meetings/{rec}/unmerge").json()["id"]        # still undoable after keeping it
+    assert {m["id"] for m in db.list_meetings()} == {rec, back}
+    assert client.post(f"/api/meetings/{rec}/merges/keep").status_code == 409
+
+
+def test_undo_from_the_review_restores_both_meetings(fresh_db):
+    said = talk(1)
+    rec = recording(heard(said, 2))
+    granola(heard(said, 3))
+    client = TestClient(main.app)
+    back = client.post(f"/api/meetings/{rec}/unmerge").json()["id"]
+    assert client.get("/api/merges").json()["meetings"] == []
+    m, g = db.get_meeting(rec), db.get_meeting(back)
+    assert m["title"] == "Meeting Oct 03" and "Trailmix notes" in m["summary"]
+    assert g["title"] == "Cinder Labs check-in" and "Granola notes" in g["summary"]
+
+
+def test_a_merge_from_before_reviews_were_kept_still_says_what_it_took(fresh_db):
+    said = talk(1)
+    rec = recording(heard(said, 2))
+    granola(heard(said, 3))
+    m = db.get_meeting(rec)
+    old = [{k: v for k, v in r.items() if k not in ("took", "reviewed")} for r in json.loads(m["merged_json"])]
+    db.update_meeting(rec, merged_json=old)
+    came = duplicates.present(db.get_meeting(rec))[0]
+    assert came["took"] == {"transcript": True, "notes": True, "title": True} and not came["reviewed"]
+
+
+def test_merges_name_fathom_and_fireflies(fresh_db):
+    assert duplicates._label({"source": "fathom"}) == "Fathom"
+    assert duplicates._label({"source": "fireflies"}) == "Fireflies"

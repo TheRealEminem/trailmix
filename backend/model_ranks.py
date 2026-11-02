@@ -24,6 +24,10 @@ REMOTE = "https://therealeminem.github.io/trailmix/model-ranks.json"
 REFRESH_S = 24 * 3600
 BETTER_BY = 5  # a model must beat the old one by this much to be worth redoing work for
 STRONG = 75    # work by an unrecorded model (from before Trailmix kept track) is only redone by a model this good
+# The local notes models to suggest, by how much memory a model can have (hardware.ai_memory), for when neither the
+# fetched list nor the built-in one has a "recommend" section.
+FALLBACK_NOTES = [{"model": "qwen2.5:3b", "min_gb": 0, "size_gb": 1.9},
+                  {"model": "qwen2.5:7b", "min_gb": 7.5, "size_gb": 4.7}]
 
 _lock = threading.Lock()
 _ranks: dict | None = None
@@ -91,6 +95,39 @@ def score(model: str | None) -> float | None:
         if fnmatch.fnmatch(name, entry["match"].lower()):
             return float(entry["score"])
     return _by_size(name)
+
+
+def _recommend(kind: str) -> list[dict]:
+    """The list's suggestions of one kind ("notes"): the newest list's, else the built-in one's (a fetched copy from
+    before suggestions were listed has none)."""
+    for source in (_load(), json.loads(BUILT_IN.read_text())):
+        entries = (source.get("recommend") or {}).get(kind)
+        if isinstance(entries, list):
+            good = [e for e in entries if isinstance(e, dict) and e.get("model")]
+            if good:
+                return good
+    return []
+
+
+def recommended_notes(ai_memory_gb: float) -> dict:
+    """{"model", "min_gb", "size_gb"}: the biggest local notes model worth suggesting for a computer whose models can
+    have `ai_memory_gb` (hardware.profile). The list is fetched with the rankings, so suggestions can move on to new
+    models without an app update."""
+    entries = _recommend("notes") or FALLBACK_NOTES
+    fits = [e for e in entries if ai_memory_gb >= float(e.get("min_gb") or 0)]
+    return max(fits, key=lambda e: float(e.get("min_gb") or 0)) if fits else min(entries, key=lambda e: float(e.get("min_gb") or 0))
+
+
+def speech_models(engine: str) -> list[dict]:
+    """The speech models the list offers for a local engine ("mlx", "whispercpp"): [{"id", "label", "size_gb",
+    "ram_gb", "speed"}], or [] to use the engine's own list."""
+    for source in (_load(), json.loads(BUILT_IN.read_text())):
+        entries = ((source.get("recommend") or {}).get("speech") or {}).get(engine)
+        if isinstance(entries, list):
+            good = [e for e in entries if isinstance(e, dict) and e.get("id") and e.get("label")]
+            if good:
+                return good
+    return []
 
 
 def speech_model(made_with: str | None) -> str | None:

@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { api, inApp, revealInFinder } from "../api";
 import type { Attachment, PendingAttachment } from "../api";
 import { formatBytes } from "../format";
+import { platformWords } from "../platform";
 import {
   AlertIcon,
   FileIcon,
@@ -339,7 +340,7 @@ function AttachmentRow({
           </button>
         )}
         {onReveal && (
-          <button className="icon-btn" onClick={onReveal} aria-label="Show in Finder" data-tip="Show in Finder">
+          <button className="icon-btn" onClick={onReveal} aria-label={`Show in ${platformWords().fileManager}`} data-tip={`Show in ${platformWords().fileManager}`}>
             <FolderIcon size={16} />
           </button>
         )}

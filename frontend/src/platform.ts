@@ -32,6 +32,8 @@ export interface PlatformWords {
   fileManager: string;
   /** what to open to start Trailmix: "Trailmix.app", "Trailmix" */
   appName: string;
+  /** where you'd run a command yourself: "Terminal", "PowerShell", "a terminal" */
+  terminal: string;
 }
 
 const WORDS: Record<OS, PlatformWords> = {
@@ -47,6 +49,7 @@ const WORDS: Record<OS, PlatformWords> = {
     trayWhere: "at the top of the screen",
     fileManager: "Finder",
     appName: "Trailmix.app",
+    terminal: "Terminal",
   },
   windows: {
     os: "windows",
@@ -60,6 +63,7 @@ const WORDS: Record<OS, PlatformWords> = {
     trayWhere: "in the system tray, by the clock",
     fileManager: "File Explorer",
     appName: "Trailmix",
+    terminal: "PowerShell",
   },
   linux: {
     os: "linux",
@@ -73,6 +77,7 @@ const WORDS: Record<OS, PlatformWords> = {
     trayWhere: "in the tray",
     fileManager: "your file manager",
     appName: "Trailmix",
+    terminal: "a terminal",
   },
   unknown: {
     os: "unknown",
@@ -86,6 +91,7 @@ const WORDS: Record<OS, PlatformWords> = {
     trayWhere: "in the menu bar or system tray",
     fileManager: "your file manager",
     appName: "Trailmix",
+    terminal: "a terminal",
   },
 };
 
@@ -136,6 +142,17 @@ export const currentOS = (): OS => {
 
 /** The words for this computer (or for `os`). */
 export const platformWords = (os: OS = currentOS()): PlatformWords => WORDS[os];
+
+/**
+ * The words for the computer a native recorder runs on (its check-in's platform, which can differ from the
+ * server's), for what happens there: its permission switches, its chimes. The localStorage override still wins.
+ */
+export const recorderWords = (platform: string | null | undefined): PlatformWords => {
+  const os = override();
+  if (os !== "unknown") return WORDS[os];
+  const own = parseOS(platform);
+  return own !== "unknown" ? WORDS[own] : platformWords();
+};
 
 /** "this Mac" → "This Mac". */
 export const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);

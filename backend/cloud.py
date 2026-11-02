@@ -70,8 +70,9 @@ _device_codes: dict[str, str] = {}
 
 
 def device_id() -> str:
-    """The same for this Mac every time, and not the Mac's own serial: a hash of its hardware UUID (or, failing that, of
-    its network address). The server keeps only a hash of this, to give each Mac one free trial."""
+    """The same for this computer every time, and not its own serial: a hash of the Mac's hardware UUID, Windows'
+    MachineGuid or Linux's machine id (or, failing that, of its network address). The server keeps only a hash of
+    this, to give each computer one free trial."""
     raw = ""
     if sys.platform == "win32":
         try:  # the id Windows gave this install (not the machine's serial)
@@ -88,7 +89,27 @@ def device_id() -> str:
             raw = next((line.split('"')[-2] for line in out.splitlines() if "IOPlatformUUID" in line), "")
         except (OSError, subprocess.SubprocessError, IndexError):
             pass
+    elif sys.platform.startswith("linux"):
+        raw = linux_machine_id()
     return hashlib.sha256(f"trailmix-device:{raw or uuid.getnode()}".encode()).hexdigest()
+
+
+# Where Linux keeps the id it gave this install (systemd's, and D-Bus's older copy of the same thing).
+MACHINE_ID_FILES = ("/etc/machine-id", "/var/lib/dbus/machine-id")
+
+
+def linux_machine_id() -> str:
+    """This Linux install's machine id (32 hex digits, made once at install), or "" if there's none: an empty or
+    "uninitialized" file (an image not yet booted) doesn't count."""
+    for name in MACHINE_ID_FILES:
+        try:
+            with open(name, encoding="ascii", errors="replace") as f:
+                text = f.read(256).strip().lower()
+        except OSError:
+            continue
+        if len(text) == 32 and all(c in "0123456789abcdef" for c in text) and text.strip("0"):
+            return text
+    return ""
 
 
 def link() -> dict:

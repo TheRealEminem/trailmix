@@ -377,10 +377,17 @@ def count_meetings() -> int:
 def list_meetings() -> list[dict]:
     with connect() as conn:
         rows = conn.execute(
-            "SELECT id, title, created_at, duration_sec, status, workspace_id, ask_first FROM meetings "
-            "ORDER BY created_at DESC, id DESC"
+            "SELECT id, title, created_at, duration_sec, status, workspace_id, ask_first, tags_json, "
+            # copies merged in by themselves that you haven't looked at yet (duplicates.py)
+            "(SELECT count(*) FROM json_each(merged_json) WHERE json_extract(value, '$.reviewed') IS NOT 1) "
+            "AS merges_to_review FROM meetings ORDER BY created_at DESC, id DESC"
         ).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        m = dict(r)
+        m["tags"] = json.loads(m.pop("tags_json") or "[]")
+        out.append(m)
+    return out
 
 
 def get_meeting(meeting_id: int) -> dict | None:
@@ -664,21 +671,63 @@ def fts_query(text: str, any_term: bool = False) -> str | None:
     return (" OR " if any_term else " AND ").join(terms)
 
 
-def search(text: str, limit: int = 30, any_term: bool = False, workspace_id: int | None = None) -> list[dict]:
-    """Best matches first. `workspace_id`: only meetings in that workspace."""
+def _scope(workspace_id: int | None, since: str | None, sources: list[str] | None) -> tuple[str, list]:
+    """SQL conditions (each starting " AND", on meetings as m) and their values. `since`: an ISO time; `sources`:
+    "trailmix" (recorded or transcribed here) or an importer's name ("granola", "fathom", …)."""
+    sql, args = "", []
+    if workspace_id:
+        sql += " AND m.workspace_id = ?"
+        args.append(workspace_id)
+    if since:
+        sql += " AND m.created_at >= ?"
+        args.append(since)
+    if sources is not None:
+        sql += f" AND coalesce(m.source, 'trailmix') IN ({','.join('?' * len(sources)) or 'NULL'})"
+        args += sources
+    return sql, args
+
+
+def search(text: str, limit: int = 30, any_term: bool = False, workspace_id: int | None = None,
+           since: str | None = None, sources: list[str] | None = None) -> list[dict]:
+    """Best matches first. `workspace_id`, `since`, `sources`: only those meetings (see _scope)."""
     q = fts_query(text, any_term)
     if not q:
         return []
-    within = "AND m.workspace_id = ?" if workspace_id else ""
+    within, args = _scope(workspace_id, since, sources)
     with connect() as conn:
         rows = conn.execute(
             f"""SELECT m.id, m.title, m.created_at, m.duration_sec, m.status, m.workspace_id,
                        snippet(meetings_fts, -1, '{HIT_START}', '{HIT_END}', '…', 14) AS snippet
                 FROM meetings_fts JOIN meetings m ON m.id = meetings_fts.rowid
                 WHERE meetings_fts MATCH ? {within} ORDER BY bm25(meetings_fts, 5.0, 1.0, 2.0, 3.0, 1.0) LIMIT ?""",
-            (q, *([workspace_id] if workspace_id else []), limit),
+            (q, *args, limit),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def readable_meetings(workspace_id: int | None = None, since: str | None = None,
+                      sources: list[str] | None = None) -> list[dict]:
+    """The meetings with something to read (a transcript or notes), newest first: id, title and created_at."""
+    within, args = _scope(workspace_id, since, sources)
+    with connect() as conn:
+        rows = conn.execute(
+            f"""SELECT m.id, m.title, m.created_at FROM meetings m
+                WHERE (m.transcript IS NOT NULL OR m.summary IS NOT NULL) {within}
+                ORDER BY m.created_at DESC, m.id DESC""",
+            args,
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def meeting_sources(workspace_id: int | None = None) -> dict[str, int]:
+    """How many meetings came from each place ("trailmix" for those recorded or transcribed here)."""
+    within, args = _scope(workspace_id, None, None)
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT coalesce(m.source, 'trailmix') AS source, count(*) FROM meetings m WHERE 1 {within} GROUP BY 1",
+            args,
+        ).fetchall()
+    return {r[0]: r[1] for r in rows}
 
 
 # ── Attachments ─────────────────────────────────────────────────────────

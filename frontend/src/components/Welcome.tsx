@@ -25,14 +25,15 @@ import {
   UsersIcon,
   WaveIcon,
 } from "./icons";
-import { cap, platformWords } from "../platform";
+import { cap, platformWords, recorderWords } from "../platform";
 import { TRANSCRIBERS, transcriberFor } from "../transcribers";
 import type { Transcriber } from "../transcribers";
 import { Ambient, Logo, TrailScene } from "./illustrations";
 import { CONSENT, Source, entryFor, guess, regionOptions, stamp } from "./RecordingLaws";
 import SoundCheck, { soundCheckPassed } from "./SoundCheck";
 import CloudPanel from "./Cloud";
-import { Collapse, Segmented, Select, Spinner, Switch } from "./ui";
+import { FoundServers, usesLocalServer } from "./LocalServers";
+import { Collapse, CopyButton, Segmented, Select, Spinner, Switch } from "./ui";
 
 // Instruction-following families that write good notes (see llm_engine.preferred_ollama_model).
 const GOOD_MODELS = /^(qwen3|qwen2\.5|gemma3|llama3\.[12]|mistral|phi4)/i;
@@ -680,7 +681,7 @@ function TranscribeStep({
             {which.id === "server" && (
               <input
                 className="field h-10 w-full px-3 font-mono"
-                placeholder="http://my-mac.local:8770/v1"
+                placeholder="http://my-computer.local:8770/v1"
                 aria-label="Server address"
                 autoComplete="off"
                 value={address}
@@ -799,8 +800,9 @@ function NotesStep({
   prefer?: "local" | "cloud";
 }) {
   const current = CLOUD.find((c) => c.id === s.summary_provider);
+  const localServer = usesLocalServer(s); // LM Studio, llama.cpp… on this computer, set up below or in Settings
   const [mode, setMode] = useState<"local" | "cloud">(
-    s.lockdown
+    s.lockdown || localServer
       ? "local"
       : (prefer ??
           (current || s.summary_provider === "custom" || device?.verdict === "cloud" ? "cloud" : "local")),
@@ -812,11 +814,11 @@ function NotesStep({
   const [key, setKey] = useState("");
   const hint = s.secret_hints?.[`${cloud}_api_key`];
   const meta = CLOUD.find((c) => c.id === cloud)!;
-  const customKept = s.summary_provider === "custom" && mode === "cloud";
+  const customKept = s.summary_provider === "custom" && !localServer && mode === "cloud";
 
   const save = async () => {
     if (mode === "local") {
-      if (s.summary_provider !== "ollama") onSaved(await api.putSettings({ summary_provider: "ollama" }));
+      if (s.summary_provider !== "ollama" && !localServer) onSaved(await api.putSettings({ summary_provider: "ollama" }));
       return next();
     }
     if (customKept && !key.trim()) return next();
@@ -850,7 +852,10 @@ function NotesStep({
     >
       {device && (
         <p className="-mt-3 mb-4 text-hint text-ink-soft">
-          {cap(platformWords().thisComputer)}: {[device.chip, `${device.ram_gb} GB memory`, `${device.disk_free_gb} GB free`].filter(Boolean).join(" · ")}
+          {cap(platformWords().thisComputer)}:{" "}
+          {[device.chip, device.gpu, `${device.ram_gb} GB memory`, `${device.disk_free_gb} GB free`]
+            .filter(Boolean)
+            .join(" · ")}
         </p>
       )}
       <div role="radiogroup" aria-label="Notes" className="space-y-3">
@@ -865,7 +870,18 @@ function NotesStep({
           {device && device.verdict !== "local" && (
             <p className="mb-3 rounded-sm bg-sun-soft px-3 py-2 text-sun-deep">{device.notes.join(" ")}</p>
           )}
-          <OllamaSetup onReady={() => void api.getSettings().then(onSaved)} />
+          <FoundServers s={s} onSaved={onSaved} className="mb-3 border-b border-line pb-3" />
+          {localServer ? (
+            <button
+              type="button"
+              className="text-hint text-forest underline"
+              onClick={() => void api.putSettings({ summary_provider: "ollama" }).then(onSaved)}
+            >
+              Use Ollama instead
+            </button>
+          ) : (
+            <OllamaSetup onReady={() => void api.getSettings().then(onSaved)} />
+          )}
         </Choice>
         <Choice
           selected={mode === "cloud"}
@@ -926,7 +942,37 @@ function NotesStep({
 }
 
 /**
- * Getting Ollama and a good notes model onto this Mac, in place: install, download, ready. `onReady` when a
+ * Where Trailmix can't install or start Ollama itself (Linux: Ollama's installer needs root), the command to run
+ * yourself, to copy, and Ollama's page about it. The status is asked for every few seconds, so this moves on by
+ * itself once Ollama answers.
+ */
+function OllamaCommand({ command, page, installing }: { command: string; page?: string | null; installing: boolean }) {
+  const w = platformWords();
+  return (
+    <div>
+      <p>
+        {installing
+          ? `Ollama installs with one command. Run it in ${w.terminal} (it asks for your password, as installing software does):`
+          : `Ollama is installed but not running. Start it in ${w.terminal}:`}
+      </p>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <code className="min-w-0 break-all rounded bg-surface-subtle px-2 py-1 font-mono text-ui">{command}</code>
+        <CopyButton text={command} />
+      </div>
+      <p className="mt-2 flex flex-wrap items-center gap-x-2 text-hint text-ink-soft">
+        <Spinner /> Waiting for Ollama to answer: this moves on by itself.
+        {page && (
+          <a className="text-forest underline decoration-forest/30 underline-offset-2" href={page} target="_blank" rel="noreferrer">
+            Ollama's instructions
+          </a>
+        )}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Getting Ollama and a good notes model onto this computer, in place: install, download, ready. `onReady` when a
  * download or install finishes, since that changes what the app can do.
  */
 function OllamaSetup({ onReady }: { onReady: () => void }) {
@@ -980,7 +1026,10 @@ function OllamaSetup({ onReady }: { onReady: () => void }) {
           <Bar progress={o.install.progress} />
         </>
       )}
-      {!o.reachable && !o.install?.active && (
+      {!o.reachable && !o.install?.active && (o.install_command || o.start_command) && (
+        <OllamaCommand command={(o.install_command || o.start_command)!} page={o.install_page} installing={!!o.install_command} />
+      )}
+      {!o.reachable && !o.install?.active && !o.install_command && !o.start_command && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           {o.can_install ? (
             <button type="button" className="btn btn-sm btn-primary" onClick={() => run(api.installOllama)}>
@@ -1010,6 +1059,7 @@ function OllamaSetup({ onReady }: { onReady: () => void }) {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <button type="button" className="btn btn-sm btn-primary" onClick={() => run(() => api.pullOllamaModel())}>
             Download {o.recommended}
+            {o.recommended_gb ? ` (${o.recommended_gb} GB)` : ""}
           </button>
           <span>Writes good notes and suits {platformWords().thisComputer}.</span>
         </div>
@@ -1128,7 +1178,7 @@ function DoneStep({
         You're all set{first ? <span data-private="your details">, {first}</span> : null}.
       </h1>
       <p className="hero-sub mt-2">
-        Start your call as usual (Zoom, Meet, Teams, FaceTime), then press <b className="font-medium text-ink">Start recording</b>
+        Start your call as usual (Zoom, Meet, Teams, {recorderWords(native?.platform).os === "macos" ? "FaceTime" : "Slack"}), then press <b className="font-medium text-ink">Start recording</b>
         {native?.shortcut_record && hasCapability(native, "hotkeys") ? (
           <>
             {" "}

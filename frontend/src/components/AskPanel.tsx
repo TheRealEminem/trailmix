@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "../api";
-import type { Health, QA } from "../api";
-import { ArrowUpIcon, ChatIcon, SparkleIcon, TrashIcon } from "./icons";
+import type { AskScope, AskScopeRequest, AskSource, Health, QA } from "../api";
+import { ArrowUpIcon, ChatIcon, CheckIcon, SparkleIcon, TrashIcon } from "./icons";
 import { ContourBadge } from "./illustrations";
 import { Spinner } from "./ui";
 
@@ -12,6 +12,7 @@ interface Entry {
   a: string;
   provider: string;
   sources?: { id: number; title: string }[];
+  scope?: AskScope;
 }
 
 interface Props {
@@ -27,7 +28,33 @@ interface Props {
 }
 
 const MEETING_PROMPTS = ["What was decided?", "What did they commit to, and by when?", "Write a 3-bullet update I can paste in Slack"];
-const ALL_PROMPTS = ["What did I promise to do recently?", "When did we last talk about pricing?", "What's still unresolved across my meetings?"];
+// Each across-meetings prompt brings its own window (and reads the tasks taken from the notes where that answers it).
+const ALL_PROMPTS: { q: string; days: number | null; tasks?: boolean }[] = [
+  { q: "What did I promise to do recently?", days: 14, tasks: true },
+  { q: "When did we last talk about pricing?", days: null },
+  { q: "What's still unresolved across my meetings?", days: 31, tasks: true },
+];
+
+const WINDOWS: { days: number | null; label: string }[] = [
+  { days: null, label: "Any time" },
+  { days: 7, label: "Past week" },
+  { days: 14, label: "Past 2 weeks" },
+  { days: 31, label: "Past month" },
+  { days: 92, label: "Past 3 months" },
+  { days: 366, label: "Past year" },
+];
+
+const windowLabel = (days: number) => WINDOWS.find((w) => w.days === days)?.label.toLowerCase() ?? `past ${days} days`;
+
+/** "· read 9 meetings from the past 2 weeks, and their tasks" */
+function readLabel(scope: AskScope | undefined, count: number) {
+  const n = scope?.meetings ?? count;
+  if (!n && !scope?.tasks) return null;
+  let out = `read ${n} meeting${n === 1 ? "" : "s"}`;
+  if (scope?.days) out += ` from the ${windowLabel(scope.days)}${scope.days_from_question ? " (from your question)" : ""}`;
+  if (scope?.tasks) out += n ? ", and their tasks" : " and tasks";
+  return out;
+}
 
 export default function AskPanel({ meetingId, workspaceId = null, history = [], health, onOpenMeeting, onError, onCleared }: Props) {
   const [entries, setEntries] = useState<Entry[]>(history);
@@ -38,6 +65,27 @@ export default function AskPanel({ meetingId, workspaceId = null, history = [], 
   const perMeeting = meetingId !== undefined;
   const provider = health?.summary;
   const label = (id: string) => health?.providers.find((p) => p.id === id)?.label ?? id;
+  const [days, setDays] = useState<number | null>(null);
+  const [picked, setPicked] = useState<string[] | null>(null); // sources; null: all of them
+  const [sources, setSources] = useState<AskSource[]>([]);
+
+  useEffect(() => {
+    if (perMeeting) return;
+    let live = true;
+    api.askSources(workspaceId).then((s) => live && setSources(s), () => live && setSources([]));
+    setPicked(null);
+    return () => {
+      live = false;
+    };
+  }, [perMeeting, workspaceId]);
+
+  const toggleSource = (id: string) =>
+    setPicked((now) => {
+      const on = now ?? sources.map((s) => s.id);
+      const next = on.includes(id) ? on.filter((x) => x !== id) : [...on, id];
+      if (!next.length) return now; // keep at least one
+      return next.length === sources.length ? null : next;
+    });
 
   useEffect(() => {
     setEntries(history);
@@ -47,7 +95,7 @@ export default function AskPanel({ meetingId, workspaceId = null, history = [], 
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [entries.length, busy]);
 
-  const ask = async (q: string) => {
+  const ask = async (q: string, scope: AskScopeRequest = { days }) => {
     q = q.trim();
     if (!q || busy) return;
     setPending(q);
@@ -57,8 +105,8 @@ export default function AskPanel({ meetingId, workspaceId = null, history = [], 
         const e = await api.askMeeting(meetingId, q);
         setEntries((xs) => [...xs, e]);
       } else {
-        const r = await api.askAll(q, workspaceId);
-        setEntries((xs) => [...xs, { q, a: r.answer, provider: r.provider, sources: r.sources }]);
+        const r = await api.askAll(q, workspaceId, { ...scope, sources: picked });
+        setEntries((xs) => [...xs, { q, a: r.answer, provider: r.provider, sources: r.sources, scope: r.scope }]);
       }
     } catch (e) {
       setQuestion(q);
@@ -91,14 +139,28 @@ export default function AskPanel({ meetingId, workspaceId = null, history = [], 
           <p className="mt-3 font-medium">{perMeeting ? "Ask this meeting anything" : "Ask across all your meetings"}</p>
           <p className="mx-auto mt-1 max-w-md text-label leading-relaxed text-ink-soft">
             Answered by {provider ? `${provider.label}${provider.local ? " on this machine" : " (cloud)"}` : "your summary provider"}, using
-            {perMeeting ? " this meeting's transcript and notes." : " the meetings that best match your question."}
+            {perMeeting ? " this meeting's transcript and notes." : " the meetings in the time and sources you pick below, best matches first."}
           </p>
           <div className="mt-5 flex flex-wrap justify-center gap-2">
-            {(perMeeting ? MEETING_PROMPTS : ALL_PROMPTS).map((p) => (
-              <button key={p} onClick={() => void ask(p)} className="btn btn-sm btn-soft rounded-full px-3.5 font-normal">
-                {p}
-              </button>
-            ))}
+            {perMeeting
+              ? MEETING_PROMPTS.map((p) => (
+                  <button key={p} onClick={() => void ask(p)} className="btn btn-sm btn-soft rounded-full px-3.5 font-normal">
+                    {p}
+                  </button>
+                ))
+              : ALL_PROMPTS.map((p) => (
+                  <button
+                    key={p.q}
+                    onClick={() => {
+                      setDays(p.days);
+                      void ask(p.q, { days: p.days ?? 0, tasks: p.tasks });
+                    }}
+                    className="btn btn-sm btn-soft rounded-full px-3.5 font-normal"
+                    data-tip={p.days ? `Reads the ${windowLabel(p.days)}${p.tasks ? ", with their tasks" : ""}` : "Reads any time, newest matches first"}
+                  >
+                    {p.q}
+                  </button>
+                ))}
           </div>
         </div>
       )}
@@ -134,7 +196,7 @@ export default function AskPanel({ meetingId, workspaceId = null, history = [], 
               </div>
               <div className="mt-2 flex items-center gap-1.5 text-meta text-ink-soft">
                 <SparkleIcon size={16} /> {label(e.provider)}
-                {e.sources && e.sources.length > 0 && <span>· searched {e.sources.length} meetings</span>}
+                {readLabel(e.scope, e.sources?.length ?? 0) && <span>· {readLabel(e.scope, e.sources?.length ?? 0)}</span>}
               </div>
             </div>
           </div>
@@ -152,12 +214,48 @@ export default function AskPanel({ meetingId, workspaceId = null, history = [], 
         <div ref={endRef} />
       </div>
 
+      {!perMeeting && (
+        <div className="mt-7 flex flex-wrap items-center gap-2" role="group" aria-label="What to read">
+          <select
+            aria-label="Time range"
+            value={days ?? ""}
+            onChange={(e) => setDays(e.target.value ? Number(e.target.value) : null)}
+            className="field h-8 py-0 text-label"
+            disabled={busy}
+          >
+            {WINDOWS.map((w) => (
+              <option key={w.label} value={w.days ?? ""}>
+                {w.label}
+              </option>
+            ))}
+          </select>
+          {sources.length > 1 &&
+            sources.map((src) => {
+              const on = picked === null || picked.includes(src.id);
+              return (
+                <button
+                  key={src.id}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => toggleSource(src.id)}
+                  disabled={busy}
+                  className={`chip h-8 gap-1.5 px-3 text-label ${on ? "bg-forest text-white" : "bg-surface-subtle text-ink-soft ring-1 ring-line hover:text-ink"}`}
+                  data-tip={`${src.count} meeting${src.count === 1 ? "" : "s"}`}
+                >
+                  {on && <CheckIcon size={14} />}
+                  {src.label}
+                </button>
+              );
+            })}
+        </div>
+      )}
+
       <form
         onSubmit={(e) => {
           e.preventDefault();
           void ask(question);
         }}
-        className="mt-7 flex items-center gap-2"
+        className={`${perMeeting ? "mt-7" : "mt-3"} flex items-center gap-2`}
       >
         <div className="field flex flex-1 items-center gap-2 py-1 pl-4 pr-1 focus-within:border-[color:color-mix(in_srgb,var(--forest)_55%,transparent)] focus-within:shadow-focus">
           <input

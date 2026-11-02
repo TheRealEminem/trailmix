@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, hasCapability } from "../api";
 import type { NativeRecorder } from "../api";
+import { recorderWords } from "../platform";
 import { AlertIcon, DownloadIcon } from "./icons";
 import { Spinner } from "./ui";
 
@@ -41,8 +42,9 @@ export default function UpdateBanner({
               Trailmix {update.version} is available.
             </span>{" "}
             <span className="text-ink-soft">
-              It installs in about a minute and Trailmix restarts. macOS will
-              ask for the microphone and system audio again afterwards.
+              {recorderWords(native?.platform).os === "macos"
+                ? "It installs in about a minute and Trailmix restarts. macOS will ask for the microphone and system audio again afterwards."
+                : "It installs in about a minute and Trailmix restarts."}
             </span>
           </>
         )}

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../api";
 import type { Health, MeetingListItem, SearchHit, Workspace, WorkspaceFilter } from "../api";
-import { dayGroup, formatDuration, formatTime } from "../format";
+import { dayGroup, dayKey, formatDuration, formatTime, newestFirst } from "../format";
 import { ChatIcon, CheckSquareIcon, CloseIcon, DownloadIcon, MicIcon, SearchIcon, SlidersIcon, TrashIcon } from "./icons";
 import { AISwitch } from "./AIChoice";
 import { Logo } from "./illustrations";
@@ -56,7 +56,21 @@ function Snippet({ text }: { text: string }) {
   );
 }
 
-function NavItem({ active, onClick, icon, label, badge }: { active: boolean; onClick: () => void; icon: ReactNode; label: string; badge?: number }) {
+function NavItem({
+  active,
+  onClick,
+  icon,
+  label,
+  badge,
+  badgeTip,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: ReactNode;
+  label: string;
+  badge?: number;
+  badgeTip?: string;
+}) {
   return (
     <button
       onClick={onClick}
@@ -68,11 +82,38 @@ function NavItem({ active, onClick, icon, label, badge }: { active: boolean; onC
       <span className={`transition-colors ${active ? "text-forest" : ""}`}>{icon}</span>
       <span className="flex-1 text-left">{label}</span>
       {badge ? (
-        <span className="min-w-[20px] rounded-full bg-forest/10 px-1.5 py-0.5 text-center text-caption font-semibold tabular-nums text-forest-deep">
+        <span
+          className="min-w-[20px] rounded-full bg-forest/10 px-1.5 py-0.5 text-center text-caption font-semibold tabular-nums text-forest-deep"
+          data-tip={badgeTip}
+        >
           {badge}
         </span>
       ) : null}
     </button>
+  );
+}
+
+/** What a meeting is about, at a glance: its workspace (when looking at all of them) and its first topic. Each one
+ * shortens with "…" to fit; the topic only shows when there's room for it beside the workspace. */
+function SubjectChips({ space, tag }: { space?: Workspace; tag?: string }) {
+  if (!space && !tag) return null;
+  return (
+    <div className="mt-1.5 flex h-5 min-w-0 flex-wrap gap-1 overflow-hidden" data-private="topics">
+      {space && (
+        <span className={`chip min-w-0 shrink bg-forest/[.06] px-1.5 text-ink-soft ${tag ? "max-w-[48%]" : "max-w-full"}`}>
+          <WorkspaceDot color={space.color} />
+          <span className="truncate">{space.name}</span>
+        </span>
+      )}
+      {tag && (
+        <span
+          className={`chip min-w-0 shrink bg-ink/[.045] px-1.5 font-normal text-ink-soft ${space ? "max-w-[48%]" : "max-w-full"}`}
+          data-tip={tag}
+        >
+          <span className="truncate">{tag}</span>
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -83,6 +124,7 @@ function MeetingRow({
   onDelete,
   space,
   asks,
+  workspaceName,
 }: {
   m: MeetingListItem;
   active: boolean;
@@ -92,6 +134,8 @@ function MeetingRow({
   space?: Workspace;
   /** Questions about it waiting for you. */
   asks?: number;
+  /** Its workspace's name: a topic that only repeats it isn't shown. */
+  workspaceName?: string;
 }) {
   const busy = m.status === "recording";
   return (
@@ -105,7 +149,6 @@ function MeetingRow({
       >
         <div className={`truncate text-ui leading-5 ${active ? "font-semibold text-ink" : "font-medium text-ink"}`}>{m.title}</div>
         <div className="mt-0.5 flex items-center gap-1.5 text-meta leading-4 text-ink-soft">
-          {space && <WorkspaceDot color={space.color} className="mr-0.5" />}
           <span className="tabular-nums">{formatTime(m.created_at)}</span>
           <span className="text-ink-faint" aria-hidden="true">
             ·
@@ -123,6 +166,7 @@ function MeetingRow({
             <StatusChip status={m.status} />
           </span>
         </div>
+        <SubjectChips space={space} tag={m.tags.find((t) => t.toLowerCase() !== workspaceName?.toLowerCase())} />
       </button>
       {!busy && (
         <button
@@ -159,7 +203,7 @@ export default function Sidebar({
   onAIChanged,
   channel,
 }: Props) {
-  const meetings = everyMeeting.filter((m) => inWorkspace(workspace, m.workspace_id));
+  const meetings = newestFirst(everyMeeting.filter((m) => inWorkspace(workspace, m.workspace_id)));
   const spaceOf = (id: number | null) => (workspace === "all" && id ? workspaces.find((w) => w.id === id) : undefined);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
@@ -202,13 +246,15 @@ export default function Sidebar({
     return () => window.removeEventListener("keydown", onKey);
   }, [workspaces, onWorkspace]);
 
-  const groups: { label: string; items: MeetingListItem[] }[] = [];
+  // One group per day the meetings happened on, newest first
+  const groups: { key: string; label: string; items: MeetingListItem[] }[] = [];
   for (const m of meetings) {
-    const label = dayGroup(m.created_at);
+    const key = dayKey(m.created_at);
     const last = groups[groups.length - 1];
-    if (last?.label === label) last.items.push(m);
-    else groups.push({ label, items: [m] });
+    if (last?.key === key) last.items.push(m);
+    else groups.push({ key, label: dayGroup(m.created_at), items: [m] });
   }
+  const toReview = everyMeeting.filter((m) => m.merges_to_review > 0).length;
   const mac = macKeyboard();
 
   return (
@@ -313,7 +359,14 @@ export default function Sidebar({
       <nav className="mt-3 space-y-0.5 px-3" aria-label="Views">
         <NavItem active={view === "tasks"} onClick={() => onView("tasks")} icon={<CheckSquareIcon size={16} />} label="Tasks" badge={openTasks} />
         <NavItem active={view === "ask"} onClick={() => onView("ask")} icon={<ChatIcon size={16} />} label="Ask your meetings" />
-        <NavItem active={view === "import"} onClick={() => onView("import")} icon={<DownloadIcon size={16} />} label="Import" />
+        <NavItem
+          active={view === "import"}
+          onClick={() => onView("import")}
+          icon={<DownloadIcon size={16} />}
+          label="Import"
+          badge={toReview}
+          badgeTip={`${toReview} automatic merge${toReview === 1 ? "" : "s"} to review`}
+        />
       </nav>
 
       <nav data-private="meeting list" className="fade-edges-y mt-3 flex-1 overflow-y-auto px-3 pb-4 pt-1" aria-label="Meetings">
@@ -369,7 +422,7 @@ export default function Sidebar({
 
         {hits === null &&
           groups.map((g) => (
-            <section key={g.label} className="mb-2">
+            <section key={g.key} className="mb-2">
               <h3 className="eyebrow px-3 pb-1 pt-3">{g.label}</h3>
               <div className="space-y-px">
                 {g.items.map((m) => (
@@ -380,6 +433,7 @@ export default function Sidebar({
                     onSelect={() => onSelect(m.id)}
                     onDelete={() => onDelete(m)}
                     space={spaceOf(m.workspace_id)}
+                    workspaceName={workspaces.find((w) => w.id === m.workspace_id)?.name}
                     asks={questions[String(m.id)]}
                   />
                 ))}

@@ -32,6 +32,7 @@ _WORD = re.compile(r"[a-z0-9']+")
 _PREFIX = re.compile(r"^\[[\d:]+\]\s*(?:[^:\n]{1,40}:\s+)?", re.M)
 _lock = threading.Lock()  # one merge at a time
 _prints: dict[int, tuple[int, frozenset]] = {}
+_put_off: set[int] = set()  # meetings whose merge waited for one of them to finish processing
 
 
 def phrases(transcript: str) -> frozenset:
@@ -63,8 +64,8 @@ def _rank(m: dict) -> tuple:
 
 
 def _label(m: dict) -> str:
-    return {"granola": "Granola", "paste": "a pasted transcript", "file": "a transcript file"}.get(
-        m.get("source") or "", "Trailmix")
+    return {"granola": "Granola", "fathom": "Fathom", "fireflies": "Fireflies", "paste": "a pasted transcript",
+            "file": "a transcript file"}.get(m.get("source") or "", "Trailmix")
 
 
 def _candidates() -> list[dict]:
@@ -202,11 +203,13 @@ def merge(a_id: int, b_id: int, score_: float | None = None) -> int:
                                   + (json.loads(gone["tags_json"]) if gone.get("tags_json") else [])))
         if tags:
             changes["tags_json"] = tags
+        took = {"transcript": best is gone, "notes": "summary" in changes, "title": "title" in changes}
         record = {"meeting": {k: v for k, v in gone.items()}, "tasks": db.tasks_for(gone["id"], deleted=True),
                   "before": {"version": before, "summary": keep.get("summary"), "summary_provider": keep.get("summary_provider"),
                              "summary_model": keep.get("summary_model"), "title": keep["title"],
                              "title_auto": keep.get("title_auto"), "workspace_id": keep.get("workspace_id")},
-                  "offset": shift, "score": score_, "at": datetime.now(UTC).isoformat()}
+                  "offset": shift, "score": score_, "at": datetime.now(UTC).isoformat(), "took": took,
+                  "reviewed": False}
         merged = json.loads(keep["merged_json"]) if keep.get("merged_json") else []
         if keep.get("ask_first") and changes.get("summary"):
             changes["ask_first"] = 0  # it has notes now: nothing to choose
@@ -217,6 +220,7 @@ def merge(a_id: int, b_id: int, score_: float | None = None) -> int:
             db.replace_tasks(keep["id"], meeting_text.action_items(changes["summary"]))
         db.delete_meeting(gone["id"])
         _prints.pop(gone["id"], None)
+        _put_off.difference_update((keep["id"], gone["id"]))
     log.info("Merged meeting %s into %s (%s)", gone["id"], keep["id"], why)
     pipeline.reexport(keep["id"])
     return keep["id"]
@@ -280,6 +284,7 @@ def check(meeting_id: int, cfg: dict) -> int:
     mode = cfg.get("duplicates", "merge")
     if mode == "keep":
         return meeting_id
+    other = None
     try:
         found = matches_for(meeting_id)
         if not found:
@@ -291,9 +296,84 @@ def check(meeting_id: int, cfg: dict) -> int:
             db.update_meeting(other["id"], duplicate_of=m["id"])
             return meeting_id
         return merge(meeting_id, other["id"], s)
-    except ValueError as e:  # one of them is busy: it's found again next time, or by "Find duplicates"
+    except ValueError as e:  # one of them is busy: merged when it's done (after_processing), or by settle()
         log.info("Didn't merge meeting %s yet: %s", meeting_id, e)
+        _put_off.update((meeting_id, other["id"]) if other else (meeting_id,))
         return meeting_id
     except Exception:
         log.exception("Looking for a duplicate of meeting %s failed", meeting_id)
         return meeting_id
+
+
+def after_processing(meeting_id: int, cfg: dict) -> None:
+    """A meeting finished processing: a merge that waited for it happens now."""
+    if meeting_id in _put_off and cfg.get("duplicates", "merge") == "merge":
+        _put_off.discard(meeting_id)
+        check(meeting_id, cfg)
+
+
+def settle(cfg: dict) -> int:
+    """Merges every copy in the library that should have been merged already: one that waited while the app quit,
+    or arrived while its twin was still being processed. Only when duplicates merge by themselves; pairs you said
+    aren't the same are left alone. Returns how many were merged."""
+    if cfg.get("duplicates", "merge") != "merge":
+        return 0
+    made = 0
+    for p in find_all():
+        try:
+            merge(p["keep"]["id"], p["other"]["id"], p["score"])
+            made += 1
+        except ValueError:  # busy, or already merged with a third copy: next round
+            pass
+    return made
+
+
+# ── Reviewing merges ────────────────────────────────────────────────────
+
+def _took(record: dict, m: dict) -> dict:
+    """What the meeting took from the copy merged in. Merges from before this was recorded: worked out again."""
+    if record.get("took"):
+        return record["took"]
+    gone, before = record["meeting"], record["before"]
+    was = {**m, "summary": before.get("summary"), "title_auto": before.get("title_auto")}
+    better = _rank(gone) > _rank(was)
+    return {"transcript": better, "notes": bool(gone.get("summary")) and (better or not before.get("summary")),
+            "title": before.get("title") != m["title"] and m["title"] == gone.get("title")}
+
+
+def present(m: dict) -> list[dict]:
+    """The copies merged into a meeting, oldest first, as the app shows them."""
+    records = json.loads(m["merged_json"]) if m.get("merged_json") else []
+    out = []
+    for i, r in enumerate(records):
+        gone = r["meeting"]
+        out.append({"from": _label(gone), "source": gone.get("source") or "trailmix", "title": gone["title"],
+                    "created_at": gone["created_at"], "minutes": round((gone.get("duration_sec") or 0) / 60),
+                    "at": r["at"], "offset": r.get("offset") or 0, "score": r.get("score"),
+                    "title_before": r["before"].get("title"), "took": _took(r, m),
+                    "reviewed": bool(r.get("reviewed")), "last": i == len(records) - 1})
+    return out
+
+
+def to_review() -> list[dict]:
+    """Meetings with a merge you haven't looked at yet, newest merge first: the meeting that stayed and what came in."""
+    with db.connect() as conn:
+        rows = [dict(r) for r in conn.execute("SELECT * FROM meetings WHERE merged_json IS NOT NULL")]
+    out = []
+    for m in rows:
+        merged = present(m)
+        if any(not r["reviewed"] for r in merged):
+            out.append({"id": m["id"], "title": m["title"], "created_at": m["created_at"], "label": _label(m),
+                        "has_audio": has_audio(m), "minutes": round((m.get("duration_sec") or 0) / 60),
+                        "merged": merged})
+    return sorted(out, key=lambda x: max(r["at"] for r in x["merged"]), reverse=True)
+
+
+def keep_merged(meeting_id: int) -> None:
+    """You looked at what was merged into this meeting and it's right: no longer waiting for review (Undo stays)."""
+    with _lock:
+        m = db.get_meeting(meeting_id)
+        merged = json.loads(m["merged_json"]) if m and m.get("merged_json") else []
+        if not merged:
+            raise ValueError("Nothing was merged into this meeting")
+        db.update_meeting(meeting_id, merged_json=[{**r, "reviewed": True} for r in merged])

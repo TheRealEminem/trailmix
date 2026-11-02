@@ -3,17 +3,30 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+use crate::linux::{ctrl_break, Job};
+#[cfg(windows)]
 use crate::win::{ctrl_break, Job};
 
+#[cfg(windows)]
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+/// The bundled Python, inside the app's resources.
+#[cfg(windows)]
+const PYTHON: &str = "python/python.exe";
+#[cfg(not(windows))]
+const PYTHON: &str = "python/bin/python3";
 
 /// Where things live inside the installed app (next to Trailmix.exe), and where its data goes.
 #[derive(Clone, Debug)]
@@ -28,7 +41,7 @@ pub struct Bundled {
 impl Bundled {
     /// The bundled server, if this build has one (a `cargo run` from the source tree doesn't).
     pub fn locate(resources: &Path) -> Option<Bundled> {
-        let python = resources.join("python").join("python.exe");
+        let python = resources.join(PYTHON);
         if !python.is_file() {
             return None;
         }
@@ -44,12 +57,23 @@ impl Bundled {
 
 /// Meetings, settings and recordings. Survives updating or uninstalling the app (the installer never
 /// removes it). TRAILMIX_DATA_DIR overrides it (tests, or keeping your data elsewhere).
+#[cfg(windows)]
 pub fn data_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("TRAILMIX_DATA_DIR") {
         return PathBuf::from(dir);
     }
     let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
     local.join("Trailmix").join("data")
+}
+
+/// Meetings, settings and recordings: $XDG_DATA_HOME/Trailmix (~/.local/share/Trailmix). Survives updating or
+/// removing the app. TRAILMIX_DATA_DIR overrides it (tests, or keeping your data elsewhere).
+#[cfg(not(windows))]
+pub fn data_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("TRAILMIX_DATA_DIR") {
+        return PathBuf::from(dir);
+    }
+    crate::linux::xdg_dir("XDG_DATA_HOME", ".local/share").join("Trailmix")
 }
 
 pub fn log_file() -> PathBuf {
@@ -122,19 +146,18 @@ impl Server {
         let err_log: File = log.try_clone().map_err(|e| e.to_string())?;
 
         let b = &self.bundled;
-        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
         let mut command = Command::new(&b.python);
         command
             .args(["-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", &port.to_string()])
             .current_dir(&b.backend)
             .env_clear();
         for (key, value) in std::env::vars_os() {
-            if !key.to_string_lossy().to_uppercase().starts_with("PYTHON") {
+            if !not_for_the_engine(&key.to_string_lossy().to_uppercase()) {
                 command.env(key, value);
             }
         }
         command
-            .env("PATH", format!("{};{}\\System32;{}", b.bin.display(), system_root, system_root))
+            .env("PATH", engine_path(&b.bin))
             .env("PYTHONDONTWRITEBYTECODE", "1") // the app folder is never written to while it runs
             .env("PYTHONNOUSERSITE", "1")
             .env("PYTHONUNBUFFERED", "1")
@@ -144,8 +167,12 @@ impl Server {
             .env("TRAILMIX_PARENT_PID", std::process::id().to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::from(log))
-            .stderr(Stdio::from(err_log))
-            .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+            .stderr(Stdio::from(err_log));
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+        // A process group of its own, so stopping it stops ffmpeg and anything else it started too.
+        #[cfg(unix)]
+        command.process_group(0);
         let child = command.spawn().map_err(|e| format!("Couldn't start the Trailmix engine ({e})"))?;
         if let Some(job) = &self.job {
             job.assign(&child);
@@ -206,6 +233,8 @@ impl Server {
             }
             thread::sleep(Duration::from_millis(50));
         }
+        #[cfg(target_os = "linux")]
+        crate::linux::kill_group(child.id());
         let _ = child.kill();
         let _ = child.wait();
     }
@@ -222,6 +251,28 @@ fn explain(port: u16) -> String {
     let last = tail.iter().find(|l| !l.trim().is_empty() && !l.starts_with('—')).copied().unwrap_or("no details");
     let last: String = last.chars().take(120).collect();
     format!("Trailmix's server stopped unexpectedly ({last}). Log: {}", path.display())
+}
+
+/// The engine's PATH: the bundled ffmpeg first, then only the system's own folders.
+#[cfg(windows)]
+fn engine_path(bin: &Path) -> String {
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+    format!("{};{}\\System32;{}", bin.display(), system_root, system_root)
+}
+
+#[cfg(not(windows))]
+fn engine_path(bin: &Path) -> String {
+    format!("{}:/usr/local/bin:/usr/bin:/bin", bin.display())
+}
+
+/// What of this app's environment the engine doesn't get (upper-cased names): another Python's settings, and on
+/// Linux what an AppImage sets up for its own GTK and libraries.
+fn not_for_the_engine(key: &str) -> bool {
+    if key.starts_with("PYTHON") {
+        return true;
+    }
+    cfg!(not(windows))
+        && ["LD_", "GTK_", "GDK_", "GIO_", "GST_", "GSETTINGS_", "WEBKIT_", "APPDIR", "APPIMAGE", "OWD", "ARGV0"].iter().any(|p| key.starts_with(p))
 }
 
 fn chrono_now() -> String {
