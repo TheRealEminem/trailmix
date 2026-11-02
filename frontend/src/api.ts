@@ -329,6 +329,30 @@ export interface RecordingLaws {
   fallback: RecordingLaw;
 }
 
+/** What a question across meetings reads: a window of days (null: any time, unless the question says; 0: any
+ * time), the sources ("trailmix", "granola", …; null: all), and whether to read their tasks too. */
+export interface AskScopeRequest {
+  days?: number | null;
+  sources?: string[] | null;
+  tasks?: boolean;
+}
+
+/** What a question across meetings did read (backend/ask_scope.py). */
+export interface AskScope {
+  days: number | null;
+  days_from_question: boolean;
+  sources: string[] | null;
+  meetings: number;
+  tasks: boolean;
+}
+
+/** Where meetings came from, for narrowing a question to some of them. */
+export interface AskSource {
+  id: string;
+  label: string;
+  count: number;
+}
+
 /** A question asked while the meeting was still recording (backend/catch_up.py). */
 export interface CatchUpEntry extends QA {
   /** who answered, e.g. "Google Gemini" */
@@ -1264,11 +1288,13 @@ export const api = {
   catchUpPlan: (id: number) => request<CatchUpPlan>(`/meetings/${id}/catch-up`),
   catchUp: (id: number, kind: CatchUpKind, question = "") =>
     request<CatchUpEntry>(`/meetings/${id}/catch-up`, json("POST", { kind, question })),
-  askAll: (question: string, workspace_id: number | null = null) =>
-    request<{ answer: string; provider: string; sources: { id: number; title: string; created_at: string }[] }>(
+  askAll: (question: string, workspace_id: number | null = null, scope: AskScopeRequest = {}) =>
+    request<{ answer: string; provider: string; sources: { id: number; title: string; created_at: string }[]; scope: AskScope }>(
       "/ask",
-      json("POST", { question, workspace_id }),
+      json("POST", { question, workspace_id, ...scope }),
     ),
+  askSources: (workspace_id: number | null = null) =>
+    request<AskSource[]>(`/ask/sources${workspace_id ? `?workspace_id=${workspace_id}` : ""}`),
   tasks: () => request<TaskWithMeeting[]>("/tasks"),
   setTaskDone: (id: number, done: boolean) => request<{ ok: true }>(`/tasks/${id}`, json("PATCH", { done })),
   deleteTask: (id: number) => request<{ ok: true }>(`/tasks/${id}`, { method: "DELETE" }),

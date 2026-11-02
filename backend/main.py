@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import ask_scope
 import attachments
 import audio_store as store
 import auth
@@ -315,6 +316,9 @@ class LoginRequest(BaseModel):
 class Question(BaseModel):
     question: str
     workspace_id: int | None = None  # only meetings in this workspace
+    days: int | None = None          # only meetings from the last this-many days (None: any time, unless the question says)
+    sources: list[str] | None = None  # only meetings from these ("trailmix", "granola", …; GET /api/ask/sources)
+    tasks: bool = False              # also read the tasks taken from them (questions about promises do anyway)
 
 
 class CatchUpRequest(BaseModel):
@@ -2153,20 +2157,41 @@ def retitle(meeting_id: int):
     return {"title": title}
 
 
+# Names for where meetings came from, as the Ask page's source filter shows them.
+SOURCE_LABELS = {"trailmix": "Trailmix", "granola": "Granola", "fathom": "Fathom", "fireflies": "Fireflies",
+                 "paste": "Pasted", "file": "Transcript files"}
+
+
+@app.get("/api/ask/sources")
+def ask_sources(workspace_id: int | None = None):
+    """Where your meetings came from, most first: what the Ask page can narrow a question to."""
+    counts = db.meeting_sources(workspace_id)
+    return [{"id": k, "label": SOURCE_LABELS.get(k, k.title()), "count": n}
+            for k, n in sorted(counts.items(), key=lambda kv: -kv[1])]
+
+
 @app.post("/api/ask")
 def ask_everything(body: Question):
-    """Question across all meetings: find the relevant ones with full-text search, answer from them."""
+    """Question across meetings: the ones in scope (a time window, asked for or said in the question, and the
+    sources), all of them if they fit, else the best matches for the question's words, newest first."""
     question = body.question.strip()
     if not question:
         raise HTTPException(422, "Ask a question")
     cfg = settings.get_all()
     _local_llm_paused(cfg)
-    hits = db.search(question, limit=6, any_term=True, workspace_id=body.workspace_id)
-    meetings = db.get_meetings([h["id"] for h in hits]) or db.recent_meetings(5, body.workspace_id)
-    meetings = [m for m in meetings if m.get("transcript")]
-    if not meetings:
-        raise HTTPException(409, "There are no transcribed meetings to search yet")
-    budget = (llm_engine.chain_context_chars(cfg) - len(question) - 500) // len(meetings)
+    days = body.days if body.days is not None else ask_scope.days_in(question)
+    days = days or None  # 0: any time
+    with_tasks = body.tasks or ask_scope.about_tasks(question)
+    room = llm_engine.chain_context_chars(cfg) - len(question) - 800
+    tasks, task_meetings = ask_scope.tasks_block(body.workspace_id, days, body.sources, room // 4) if with_tasks else ("", [])
+    room -= len(tasks)
+    ids = ask_scope.pick(question, ask_scope.room_for(room), body.workspace_id, days, body.sources)
+    meetings = db.get_meetings(ids)
+    if not meetings and not tasks:
+        within = f" from the last {days} days" if days else ""
+        raise HTTPException(409, f"There are no transcribed meetings{within} to search yet" if not body.sources
+                            else f"There are no meetings{within} from those sources")
+    budget = room // max(1, len(meetings))
     blocks = []
     for m in meetings:
         local = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00")).astimezone()
@@ -2175,16 +2200,23 @@ def ask_everything(body: Question):
         if material := attachments.context_block(m["id"], budget // 3):
             body_text += "\n\n" + material
         blocks.append(f"[M{m['id']}] {m['title']} ({when})\n{meeting_text.excerpt(body_text, question, budget)}")
-    context = "MEETINGS (each tagged like [M12]):\n\n" + "\n\n---\n\n".join(blocks)
+    today = datetime.now().astimezone()
+    who = f" The user is {cfg['your_name']}: \"I\" and \"me\" in the question mean them." if cfg.get("your_name") else ""
+    window = f", from the last {days} days" if days else ""
+    context = (f"Today is {today:%A, %B} {today.day}, {today:%Y}.{who}\n\n" + (tasks + "\n\n" if tasks else "")
+               + f"MEETINGS{window}, newest first (each tagged like [M12]):\n\n" + "\n\n---\n\n".join(blocks))
     try:
         with llm_engine.purpose("questions"):
             answer, used = llm_engine.ask(question, context, cfg, cite_meetings=True)
     except llm_engine.LLMError as e:
         raise HTTPException(502, str(e))
+    cited = meetings + db.get_meetings([i for i in task_meetings if i not in ids])
     return {
         "answer": answer,
         "provider": used,
-        "sources": [{"id": m["id"], "title": m["title"], "created_at": m["created_at"]} for m in meetings],
+        "sources": [{"id": m["id"], "title": m["title"], "created_at": m["created_at"]} for m in cited],
+        "scope": {"days": days, "days_from_question": body.days is None and days is not None, "sources": body.sources,
+                  "meetings": len(meetings), "tasks": bool(tasks)},
     }
 
 
