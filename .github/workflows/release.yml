@@ -1,7 +1,8 @@
-# Builds the Mac app for Apple silicon and for Intel Macs and the Windows installer, tries each end to end on its own
-# kind of computer, and publishes them as a *pre-release* (a beta).
+# Builds the Mac app for Apple silicon and for Intel Macs, the Windows installers for x64 and ARM PCs and the Linux app
+# for x86_64 and ARM, tries each end to end on its own kind of computer, and publishes them as a *pre-release* (a beta).
 #   git tag v0.1.0 && git push --tags      -> builds, tests, publishes Trailmix-0.1.0-macos-{arm64,x86_64}.dmg (and,
-#                                             once PUBLISH_WINDOWS is on, Trailmix-0.1.0-windows-x64.exe) as a pre-release
+#                                             with PUBLISH_WINDOWS on, Trailmix-0.1.0-windows-x64.exe; -arm64.exe too with PUBLISH_WINDOWS_ARM64;
+#                                             with PUBLISH_LINUX on, Trailmix-0.1.0-linux-{x86_64,arm64}.AppImage, .deb, .rpm) as a pre-release
 #   Actions tab -> "Build Mac app" -> Run   -> builds and tests it, keeps it as a downloadable artifact only
 #     ... on main, with "Release it" ticked -> tags main as v<VERSION> and publishes it, as a pushed tag would
 #     ... and "To everyone" ticked too      -> also promotes it right away (scripts/promote.sh), skipping the beta days
@@ -29,9 +30,21 @@ on:
         description: "To everyone: promote it right away instead of after 3 days as a beta (needs Release it)"
         type: boolean
         default: false
+      gpu_whisper:
+        description: "GPU whisper.cpp: build Windows x64 and Linux with whisper.cpp on the GPU (Vulkan), CPU without one"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
+
+env:
+  # GPU_WHISPER: whisper.cpp on the GPU through Vulkan (NVIDIA, AMD and Intel graphics), on the CPU where there's none,
+  # in the Windows x64 installer and the Linux app (scripts/build-windows.py, scripts/build-linux.py; Windows ARM and
+  # the Macs are unchanged). Off for releases until it's been tried on real GPUs: then whisper.cpp is pywhispercpp's
+  # CPU-only wheel, as before. The "GPU whisper.cpp" box on a manual run turns it on for that run. To build every
+  # release with it, change the last '0' here to '1'.
+  TRAILMIX_GPU_WHISPER: ${{ inputs.gpu_whisper && '1' || '0' }}
 
 jobs:
   # The release this run makes, if any: the pushed tag, or v<VERSION> when run with "Release it". Checked before
@@ -135,7 +148,17 @@ jobs:
   # tried as a fresh install by scripts/smoke-test-windows.py. A failure here never holds up the Mac release.
   windows:
     needs: version
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false   # an ARM failure mustn't stop the x64 build, or the other way round
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+          - arch: arm64
+            runner: windows-11-arm   # GitHub's free ARM runner (whisper.cpp is compiled there: it has no ARM wheel)
+    runs-on: ${{ matrix.runner }}
+    env:
+      TRAILMIX_ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -151,6 +174,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/src-tauri
+          key: ${{ matrix.arch }}
+      # With GPU_WHISPER, the x64 whisper.cpp has GPU support (Vulkan), compiled with the Vulkan SDK: LunarG's own
+      # installer, this version, checked against LunarG's checksum (https://sdk.lunarg.com/sdk/sha/<version>/windows/<file>.txt).
+      - name: "GPU whisper.cpp: the Vulkan SDK"
+        if: matrix.arch == 'x64' && env.TRAILMIX_GPU_WHISPER == '1'
+        shell: pwsh
+        env:
+          VULKAN_VERSION: "1.4.363.0"
+          VULKAN_SHA256: "94a82d378f7a5e3e54c9db7d2fb7016af136e14ac0a18dbf0f2f67a36352d141"
+        run: |
+          $installer = "$env:RUNNER_TEMP\vulkansdk.exe"
+          curl.exe -fsSL -o $installer "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne $env:VULKAN_SHA256) { throw "The Vulkan SDK installer failed its checksum" }
+          $sdk = "C:\VulkanSDK\$env:VULKAN_VERSION"
+          $done = Start-Process $installer -ArgumentList "--root", $sdk, "--accept-licenses", "--default-answer", "--confirm-command", "install" -Wait -NoNewWindow -PassThru
+          if ($done.ExitCode -ne 0 -or -not (Test-Path "$sdk\Bin\glslc.exe")) { throw "The Vulkan SDK didn't install (exit $($done.ExitCode))" }
+          "VULKAN_SDK=$sdk" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "Vulkan SDK $env:VULKAN_VERSION in $sdk; vulkan-1.dll in System32: $(Test-Path "$env:SystemRoot\System32\vulkan-1.dll")"
       - name: Build the installer
         shell: pwsh
         env:
@@ -166,7 +207,7 @@ jobs:
           key: hf-whispercpp-tiny-windows
       - name: "Smoke test: a fresh install"
         shell: pwsh
-        run: python scripts/smoke-test-windows.py (Get-Item dist/Trailmix-*-windows-x64.exe).FullName
+        run: python scripts/smoke-test-windows.py (Get-Item "dist/Trailmix-*-windows-$env:TRAILMIX_ARCH.exe").FullName
       # As for the Mac: the current release's installer, cached so these tests don't add to its download count.
       - name: Which release is current
         id: stable
@@ -176,8 +217,8 @@ jobs:
         run: echo "tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName 2>/dev/null || echo none)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@v4
         with:
-          path: previous/Trailmix-windows-x64.exe
-          key: current-release-windows-x64-${{ steps.stable.outputs.tag }}
+          path: previous/Trailmix-windows-${{ matrix.arch }}.exe
+          key: current-release-windows-${{ matrix.arch }}-${{ steps.stable.outputs.tag }}
       - name: "Smoke test: updating from the current release"
         shell: bash
         env:
@@ -186,18 +227,18 @@ jobs:
         # so the updater (Update now, then Go back) is still tried end to end.
         run: |
           mkdir -p previous
-          OLD=previous/Trailmix-windows-x64.exe
-          [ -f "$OLD" ] || gh release download --repo "$GITHUB_REPOSITORY" --pattern Trailmix-windows-x64.exe --dir previous || true
+          OLD="previous/Trailmix-windows-$TRAILMIX_ARCH.exe"
+          [ -f "$OLD" ] || gh release download --repo "$GITHUB_REPOSITORY" --pattern "Trailmix-windows-$TRAILMIX_ARCH.exe" --dir previous || true
           if [ ! -f "$OLD" ]; then
-            echo "No release has a Windows installer yet: building this one again as 0.0.1 to update from"
-            rm -rf desktop/src-tauri/target/release/bundle/nsis  # (else the build could pick up the first installer)
+            echo "No release has a Windows installer for $TRAILMIX_ARCH yet: building this one again as 0.0.1 to update from"
+            rm -rf desktop/src-tauri/target/*/release/bundle/nsis  # (else the build could pick up the first installer)
             TRAILMIX_VERSION=0.0.1 TRAILMIX_OUT=previous/build python scripts/build-windows.py
-            OLD=$(ls previous/build/Trailmix-*-windows-x64.exe)
+            OLD=$(ls previous/build/Trailmix-*-windows-"$TRAILMIX_ARCH".exe)
           fi
-          python scripts/smoke-test-windows.py dist/Trailmix-*-windows-x64.exe "$OLD"
+          python scripts/smoke-test-windows.py dist/Trailmix-*-windows-"$TRAILMIX_ARCH".exe "$OLD"
       - uses: actions/upload-artifact@v4
         with:
-          name: Trailmix-windows-x64
+          name: Trailmix-windows-${{ matrix.arch }}
           path: |
             dist/*.exe
             dist/*.sha256
@@ -205,11 +246,197 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: failed-Trailmix-windows-x64
+          name: failed-Trailmix-windows-${{ matrix.arch }}
+          path: dist/*
+
+  # The Linux app (scripts/build-linux.py): the same desktop shell as Windows', as an AppImage, a .deb and an .rpm,
+  # tried headless (Xvfb, and PulseAudio with null devices) by scripts/smoke-test-linux.py: the AppImage on the
+  # runner (fresh, then updated from the current release and back), the .deb installed on the runner's Ubuntu and
+  # on Ubuntu 22.04 and 24.04 and Debian 12 and stable as they come, the .rpm on Fedora. The AppImage has to pass
+  # for this computer to get anything; a .deb or .rpm that fails its test is left out. A failure here never holds
+  # up the Mac or Windows release.
+  # Built on Ubuntu 22.04, the oldest Linux it's for: the shell is linked against the build machine's glibc, so this
+  # is what lets it run on glibc 2.35 and later (Ubuntu 22.04, Debian 12); TRAILMIX_MAX_GLIBC stops a build that
+  # needs newer. 22.04 has WebKitGTK 4.1 and libsoup 3, which Tauri 2 needs.
+  linux:
+    needs: version
+    strategy:
+      fail-fast: false   # an ARM failure mustn't stop the x86_64 build, or the other way round
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm   # GitHub's free ARM runner
+    runs-on: ${{ matrix.runner }}
+    env:
+      TRAILMIX_ARCH: ${{ matrix.arch }}
+      TRAILMIX_MAX_GLIBC: "2.35"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            desktop/package-lock.json
+      - name: Rust, if this runner has none
+        run: |
+          if ! command -v cargo >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+          key: linux-ubuntu2204-${{ matrix.arch }}   # (not the cache of builds on Ubuntu 24.04: other libraries)
+      - name: What building and the smoke test need
+        # (FUSE 2 is libfuse2 on Ubuntu 22.04, libfuse2t64 from 24.04.)
+        run: |
+          sudo apt-get update
+          FUSE=libfuse2; apt-cache show libfuse2t64 >/dev/null 2>&1 && FUSE=libfuse2t64
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libpulse-dev file xdg-utils xvfb xauth pulseaudio pulseaudio-utils dbus-x11 "$FUSE"
+      # With GPU_WHISPER, whisper.cpp is compiled with Vulkan (scripts/build-linux.py, which makes Vulkan's headers and
+      # glslc once: cached here). It links against Vulkan's loader, which also makes the runner a computer with a
+      # Vulkan driver but no GPU for the smoke tests (the .deb's and .rpm's containers have no Vulkan at all), and
+      # Mesa's software GPU is there for trying the Vulkan backend itself (--try-vulkan, after the build).
+      - name: "GPU whisper.cpp: Vulkan's loader and Mesa's software GPU"
+        if: env.TRAILMIX_GPU_WHISPER == '1'
+        run: sudo apt-get install -y --no-install-recommends g++ libvulkan1 mesa-vulkan-drivers
+      - name: "GPU whisper.cpp: Vulkan's headers and glslc, made before"
+        if: env.TRAILMIX_GPU_WHISPER == '1'
+        uses: actions/cache@v4
+        with:
+          path: build/cache/vulkan-tools-*
+          key: vulkan-tools-${{ matrix.runner }}-${{ hashFiles('scripts/build-linux.py') }}
+          restore-keys: vulkan-tools-${{ matrix.runner }}-
+      - name: Build the AppImage, .deb and .rpm
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        # A test build gets a pre-release version (semver, which Tauri needs), newer than the release.
+        run: |
+          if [[ -n "$TAG" ]]; then export TRAILMIX_VERSION="${TAG#v}"
+          else export TRAILMIX_VERSION="$(cat VERSION)-build.$GITHUB_RUN_NUMBER"; fi
+          python3 scripts/build-linux.py
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-whispercpp-tiny-linux
+      - name: "Smoke test: the AppImage, fresh"
+        run: python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-"$TRAILMIX_ARCH".AppImage
+      # The smoke tests run whisper.cpp on the CPU, as there's no GPU here: this runs its Vulkan backend too, on Mesa's
+      # software GPU (slow, but the same shaders and code as on a real one), and checks the words it hears.
+      - name: "GPU whisper.cpp: transcribes through Vulkan (on Mesa's software GPU)"
+        if: env.TRAILMIX_GPU_WHISPER == '1'
+        run: python3 scripts/build-linux.py --try-vulkan
+      - name: "Smoke test: the .deb, on this Ubuntu"
+        id: deb
+        continue-on-error: true
+        run: python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-"$TRAILMIX_ARCH".deb
+      - name: "Smoke test: the .deb, on Debian (stable)"
+        id: debian
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD:/w" -v "$HOME/.cache/huggingface:/hf" -e HF_HOME=/hf -w /w debian:stable bash -c '
+            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+              python3 xvfb xauth pulseaudio pulseaudio-utils dbus-daemon ca-certificates >/dev/null &&
+            python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-'"$TRAILMIX_ARCH"'.deb'
+      # The oldest it's for, and the newest Ubuntu, as they come (the runner has the build's libraries already).
+      - name: "Smoke test: the .deb, on Debian 12"
+        id: debian12
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD:/w" -v "$HOME/.cache/huggingface:/hf" -e HF_HOME=/hf -w /w debian:12 bash -c '
+            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+              python3 xvfb xauth pulseaudio pulseaudio-utils dbus ca-certificates >/dev/null &&
+            python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-'"$TRAILMIX_ARCH"'.deb'
+      - name: "Smoke test: the .deb, on Ubuntu 22.04"
+        id: ubuntu2204
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD:/w" -v "$HOME/.cache/huggingface:/hf" -e HF_HOME=/hf -w /w ubuntu:22.04 bash -c '
+            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+              python3 xvfb xauth pulseaudio pulseaudio-utils dbus ca-certificates >/dev/null &&
+            python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-'"$TRAILMIX_ARCH"'.deb'
+      - name: "Smoke test: the .deb, on Ubuntu 24.04"
+        id: ubuntu2404
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD:/w" -v "$HOME/.cache/huggingface:/hf" -e HF_HOME=/hf -w /w ubuntu:24.04 bash -c '
+            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+              python3 xvfb xauth pulseaudio pulseaudio-utils dbus ca-certificates >/dev/null &&
+            python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-'"$TRAILMIX_ARCH"'.deb'
+      # The AppImage built on 22.04 on a newer Linux, with what a desktop has that an AppImage doesn't bring (X, GL,
+      # fonts, the sound server's library). A warning if it fails, not a reason to leave the AppImage out.
+      - name: "Smoke test: the AppImage, on Ubuntu 24.04"
+        id: appimage2404
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD:/w" -v "$HOME/.cache/huggingface:/hf" -e HF_HOME=/hf -w /w ubuntu:24.04 bash -c '
+            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+              python3 xvfb xauth pulseaudio pulseaudio-utils dbus ca-certificates libpulse0 libx11-6 libx11-xcb1 libxcb1 \
+              libgl1 libegl1 libgbm1 libfontconfig1 libfreetype6 libharfbuzz0b fonts-dejavu-core libasound2t64 libexpat1 >/dev/null &&
+            python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-'"$TRAILMIX_ARCH"'.AppImage'
+      - name: "Smoke test: the .rpm, on Fedora"
+        id: rpm
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD:/w" -v "$HOME/.cache/huggingface:/hf" -e HF_HOME=/hf -w /w fedora:latest bash -c '
+            dnf install -y -q python3 xorg-x11-server-Xvfb pulseaudio pulseaudio-utils dbus-daemon which >/dev/null &&
+            python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-'"$TRAILMIX_ARCH"'.rpm'
+      - name: Leave out the packages that failed
+        env:
+          DEB: ${{ steps.deb.outcome }}/${{ steps.debian.outcome }}/${{ steps.debian12.outcome }}/${{ steps.ubuntu2204.outcome }}/${{ steps.ubuntu2404.outcome }}
+          RPM: ${{ steps.rpm.outcome }}
+          APPIMAGE_NEWER: ${{ steps.appimage2404.outcome }}
+        run: |
+          [ "$APPIMAGE_NEWER" = success ] || echo "::warning::The $TRAILMIX_ARCH AppImage didn't pass on Ubuntu 24.04 ($APPIMAGE_NEWER): kept, but look into it"
+          [ "$DEB" = success/success/success/success/success ] || { echo "::warning::The $TRAILMIX_ARCH .deb didn't pass ($DEB): left out"; rm -f dist/*.deb dist/*.deb.sha256; }
+          [ "$RPM" = success ] || { echo "::warning::The $TRAILMIX_ARCH .rpm didn't pass ($RPM): left out"; rm -f dist/*.rpm dist/*.rpm.sha256; }
+      # As for the Mac and Windows: the current release's AppImage, cached so these tests don't add to its count.
+      - name: Which release is current
+        id: stable
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName 2>/dev/null || echo none)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: previous/Trailmix-linux-${{ matrix.arch }}.AppImage
+          key: current-release-linux-${{ matrix.arch }}-${{ steps.stable.outputs.tag }}
+      - name: "Smoke test: updating from the current release"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Until a release has a Linux AppImage, this same build is made again as version 0.0.1 and updated from, so
+        # the updater (Update now, then Go back) is still tried end to end.
+        run: |
+          mkdir -p previous
+          OLD="previous/Trailmix-linux-$TRAILMIX_ARCH.AppImage"
+          [ -f "$OLD" ] || gh release download --repo "$GITHUB_REPOSITORY" --pattern "Trailmix-linux-$TRAILMIX_ARCH.AppImage" --dir previous || true
+          if [ ! -f "$OLD" ]; then
+            echo "No release has a Linux AppImage for $TRAILMIX_ARCH yet: building this one again as 0.0.1 to update from"
+            TRAILMIX_VERSION=0.0.1 TRAILMIX_OUT=previous/build TRAILMIX_BUNDLES=appimage python3 scripts/build-linux.py --packages-only
+            OLD=$(ls previous/build/Trailmix-*-linux-"$TRAILMIX_ARCH".AppImage)
+          fi
+          python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-"$TRAILMIX_ARCH".AppImage "$OLD"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Trailmix-linux-${{ matrix.arch }}
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
+            dist/*.sha256
+            dist/*.png
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: failed-Trailmix-linux-${{ matrix.arch }}
           path: dist/*
 
   publish:
-    needs: [version, mac, windows]
+    needs: [version, mac, windows, linux]
     # Runs even when a build failed: what's published is whatever passed, as long as Apple silicon did.
     if: always() && needs.version.outputs.tag != ''
     runs-on: ubuntu-latest
@@ -224,17 +451,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.version.outputs.tag }}
-          # Off until the Windows app can update itself: an installer published now would leave everyone who took it
-          # downloading each version by hand. Until then it's built and smoke-tested on every release and kept as this
-          # run's Trailmix-windows-x64 artifact, for testing. Set to "1" to publish it.
-          PUBLISH_WINDOWS: "0"
+          # On since the Windows app updates itself (0.19.3). "0" keeps the installer out of releases (it's still built,
+          # smoke-tested and kept as this run's Trailmix-windows-x64 artifact).
+          PUBLISH_WINDOWS: "1"
+          # The ARM installer (built and smoke-tested on GitHub's ARM runner). "0" keeps it out of releases (it's still
+          # kept as this run's Trailmix-windows-arm64 artifact). Needs PUBLISH_WINDOWS on too.
+          PUBLISH_WINDOWS_ARM64: "1"
+          # The Linux app, as a beta like Windows': each arch's AppImage (it updates itself) and whichever of its .deb
+          # and .rpm passed their tests. "0" keeps them out of releases (they're still built, smoke-tested and kept as
+          # this run's Trailmix-linux-<arch> artifacts).
+          PUBLISH_LINUX: "1"
         # Each disk image is named for the computer it's for, Trailmix-<version>-macos-<arch>.dmg (the app's updater picks
         # its own by that name), and has a copy with a fixed name, Trailmix-macos-<arch>.dmg, so a link to
         # releases/latest/download/... always works ("latest" skips pre-releases: the last promoted version).
         # Also under the names from before there were other platforms (Trailmix-<version>-arm64.dmg, Trailmix-arm64.dmg):
-        # apps from then look for those, and links to them are out there. The Windows installer,
-        # Trailmix-<version>-windows-x64.exe (+ .sha256, + the fixed name), comes along when its build passed (and
-        # PUBLISH_WINDOWS is on).
+        # apps from then look for those, and links to them are out there. Each Windows installer,
+        # Trailmix-<version>-windows-<arch>.exe (+ .sha256, + the fixed name Trailmix-windows-<arch>.exe), comes along
+        # when its build passed (and its switch is on).
         # --target makes the tag on this commit when the run was started with "Release it" (a tag made with this
         # workflow's token doesn't start another run, so it isn't built twice).
         run: |
@@ -250,16 +483,32 @@ jobs:
           shasum -a 256 "Trailmix-$V-arm64.dmg" >"Trailmix-$V-arm64.dmg.sha256"
           cp Trailmix-macos-arm64.dmg Trailmix-arm64.dmg
           WINDOWS=()
-          if [ "$PUBLISH_WINDOWS" != 1 ]; then
-            echo "Windows installer built and tested, not published yet (PUBLISH_WINDOWS)"
-          elif [ -f "Trailmix-$V-windows-x64.exe" ]; then
-            cp "Trailmix-$V-windows-x64.exe" Trailmix-windows-x64.exe
-            WINDOWS=("Trailmix-$V-windows-x64.exe" "Trailmix-$V-windows-x64.exe.sha256" Trailmix-windows-x64.exe)
-          else
-            echo "::warning::The Windows build didn't pass: this release has no Windows installer"
-          fi
+          for arch in x64 arm64; do
+            if [ "$PUBLISH_WINDOWS" != 1 ] || { [ "$arch" = arm64 ] && [ "$PUBLISH_WINDOWS_ARM64" != 1 ]; }; then
+              echo "Windows $arch installer built and tested, not published (PUBLISH_WINDOWS, PUBLISH_WINDOWS_ARM64)"
+            elif [ -f "Trailmix-$V-windows-$arch.exe" ]; then
+              cp "Trailmix-$V-windows-$arch.exe" "Trailmix-windows-$arch.exe"
+              WINDOWS+=("Trailmix-$V-windows-$arch.exe" "Trailmix-$V-windows-$arch.exe.sha256" "Trailmix-windows-$arch.exe")
+            else
+              echo "::warning::The Windows $arch build didn't pass: this release has no installer for those PCs"
+            fi
+          done
+          LINUX=()
+          for arch in x86_64 arm64; do
+            if [ "$PUBLISH_LINUX" != 1 ]; then
+              echo "Linux $arch packages built and tested, not published (PUBLISH_LINUX)"
+            elif [ -f "Trailmix-$V-linux-$arch.AppImage" ]; then
+              for ext in AppImage deb rpm; do
+                [ -f "Trailmix-$V-linux-$arch.$ext" ] || { echo "::warning::No Linux $arch .$ext this time (its test didn't pass)"; continue; }
+                cp "Trailmix-$V-linux-$arch.$ext" "Trailmix-linux-$arch.$ext"
+                LINUX+=("Trailmix-$V-linux-$arch.$ext" "Trailmix-$V-linux-$arch.$ext.sha256" "Trailmix-linux-$arch.$ext")
+              done
+            else
+              echo "::warning::The Linux $arch build didn't pass: this release has nothing for those computers"
+            fi
+          done
           gh release create "$TAG" Trailmix-"$V"-macos-*.dmg Trailmix-"$V"-macos-*.dmg.sha256 Trailmix-macos-*.dmg \
-            "Trailmix-$V-arm64.dmg" "Trailmix-$V-arm64.dmg.sha256" Trailmix-arm64.dmg ${WINDOWS[@]+"${WINDOWS[@]}"} \
+            "Trailmix-$V-arm64.dmg" "Trailmix-$V-arm64.dmg.sha256" Trailmix-arm64.dmg ${WINDOWS[@]+"${WINDOWS[@]}"} ${LINUX[@]+"${LINUX[@]}"} \
             --target "$GITHUB_SHA" --title "Trailmix ${TAG#v}" --generate-notes --prerelease
       - name: Give it to everyone
         if: inputs.everyone

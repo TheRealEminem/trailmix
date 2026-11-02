@@ -20,6 +20,10 @@ export interface MeetingListItem {
   workspace_id: number | null;
   /** An import waiting for you to choose which AI processes it. */
   ask_first: number;
+  /** Its topic tags, most telling first. */
+  tags: string[];
+  /** Copies merged into it by themselves that you haven't reviewed yet. */
+  merges_to_review: number;
 }
 
 export type WorkspaceColor = "forest" | "sky" | "sun" | "trail" | "ink";
@@ -88,8 +92,12 @@ export interface TrialRow extends Trial {
 export interface DeviceAdvice {
   verdict: "local" | "mixed" | "cloud";
   chip: string;
+  /** A graphics card with memory of its own, e.g. "NVIDIA GeForce RTX 4070 (12 GB)"; "" for none */
+  gpu: string;
   ram_gb: number;
   disk_free_gb: number;
+  /** The local notes model to suggest for this computer */
+  notes_model: string;
   notes: string[];
 }
 
@@ -118,7 +126,7 @@ export interface FileImport {
   skipped: boolean;
 }
 
-export interface SearchHit extends MeetingListItem {
+export interface SearchHit extends Omit<MeetingListItem, "tags" | "merges_to_review"> {
   /** Contains  …  around matched words. */
   snippet: string;
 }
@@ -325,6 +333,30 @@ export interface RecordingLaws {
   fallback: RecordingLaw;
 }
 
+/** What a question across meetings reads: a window of days (null: any time, unless the question says; 0: any
+ * time), the sources ("trailmix", "granola", …; null: all), and whether to read their tasks too. */
+export interface AskScopeRequest {
+  days?: number | null;
+  sources?: string[] | null;
+  tasks?: boolean;
+}
+
+/** What a question across meetings did read (backend/ask_scope.py). */
+export interface AskScope {
+  days: number | null;
+  days_from_question: boolean;
+  sources: string[] | null;
+  meetings: number;
+  tasks: boolean;
+}
+
+/** Where meetings came from, for narrowing a question to some of them. */
+export interface AskSource {
+  id: string;
+  label: string;
+  count: number;
+}
+
 /** A question asked while the meeting was still recording (backend/catch_up.py). */
 export interface CatchUpEntry extends QA {
   /** who answered, e.g. "Google Gemini" */
@@ -429,6 +461,8 @@ export interface Settings {
   custom_base_url: string;
   custom_model: string;
   custom_api_key: string;
+  /** The OpenAI-compatible server's context window, where it says; 0 when not known */
+  custom_context_tokens: number;
   transcribe_engine: TranscribeEngine;
   /** Trailmix Cloud's account as last seen ({} when signed out); signing in sets it, not the settings page */
   cloud_account: CloudAccount;
@@ -444,6 +478,8 @@ export interface Settings {
   traverse_api_key: string;
   traverse_project: string;
   transcribe_url: string;
+  /** The accurate local speech model picked in Settings; "" for automatic */
+  local_speech_model: string;
   transcribe_api_key: string;
   transcribe_model: string;
   transcribe_live_model: string;
@@ -513,8 +549,8 @@ export interface Meeting extends MeetingListItem {
   summary_model: string | null;
   /** The AI picked for its notes when it isn't the default, e.g. "Google Gemini · gemini-3.6-flash". */
   notes_with: string | null;
-  /** Copies of this meeting merged into it (Granola's, a pasted one), oldest first. offset: seconds its transcript was moved. */
-  merged: { from: string; title: string; at: string; offset: number }[];
+  /** Copies of this meeting merged into it (Granola's, a pasted one), oldest first. */
+  merged: MergedCopy[];
   /** A meeting that looks like the same one (you're asked whether to merge them). */
   duplicate_of: { id: number; title: string; from: string; created_at: string } | null;
   tags: string[];
@@ -717,6 +753,42 @@ export interface Preflight {
   recording: boolean;
 }
 
+/** A copy of a meeting that was merged into it (duplicates.py), kept so the merge can be undone. */
+export interface MergedCopy {
+  /** Where the copy came from: "Granola", "a pasted transcript", "Trailmix"… */
+  from: string;
+  source: string;
+  title: string;
+  created_at: string;
+  minutes: number;
+  /** When it was merged. */
+  at: string;
+  /** Seconds its transcript was moved to line up with the recording. */
+  offset: number;
+  /** Share of words the two had in common (null when merged by hand). */
+  score: number | null;
+  /** The meeting's title before the merge. */
+  title_before: string;
+  /** What the meeting took from the copy. */
+  took: { transcript: boolean; notes: boolean; title: boolean };
+  /** You looked at it and kept it. */
+  reviewed: boolean;
+  /** The newest merge: the one Undo takes back. */
+  last: boolean;
+}
+
+/** A meeting with merges waiting for review: the meeting that stayed, and what came into it. */
+export interface MergeToReview {
+  id: number;
+  title: string;
+  created_at: string;
+  /** Where the meeting itself came from ("Trailmix" for a recording). */
+  label: string;
+  has_audio: boolean;
+  minutes: number;
+  merged: MergedCopy[];
+}
+
 /** One meeting found twice. keep: the meeting that stays (the one with the recording). */
 export interface DuplicatePair {
   keep: DuplicateSide;
@@ -842,6 +914,8 @@ export interface UpdateInfo {
   going_back?: boolean;
   /** Lockdown mode: no automatic checks (checking by hand still works) */
   lockdown?: boolean;
+  /** a Linux .deb or .rpm install: it only says a new version is out (notes is where to get it) */
+  manual?: boolean;
 }
 
 export interface SoundCheckResult {
@@ -949,14 +1023,41 @@ export interface ImportJob {
   errors?: string[];
 }
 
+/** An AI server running on this computer, found by asking its usual port (backend/local_ai.py). */
+export interface LocalAIServer {
+  name: string;
+  /** "ollama": its own provider; "openai": used through the OpenAI-compatible provider */
+  kind: "ollama" | "openai";
+  port: number;
+  url: string;
+  models: { id: string; context: number | null }[];
+  in_use: boolean;
+}
+
+export interface LocalAIStatus {
+  servers: LocalAIServer[];
+  /** Apps installed here whose server is off, with how to turn it on */
+  installed: { name: string; hint: string }[];
+  /** A context window below this is too small for a meeting's notes */
+  small_context: number;
+}
+
 export interface OllamaStatus {
   can_install: boolean;
   installed: boolean;
+  /** Linux: the command to install it yourself (it needs root, so Trailmix doesn't run it); null elsewhere or once installed */
+  install_command?: string | null;
+  /** Linux: Ollama's own page about installing it */
+  install_page?: string | null;
+  /** Linux, installed but not running: how to start it */
+  start_command?: string | null;
   install: { active: boolean; progress: number | null; status: string; error: string | null } | null;
   reachable: boolean;
   models: string[];
   using: string;
   recommended: string;
+  /** The suggested model's download, in GB */
+  recommended_gb: number | null;
   pull: { model: string; active: boolean; progress: number | null; status: string; error: string | null } | null;
 }
 
@@ -971,9 +1072,27 @@ export interface SpeechModel {
   size_gb: number;
 }
 
+/** An accurate speech model the local engine offers in Settings (local_engine.catalog). */
+export interface SpeechChoice {
+  id: string;
+  label: string;
+  size_gb: number;
+  ram_gb: number;
+  speed: string;
+  installed: boolean;
+  in_use: boolean;
+  /** How well it transcribes meetings, 0-100 (model-ranks.json) */
+  score: number | null;
+}
+
 export interface SpeechModels {
   local: boolean;
   models: SpeechModel[];
+  choices: SpeechChoice[];
+  /** The model the engine picks for this computer by itself */
+  automatic: string;
+  /** The one picked in Settings; "" for automatic */
+  chosen: string;
 }
 
 /** Running inside Trailmix.app's own window (rather than a browser): the app can be asked to quit. */
@@ -998,6 +1117,7 @@ export const api = {
   system: () => request<SystemInfo>("/system"),
   speechModels: () => request<SpeechModels>("/models"),
   downloadSpeechModels: () => request<SpeechModels>("/models/download", json("POST")),
+  removeSpeechModel: (repo: string) => request<SpeechModels>("/models/remove", json("POST", { repo })),
   getSettings: () => request<Settings>("/settings"),
   putSettings: (changes: Partial<Settings>) => request<Settings>("/settings", json("PUT", changes)),
   recordingLaws: () => request<RecordingLaws>("/recording-laws"),
@@ -1068,6 +1188,9 @@ export const api = {
       json("POST", pairs === "all" ? { all: true } : { pairs }),
     ),
   keepApart: (a: number, b: number) => request<void>("/duplicates/apart", json("POST", { a, b })),
+  mergesToReview: () => request<{ meetings: MergeToReview[] }>("/merges"),
+  /** The merges into this meeting are right: they stop asking for review. */
+  keepMerged: (id: number) => request<void>(`/meetings/${id}/merges/keep`, json("POST")),
   /** Undoes the last merge into this meeting; returns the meeting that came back. */
   unmerge: (id: number) => request<{ id: number }>(`/meetings/${id}/unmerge`, json("POST")),
   retitle: (id: number) => request<{ title: string }>(`/meetings/${id}/retitle`, json("POST")),
@@ -1125,6 +1248,7 @@ export const api = {
   setMyNotes: (id: number, notes: MyNote[]) => request<MyNote[]>(`/meetings/${id}/my-notes`, json("PUT", { notes })),
   nativeRecorder: () => request<NativeRecorder>("/recorder"),
   ollama: () => request<OllamaStatus>("/ollama"),
+  localAI: (fresh = false) => request<LocalAIStatus>(`/local-ai${fresh ? "?fresh=true" : ""}`),
   granolaNotes: () => request<{ notes: GranolaNote[] }>("/import/granola/notes"),
   importGranola: (note_ids: string[], keep_summary: boolean) => request<ImportJob>("/import/granola", json("POST", { note_ids, keep_summary })),
   granolaImportStatus: () => request<ImportJob>("/import/granola"),
@@ -1207,11 +1331,13 @@ export const api = {
   catchUpPlan: (id: number) => request<CatchUpPlan>(`/meetings/${id}/catch-up`),
   catchUp: (id: number, kind: CatchUpKind, question = "") =>
     request<CatchUpEntry>(`/meetings/${id}/catch-up`, json("POST", { kind, question })),
-  askAll: (question: string, workspace_id: number | null = null) =>
-    request<{ answer: string; provider: string; sources: { id: number; title: string; created_at: string }[] }>(
+  askAll: (question: string, workspace_id: number | null = null, scope: AskScopeRequest = {}) =>
+    request<{ answer: string; provider: string; sources: { id: number; title: string; created_at: string }[]; scope: AskScope }>(
       "/ask",
-      json("POST", { question, workspace_id }),
+      json("POST", { question, workspace_id, ...scope }),
     ),
+  askSources: (workspace_id: number | null = null) =>
+    request<AskSource[]>(`/ask/sources${workspace_id ? `?workspace_id=${workspace_id}` : ""}`),
   tasks: () => request<TaskWithMeeting[]>("/tasks"),
   setTaskDone: (id: number, done: boolean) => request<{ ok: true }>(`/tasks/${id}`, json("PATCH", { done })),
   deleteTask: (id: number) => request<{ ok: true }>(`/tasks/${id}`, { method: "DELETE" }),

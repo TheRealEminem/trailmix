@@ -65,7 +65,7 @@ def transcribe_models(engine: str, cfg: dict) -> list[dict]:
         return [{"id": cfg["transcribe_model"], "label": cfg["transcribe_model"]}]
     if engine == "trailmix":
         return [{"id": "transcribe", "label": "Picked by Trailmix Cloud for your plan"}]
-    return [{"id": local_engine.model_label(local_engine.FINAL_MODEL), "label": f"Whisper, on {platform_words.this_computer()}"}]
+    return [{"id": local_engine.model_label(local_engine.final_model(cfg)), "label": f"Whisper, on {platform_words.this_computer()}"}]
 
 
 def transcript_chars(m: dict) -> int:
@@ -118,7 +118,7 @@ def transcribe_plan(meetings: list[dict], engine: str, model: str, cfg: dict) ->
     return {
         "engine": engine, "model": model, "minutes": round(minutes, 1),
         "cost": pricing.cost(minutes, engine, model), "per_minute": pricing.per_minute(engine, model),
-        "ram_needed_gb": local_engine.FINAL_MODEL_RAM_GB if engine == "local" else None,
+        "ram_needed_gb": local_engine.final_model_ram_gb(cfg) if engine == "local" else None,
         "ram_free_gb": round(vm.available / GB, 1),
     }
 

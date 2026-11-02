@@ -1,5 +1,6 @@
-//! The app around the model: the tray icon and its menu (MenuView.swift's Record/Stop, meeting-audio
-//! source, Open and Quit), starting the bundled server, and opening the window.
+//! The app around the model: the tray icon and its menu (MenuView.swift's Record/Stop, Mark, meeting-audio
+//! source, the shortcuts and call reminders, Open and Quit), the global shortcuts and the call reminder,
+//! starting the bundled server, and opening the window.
 
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -11,21 +12,26 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, Tray
 use tauri::{AppHandle, Manager, Wry};
 
 use crate::audio::apps::{self, AudioApp};
+use crate::card::{self, Answer, Card};
+use crate::catchup;
+use crate::hotkeys::{self, Shortcut, MARK, RECORD};
 use crate::model::{Connection, Model, Phase, Snapshot};
 use crate::prefs::{MeetingSource, Prefs};
+use crate::reminder::Reminder;
 use crate::server::{self, Bundled, Server};
-use crate::update::Updater;
+use crate::update::{State as UpdateState, Updater};
 use crate::window;
 
 pub struct AppState {
     pub model: Arc<Model>,
     pub server: Option<Arc<Server>>,
     tray: Mutex<Option<Tray>>,
+    reminder: Mutex<Option<Arc<Reminder>>>,
 }
 
 impl AppState {
     pub fn new(model: Arc<Model>, server: Option<Arc<Server>>) -> AppState {
-        AppState { model, server, tray: Mutex::new(None) }
+        AppState { model, server, tray: Mutex::new(None), reminder: Mutex::new(None) }
     }
 }
 
@@ -33,13 +39,28 @@ struct Tray {
     icon: TrayIcon,
     status: MenuItem<Wry>,
     record: MenuItem<Wry>,
+    mark: MenuItem<Wry>,
+    /// Live Draft… and Catch Me Up… (catchup.rs).
+    live: [MenuItem<Wry>; 2],
+    reminders: CheckMenuItem<Wry>,
     apps: Vec<AudioApp>,
     source: String,
 }
 
-/// Sets everything up for a normal run: the model and server, the updater, the hidden window, the tray;
-/// then opens the window (TRAILMIX_NO_OPEN set: says so instead, for tests). Opened at login, it only
-/// starts the engine: the tray icon is there, and the window opens when you click it.
+/// The menu items that change while it's open.
+struct Items {
+    menu: Menu<Wry>,
+    status: MenuItem<Wry>,
+    record: MenuItem<Wry>,
+    mark: MenuItem<Wry>,
+    live: [MenuItem<Wry>; 2],
+    reminders: CheckMenuItem<Wry>,
+}
+
+/// Sets everything up for a normal run: the model and server, the updater, the hidden window, the tray,
+/// the shortcuts and the call reminder; then opens the window (TRAILMIX_NO_OPEN set: says so instead, for
+/// tests). Opened at login, it only starts the engine: the tray icon is there, and the window opens when
+/// you click it.
 pub fn launch(app: &AppHandle, at_login: bool) -> tauri::Result<()> {
     let data = server::data_dir();
     let _ = std::fs::create_dir_all(&data);
@@ -59,6 +80,12 @@ pub fn launch(app: &AppHandle, at_login: bool) -> tauri::Result<()> {
         updater.set_quit(move || quit(&handle));
         model.set_updater(updater.clone());
     }
+    start_hotkeys(app, &model);
+    let handle = app.clone();
+    catchup::begin(&model).set_opener(move |id| {
+        let handle = handle.clone();
+        thread::spawn(move || open_trailmix(&handle, Some(format!("meeting-{id}").as_str())));
+    });
     build_tray(app, &model)?;
     let handle = app.clone();
     model.observe(move || refresh_tray(&handle));
@@ -80,6 +107,9 @@ pub fn launch(app: &AppHandle, at_login: bool) -> tauri::Result<()> {
         updater.begin();
     }
     model.begin();
+    let reminder = Reminder::standard(model.clone());
+    reminder.begin();
+    *app.state::<AppState>().reminder.lock().unwrap_or_else(|e| e.into_inner()) = Some(reminder);
     start_ticker(app.clone());
     let handle = app.clone();
     if at_login {
@@ -133,6 +163,9 @@ pub fn quit(app: &AppHandle) {
     let app = app.clone();
     thread::spawn(move || {
         let state = app.state::<AppState>();
+        if let Some(reminder) = state.reminder.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            reminder.stop();
+        }
         state.model.quit_recording();
         if let Some(server) = &state.server {
             server.stop();
@@ -140,6 +173,163 @@ pub fn quit(app: &AppHandle) {
         app.exit(0);
     });
 }
+
+// MARK: The shortcuts
+
+/// The shortcuts work from any app; a press while the Trailmix window is in front shows no note (the
+/// window itself shows what happened).
+fn start_hotkeys(app: &AppHandle, model: &Arc<Model>) {
+    let handle = app.clone();
+    hotkeys::start(move |id| {
+        let Some(state) = handle.try_state::<AppState>() else { return };
+        let notes = !window_in_front(&handle);
+        hotkeys::act(&state.model, id, notes);
+    });
+    hotkeys::apply(model);
+}
+
+fn window_in_front(app: &AppHandle) -> bool {
+    match app.get_webview_window(window::LABEL) {
+        Some(window) => window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false),
+        None => false,
+    }
+}
+
+/// "Type the new shortcut": a card that takes the keyboard (the shortcuts are off meanwhile, so pressing
+/// the current one doesn't start a recording, as on the Mac).
+fn change_shortcut(app: &AppHandle, which: i32) {
+    // Through the GlobalShortcuts portal (Wayland) the desktop keeps the keys: they're changed in its settings.
+    #[cfg(target_os = "linux")]
+    if crate::linux::portal::active() {
+        if !crate::linux::portal::configure() {
+            card::note(
+                "Your desktop keeps Trailmix's shortcuts",
+                "Change them in its settings: Keyboard, then Shortcuts (Trailmix is listed there).",
+                8,
+            );
+        }
+        return;
+    }
+    let model = app.state::<AppState>().model.clone();
+    hotkeys::register(&[]);
+    let what = if which == RECORD { "Start / stop" } else { "Mark moment" };
+    let card = Card {
+        title: format!("Type the new shortcut for {what}"),
+        detail: "Hold Ctrl, Alt or Win (and Shift, if you like) and press a key, or press a function key on its own. Esc cancels."
+            .into(),
+        buttons: vec!["Cancel".into()],
+        link: None,
+        seconds: 30,
+        keys: true,
+        sound: false,
+    };
+    let app = app.clone();
+    card::show(card, move |_, answer| match answer {
+        Answer::Key(shortcut) => set_shortcut(&app, &model, which, shortcut),
+        _ => {
+            hotkeys::apply(&model);
+        }
+    });
+}
+
+/// Takes the new shortcut, unless it's the other one's or another app has it: then the old one stays.
+fn set_shortcut(app: &AppHandle, model: &Arc<Model>, which: i32, shortcut: Shortcut) {
+    let before = model.prefs();
+    let other = if which == RECORD { before.shortcut_mark } else { before.shortcut_record };
+    if shortcut == other {
+        hotkeys::apply(model);
+        card::note(&format!("{} is already the other shortcut", shortcut.display()), "Pick a different one.", 5);
+        return;
+    }
+    model.update_prefs(|prefs| {
+        if which == RECORD {
+            prefs.shortcut_record = shortcut;
+        } else {
+            prefs.shortcut_mark = shortcut;
+        }
+    });
+    if hotkeys::apply(model).contains(&which) {
+        model.update_prefs(|prefs| {
+            prefs.shortcut_record = before.shortcut_record;
+            prefs.shortcut_mark = before.shortcut_mark;
+        });
+        hotkeys::apply(model);
+        card::note(&format!("{} is taken by another app", shortcut.display()), "Pick another one in the tray menu: Settings.", 6);
+    }
+    rebuild_menu(app, model, None);
+}
+
+fn use_default_shortcuts(app: &AppHandle, model: &Arc<Model>) {
+    model.update_prefs(|prefs| {
+        prefs.shortcut_record = Shortcut::RECORD_DEFAULT;
+        prefs.shortcut_mark = Shortcut::MARK_DEFAULT;
+    });
+    let taken = hotkeys::apply(model);
+    if !taken.is_empty() {
+        card::note("A shortcut is taken by another app", "Pick another one in the tray menu: Settings.", 6);
+    }
+    rebuild_menu(app, model, None);
+}
+
+// MARK: Check for updates
+
+/// The tray's Check for Updates…: the same look Settings → Updates asks for (it happens even in Lockdown
+/// mode), then a card with what it found. A version on offer is also in the tray menu (Update to Trailmix X).
+fn check_for_updates(model: &Arc<Model>) {
+    let Some(updater) = model.updater() else { return };
+    card::note("Checking for updates…", "", 30);
+    updater.check(true);
+    // Another look (the one every 6 hours) may have been under way: wait for its answer.
+    let deadline = std::time::Instant::now() + Duration::from_secs(45);
+    while (updater.is_checking() || updater.state() == UpdateState::Checking) && std::time::Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(200));
+    }
+    let card = update_card(&updater.state(), &model.version, model.recording_anywhere());
+    if card.buttons.is_empty() {
+        card::note(&card.title, &card.detail, card.seconds);
+    } else {
+        card::show(card, move |_, answer| {
+            if answer == Answer::Button(0) {
+                updater.install();
+            }
+        });
+    }
+}
+
+/// What a check found, as a card: up to date, a version to install (with Update, unless something is
+/// recording), or why it couldn't look.
+fn update_card(state: &UpdateState, current: &str, recording: bool) -> Card {
+    let (title, detail) = match state {
+        UpdateState::UpToDate => ("Trailmix is up to date".to_string(), format!("You have the newest version, {current}.")),
+        UpdateState::Available(version) if recording => (
+            format!("Trailmix {version} is available"),
+            format!("Once the recording is over, choose Update to Trailmix {version} in the tray menu."),
+        ),
+        UpdateState::Available(version) => {
+            return Card {
+                title: format!("Trailmix {version} is available"),
+                detail: "It installs in about a minute, and Trailmix opens again by itself.".into(),
+                buttons: vec!["Update".into(), "Later".into()],
+                seconds: 30,
+                ..Card::default()
+            };
+        }
+        UpdateState::Downloading(version, _) | UpdateState::Installing(version) => {
+            (format!("Updating to Trailmix {version}"), "Trailmix opens again by itself when it's done.".to_string())
+        }
+        UpdateState::Offline => (
+            "Couldn't check for updates".to_string(),
+            "Trailmix couldn't reach GitHub. Check that you're online, then try again.".to_string(),
+        ),
+        UpdateState::Failed(why) => ("Couldn't update Trailmix".to_string(), why.clone()),
+        UpdateState::Idle | UpdateState::Checking => {
+            ("Couldn't check for updates".to_string(), "There was no answer in time. Try again in a minute.".to_string())
+        }
+    };
+    Card { title, detail, seconds: 8, ..Card::default() }
+}
+
+// MARK: The tray
 
 fn format_elapsed(elapsed: Duration) -> String {
     let secs = elapsed.as_secs();
@@ -150,7 +340,7 @@ fn format_elapsed(elapsed: Duration) -> String {
     }
 }
 
-fn status_text(snapshot: &Snapshot) -> String {
+fn status_text(snapshot: &Snapshot, prefs: &Prefs) -> String {
     match snapshot.phase {
         Phase::Starting => "Starting the recording…".into(),
         Phase::Recording => format!(
@@ -173,7 +363,7 @@ fn status_text(snapshot: &Snapshot) -> String {
             match snapshot.connection {
                 Connection::Online => match snapshot.last_meeting_id {
                     Some(id) => format!("Ready · last recording saved as meeting {id}"),
-                    None => "Ready to record".into(),
+                    None => format!("Ready · {} to record", prefs.shortcut_record.display()),
                 },
                 Connection::Offline => "Trailmix isn't running".into(),
                 Connection::NeedsToken => "Trailmix needs an access token (Settings)".into(),
@@ -184,33 +374,66 @@ fn status_text(snapshot: &Snapshot) -> String {
     }
 }
 
-fn record_text(snapshot: &Snapshot) -> (&'static str, bool) {
+/// The Record item: its text (with the shortcut on the right, as Windows menus show them) and whether it works now.
+fn record_text(snapshot: &Snapshot, prefs: &Prefs) -> (String, bool) {
+    let shortcut = prefs.shortcut_record.display();
     match snapshot.phase {
-        Phase::Starting => ("Starting…", false),
-        Phase::Recording => ("Stop Recording", true),
-        Phase::Stopping => ("Stopping…", false),
+        Phase::Starting => ("Starting…".into(), false),
+        Phase::Recording => (format!("Stop Recording\t{shortcut}"), true),
+        Phase::Stopping => ("Stopping…".into(), false),
         Phase::Idle => {
             if snapshot.other.is_some() {
-                ("Stop Recording", true)
+                (format!("Stop Recording\t{shortcut}"), true)
             } else {
-                ("Record", true)
+                (format!("Record\t{shortcut}"), true)
             }
         }
     }
 }
 
-fn make_menu(app: &AppHandle, model: &Arc<Model>, apps: &[AudioApp]) -> tauri::Result<(Menu<Wry>, MenuItem<Wry>, MenuItem<Wry>)> {
+fn mark_text(snapshot: &Snapshot, prefs: &Prefs) -> (String, bool) {
+    let live = snapshot.phase == Phase::Recording || (snapshot.phase == Phase::Idle && snapshot.other.is_some());
+    (format!("Mark Moment\t{}", prefs.shortcut_mark.display()), live)
+}
+
+/// Live Draft… and Catch Me Up…: the recording card (catchup.rs), while something records.
+fn live_enabled(snapshot: &Snapshot) -> bool {
+    catchup::live_meeting(snapshot).is_some()
+}
+
+fn shortcut_label(what: &str, shortcut: Shortcut, id: i32) -> String {
+    // Through the GlobalShortcuts portal (Wayland), the keys are what the desktop bound, if it has.
+    #[cfg(target_os = "linux")]
+    if crate::linux::portal::active() {
+        return match crate::linux::portal::trigger_description(id) {
+            Some(keys) => format!("{what} shortcut: {keys}…"),
+            None if hotkeys::taken().contains(&id) => format!("{what} shortcut: not set up in your desktop…"),
+            None => format!("{what} shortcut: {}…", shortcut.display()),
+        };
+    }
+    let taken = if hotkeys::taken().contains(&id) { " (taken by another app)" } else { "" };
+    format!("{what} shortcut: {}{taken}…", shortcut.display())
+}
+
+fn make_menu(app: &AppHandle, model: &Arc<Model>, apps: &[AudioApp]) -> tauri::Result<Items> {
     let snapshot = model.snapshot();
-    let status = MenuItem::with_id(app, "status", status_text(&snapshot), false, None::<&str>)?;
-    let (text, enabled) = record_text(&snapshot);
+    let prefs = model.prefs();
+    let status = MenuItem::with_id(app, "status", status_text(&snapshot, &prefs), false, None::<&str>)?;
+    let (text, enabled) = record_text(&snapshot, &prefs);
     let record = MenuItem::with_id(app, "record", text, enabled, None::<&str>)?;
+    let (text, enabled) = mark_text(&snapshot, &prefs);
+    let mark = MenuItem::with_id(app, "mark", text, enabled, None::<&str>)?;
+    let live = [
+        MenuItem::with_id(app, "live-draft", "Live Draft…", live_enabled(&snapshot), None::<&str>)?,
+        MenuItem::with_id(app, "catch-up", "Catch Me Up…", live_enabled(&snapshot), None::<&str>)?,
+    ];
     let open = MenuItem::with_id(app, "open", "Open Trailmix", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Trailmix", true, None::<&str>)?;
 
-    let source = model.prefs().meeting_source();
+    let source = prefs.meeting_source();
     let all = CheckMenuItem::with_id(app, "source:all", "All apps", true, source == MeetingSource::AllApps, None::<&str>)?;
     let none = CheckMenuItem::with_id(app, "source:none", "Your mic only (in person)", true, source == MeetingSource::None, None::<&str>)?;
-    let per_app = crate::audio::wasapi::process_loopback_supported();
+    let per_app = crate::audio::per_app_supported();
     let mut app_items: Vec<CheckMenuItem<Wry>> = Vec::new();
     for a in apps {
         let label = if a.playing { format!("{} · playing", a.name) } else { a.name.clone() };
@@ -233,29 +456,48 @@ fn make_menu(app: &AppHandle, model: &Arc<Model>, apps: &[AudioApp]) -> tauri::R
     }
     let sources = Submenu::with_id_and_items(app, "sources", "Meeting audio", true, &entries)?;
 
+    // Settings (MenuView.swift's): the shortcuts and the call reminders.
+    let record_shortcut = MenuItem::with_id(app, "shortcut:record", shortcut_label("Start / stop", prefs.shortcut_record, RECORD), true, None::<&str>)?;
+    let mark_shortcut = MenuItem::with_id(app, "shortcut:mark", shortcut_label("Mark moment", prefs.shortcut_mark, MARK), true, None::<&str>)?;
+    let defaults = prefs.shortcut_record == Shortcut::RECORD_DEFAULT && prefs.shortcut_mark == Shortcut::MARK_DEFAULT;
+    let reset = MenuItem::with_id(app, "shortcut:defaults", "Use the Default Shortcuts", !defaults, None::<&str>)?;
+    let settings_separator = PredefinedMenuItem::separator(app)?;
+    let reminders = CheckMenuItem::with_id(app, "reminders", "Remind Me to Record Calls", true, prefs.call_reminders, None::<&str>)?;
+    let settings_items: Vec<&dyn IsMenuItem<Wry>> = vec![&record_shortcut, &mark_shortcut, &reset, &settings_separator, &reminders];
+    let settings = Submenu::with_id_and_items(app, "settings", "Settings", true, &settings_items)?;
+
     let sep1 = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
-    let update = match model.updater().and_then(|u| u.available()) {
+    let updater = model.updater();
+    // Help → Check for Updates… on the Mac: only an installed Trailmix updates itself.
+    let check = match &updater {
+        Some(_) => Some(MenuItem::with_id(app, "check-update", "Check for Updates…", true, None::<&str>)?),
+        None => None,
+    };
+    let update = match updater.and_then(|u| u.available()) {
         Some(version) => Some(MenuItem::with_id(app, "update", format!("Update to Trailmix {version}"), true, None::<&str>)?),
         None => None,
     };
-    let mut items: Vec<&dyn IsMenuItem<Wry>> = vec![&status, &sep1, &record, &sources, &sep2];
+    let mut items: Vec<&dyn IsMenuItem<Wry>> = vec![&status, &sep1, &record, &mark, &live[0], &live[1], &sources, &settings, &sep2];
     if let Some(update) = &update {
         items.push(update);
+    }
+    if let Some(check) = &check {
+        items.push(check);
     }
     items.push(&open);
     items.push(&quit);
     let menu = Menu::with_items(app, &items)?;
-    Ok((menu, status, record))
+    Ok(Items { menu, status, record, mark, live, reminders })
 }
 
 fn build_tray(app: &AppHandle, model: &Arc<Model>) -> tauri::Result<()> {
     let apps = apps::current();
-    let (menu, status, record) = make_menu(app, model, &apps)?;
+    let items = make_menu(app, model, &apps)?;
     let icon = TrayIconBuilder::with_id("main")
         .icon(Image::from_bytes(include_bytes!("../icons/32x32.png"))?)
         .tooltip("Trailmix")
-        .menu(&menu)
+        .menu(&items.menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| on_menu(app, event.id().0.as_str()))
         .on_tray_icon_event(|tray, event| {
@@ -267,7 +509,8 @@ fn build_tray(app: &AppHandle, model: &Arc<Model>) -> tauri::Result<()> {
         .build(app)?;
     let state = app.state::<AppState>();
     let source = model.prefs().source;
-    *state.tray.lock().unwrap_or_else(|e| e.into_inner()) = Some(Tray { icon, status, record, apps, source });
+    *state.tray.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some(Tray { icon, status: items.status, record: items.record, mark: items.mark, live: items.live, reminders: items.reminders, apps, source });
     Ok(())
 }
 
@@ -278,6 +521,15 @@ fn on_menu(app: &AppHandle, id: &str) {
         "record" => {
             thread::spawn(move || model.toggle());
         }
+        "mark" => {
+            thread::spawn(move || model.mark_moment());
+        }
+        "live-draft" | "catch-up" => {
+            let expanded = id == "catch-up";
+            if let Some(c) = catchup::shared() {
+                thread::spawn(move || c.open(expanded));
+            }
+        }
         "open" => {
             let app = app.clone();
             thread::spawn(move || open_trailmix(&app, None));
@@ -287,6 +539,23 @@ fn on_menu(app: &AppHandle, id: &str) {
             if let Some(updater) = model.updater() {
                 updater.install();
             }
+        }
+        "check-update" => {
+            thread::spawn(move || check_for_updates(&model));
+        }
+        "reminders" => {
+            model.update_prefs(|prefs| {
+                prefs.call_reminders = !prefs.call_reminders;
+                if prefs.call_reminders {
+                    prefs.muted_call_apps.clear(); // as when turned on in Settings
+                }
+            });
+        }
+        "shortcut:record" => change_shortcut(app, RECORD),
+        "shortcut:mark" => change_shortcut(app, MARK),
+        "shortcut:defaults" => {
+            let app = app.clone();
+            thread::spawn(move || use_default_shortcuts(&app, &model));
         }
         other => {
             if let Some(source) = other.strip_prefix("source:") {
@@ -302,15 +571,23 @@ fn on_menu(app: &AppHandle, id: &str) {
 fn refresh_tray(app: &AppHandle) {
     let Some(state) = app.try_state::<AppState>() else { return };
     let snapshot = state.model.snapshot();
-    let (icon, status, record) = {
+    let prefs = state.model.prefs();
+    let (icon, status, record, mark, live, reminders) = {
         let tray = state.tray.lock().unwrap_or_else(|e| e.into_inner());
         let Some(tray) = tray.as_ref() else { return };
-        (tray.icon.clone(), tray.status.clone(), tray.record.clone())
+        (tray.icon.clone(), tray.status.clone(), tray.record.clone(), tray.mark.clone(), tray.live.clone(), tray.reminders.clone())
     };
-    let _ = status.set_text(status_text(&snapshot));
-    let (text, enabled) = record_text(&snapshot);
+    let _ = status.set_text(status_text(&snapshot, &prefs));
+    let (text, enabled) = record_text(&snapshot, &prefs);
     let _ = record.set_text(text);
     let _ = record.set_enabled(enabled);
+    let (text, enabled) = mark_text(&snapshot, &prefs);
+    let _ = mark.set_text(text);
+    let _ = mark.set_enabled(enabled);
+    for item in &live {
+        let _ = item.set_enabled(live_enabled(&snapshot));
+    }
+    let _ = reminders.set_checked(prefs.call_reminders);
     let tooltip = match snapshot.phase {
         Phase::Recording => format!("Trailmix · recording {}", snapshot.elapsed.map(format_elapsed).unwrap_or_default()),
         _ => "Trailmix".to_string(),
@@ -318,8 +595,8 @@ fn refresh_tray(app: &AppHandle) {
     let _ = icon.set_tooltip(Some(tooltip));
 }
 
-/// Makes the menu afresh: the apps to pick from changed, or the chosen source did. Built with the tray
-/// lock released (see `refresh_tray`).
+/// Makes the menu afresh: the apps to pick from changed, the chosen source did, or a shortcut. Built with
+/// the tray lock released (see `refresh_tray`).
 fn rebuild_menu(app: &AppHandle, model: &Arc<Model>, apps: Option<Vec<AudioApp>>) {
     let state = app.state::<AppState>();
     let (icon, apps) = {
@@ -327,12 +604,15 @@ fn rebuild_menu(app: &AppHandle, model: &Arc<Model>, apps: Option<Vec<AudioApp>>
         let Some(current) = tray.as_ref() else { return };
         (current.icon.clone(), apps.unwrap_or_else(|| current.apps.clone()))
     };
-    let Ok((menu, status, record)) = make_menu(app, model, &apps) else { return };
-    if icon.set_menu(Some(menu)).is_ok() {
+    let Ok(items) = make_menu(app, model, &apps) else { return };
+    if icon.set_menu(Some(items.menu)).is_ok() {
         let mut tray = state.tray.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(current) = tray.as_mut() {
-            current.status = status;
-            current.record = record;
+            current.status = items.status;
+            current.record = items.record;
+            current.mark = items.mark;
+            current.live = items.live;
+            current.reminders = items.reminders;
             current.apps = apps;
             current.source = model.prefs().source;
         }
@@ -366,4 +646,53 @@ fn start_ticker(app: AppHandle) {
             }
         })
         .expect("thread");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn idle() -> Snapshot {
+        Snapshot {
+            phase: Phase::Idle,
+            connection: Connection::Online,
+            other: None,
+            meeting_id: None,
+            elapsed: None,
+            mic_name: String::new(),
+            capturing_meeting_audio: false,
+            last_meeting_id: None,
+            error: None,
+            notice: None,
+            starting_server: false,
+            drafts: Vec::new(),
+            marks: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_menu_shows_the_shortcuts() {
+        let prefs = Prefs::default();
+        let record = Shortcut::RECORD_DEFAULT.display(); // (Ctrl+Alt+Shift+R; S on Linux)
+        assert_eq!(status_text(&idle(), &prefs), format!("Ready · {record} to record"));
+        assert_eq!(record_text(&idle(), &prefs), (format!("Record\t{record}"), true));
+        assert_eq!(mark_text(&idle(), &prefs), ("Mark Moment\tCtrl+Alt+Shift+M".to_string(), false));
+        let recording = Snapshot { phase: Phase::Recording, ..idle() };
+        assert_eq!(record_text(&recording, &prefs).0, format!("Stop Recording\t{record}"));
+        assert!(mark_text(&recording, &prefs).1);
+    }
+
+    #[test]
+    fn check_for_updates_says_what_it_found() {
+        let card = update_card(&UpdateState::UpToDate, "0.19.4", false);
+        assert_eq!((card.title.as_str(), card.detail.as_str()), ("Trailmix is up to date", "You have the newest version, 0.19.4."));
+        assert!(card.buttons.is_empty());
+        let card = update_card(&UpdateState::Available("0.20.0".into()), "0.19.4", false);
+        assert_eq!(card.title, "Trailmix 0.20.0 is available");
+        assert_eq!(card.buttons, vec!["Update".to_string(), "Later".to_string()]);
+        let card = update_card(&UpdateState::Available("0.20.0".into()), "0.19.4", true);
+        assert!(card.buttons.is_empty() && card.detail.contains("Update to Trailmix 0.20.0"));
+        assert_eq!(update_card(&UpdateState::Offline, "0.19.4", false).title, "Couldn't check for updates");
+        assert_eq!(update_card(&UpdateState::Failed("Disk full".into()), "0.19.4", false).detail, "Disk full");
+    }
 }

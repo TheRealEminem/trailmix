@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import ask_scope
 import attachments
 import audio_store as store
 import auth
@@ -44,6 +45,7 @@ import importer
 import live
 import live_notes
 import llm_engine
+import local_ai
 import logfile
 import meeting_date
 import meeting_text
@@ -149,7 +151,7 @@ async def _warm_loop():
             cfg = settings.get_all()
             model = live.live_model(cfg)
             if model and local_engine.loaded() != model:
-                need = local_engine.FINAL_MODEL_RAM_GB if cfg["live_final"] else 0.5
+                need = local_engine.final_model_ram_gb(cfg) if cfg["live_final"] else 0.5
                 calling = bool(recorder.status().get("call_app"))
                 if resources.has_room(need) or (calling and resources.check(need, "The speech model") is None):
                     live.warm_up(cfg)
@@ -196,6 +198,10 @@ async def _sources_loop():
             await run_in_threadpool(sources.sync_all)
         except Exception:
             log.exception("Syncing other note takers failed")
+        try:
+            await run_in_threadpool(lambda: duplicates.settle(settings.get_all()))
+        except Exception:
+            log.exception("Merging copies of the same meeting failed")
         await asyncio.sleep(SYNC_EVERY_S)
 
 
@@ -315,6 +321,9 @@ class LoginRequest(BaseModel):
 class Question(BaseModel):
     question: str
     workspace_id: int | None = None  # only meetings in this workspace
+    days: int | None = None          # only meetings from the last this-many days (None: any time, unless the question says)
+    sources: list[str] | None = None  # only meetings from these ("trailmix", "granola", …; GET /api/ask/sources)
+    tasks: bool = False              # also read the tasks taken from them (questions about promises do anyway)
 
 
 class CatchUpRequest(BaseModel):
@@ -385,9 +394,7 @@ def _present(m: dict) -> dict:
     out["keep_audio"] = bool(m.get("keep_audio"))
     out["ask_first"] = bool(m.get("ask_first"))
     # Copies of this meeting merged into it (newest last), and a copy it may be the same as (you're asked).
-    out["merged"] = [{"from": duplicates._label(r["meeting"]), "title": r["meeting"]["title"], "at": r["at"],
-                      "offset": r.get("offset") or 0}
-                     for r in (json.loads(m["merged_json"]) if m.get("merged_json") else [])]
+    out["merged"] = duplicates.present(m)
     other = db.get_meeting(m["duplicate_of"]) if m.get("duplicate_of") else None
     out["duplicate_of"] = ({"id": other["id"], "title": other["title"], "from": duplicates._label(other),
                             "created_at": other["created_at"]} if other else None)
@@ -761,6 +768,13 @@ def ollama_status():
     return ollama_setup.status(settings.get_all())
 
 
+@app.get("/api/local-ai")
+def local_ai_status(fresh: bool = False):
+    """The AI servers running on this computer (Ollama, LM Studio, Jan, llama.cpp, vLLM…) with their models, and
+    apps installed whose server is off. Only this computer's own ports are asked."""
+    return local_ai.status(settings.get_all(), fresh)
+
+
 @app.post("/api/ollama/install", status_code=202)
 def ollama_install():
     """Download, check and install Ollama (the Mac or Windows app), or open it if it's installed but not running."""
@@ -874,7 +888,21 @@ def download_models():
     """Start (or retry) downloading any missing local speech model."""
     if settings.locked():
         raise HTTPException(409, f"{settings.LOCKDOWN}, so speech models can't be downloaded")
-    models.prefetch()
+    models.prefetch(asked=True)
+    return models.status()
+
+
+class RemoveModel(BaseModel):
+    repo: str
+
+
+@app.post("/api/models/remove")
+def remove_speech_model(body: RemoveModel):
+    """Delete a downloaded speech model that isn't in use (one of those Settings → Transcription lists)."""
+    try:
+        models.remove(body.repo)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
     return models.status()
 
 
@@ -919,7 +947,7 @@ def health():
     def provider_info(pid: str) -> dict:
         ready, why = llm_engine.configured(pid, cfg)
         return {"id": pid, "label": llm_engine.label(pid, cfg), "model": llm_engine.model_name(pid, cfg),
-                "ready": ready, "reason": why, "local": llm_engine.is_local(pid, cfg)}
+                "ready": ready, "reason": why, "local": llm_engine.runs_here(pid, cfg)}
 
     remote = cfg["transcribe_engine"] == "remote"
     gemini = cfg["transcribe_engine"] == "gemini"
@@ -931,9 +959,9 @@ def health():
         "transcription": {
             "engine": cfg["transcribe_engine"],
             "model": ("Trailmix Cloud" if cloudy else transcribe_gemini.MODEL if gemini else cfg["transcribe_model"] if remote
-                      else local_engine.FINAL_MODEL),
+                      else local_engine.final_model(cfg)),
             "live_model": None if gemini or cloudy else (cfg["transcribe_model"] if cfg["live_final"] else cfg["transcribe_live_model"] or cfg["transcribe_model"])
-            if remote else (local_engine.FINAL_MODEL if cfg["live_final"] else local_engine.LIVE_MODEL),
+            if remote else (local_engine.final_model(cfg) if cfg["live_final"] else local_engine.LIVE_MODEL),
             "url": cfg["transcribe_url"] if remote else None,
             "local_available": local_engine.available(),
             "local_engine": local_engine.NAME,  # "MLX", "whisper.cpp", or None
@@ -1684,6 +1712,22 @@ def keep_duplicates_apart(body: ApartRequest):
     duplicates.keep_apart(body.a, body.b)
 
 
+@app.get("/api/merges")
+def merges_to_review():
+    """Copies merged by themselves that you haven't looked at yet: what went into what."""
+    return {"meetings": duplicates.to_review()}
+
+
+@app.post("/api/meetings/{meeting_id}/merges/keep", status_code=204)
+def keep_merged(meeting_id: int):
+    """The merge into this meeting is right: it stops asking for review."""
+    _get_or_404(meeting_id)
+    try:
+        duplicates.keep_merged(meeting_id)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
+
+
 @app.post("/api/meetings/{meeting_id}/unmerge")
 def unmerge(meeting_id: int):
     """Undoes the last merge into this meeting: the other copy is its own meeting again."""
@@ -1890,7 +1934,7 @@ def _speech_engines(cfg: dict) -> list[dict]:
     if cfg["transcribe_url"] and (not settings.locked(cfg) or settings.on_this_computer(cfg["transcribe_url"])):
         out.append({"engine": "remote", "model": cfg["transcribe_model"]})
     if local_engine.available():
-        out.append({"engine": "local", "model": local_engine.model_label(local_engine.FINAL_MODEL)})
+        out.append({"engine": "local", "model": local_engine.model_label(local_engine.final_model(cfg))})
     for e in out:
         e["score"] = model_ranks.score(e["model"])
     return out
@@ -2130,20 +2174,41 @@ def retitle(meeting_id: int):
     return {"title": title}
 
 
+# Names for where meetings came from, as the Ask page's source filter shows them.
+SOURCE_LABELS = {"trailmix": "Trailmix", "granola": "Granola", "fathom": "Fathom", "fireflies": "Fireflies",
+                 "paste": "Pasted", "file": "Transcript files"}
+
+
+@app.get("/api/ask/sources")
+def ask_sources(workspace_id: int | None = None):
+    """Where your meetings came from, most first: what the Ask page can narrow a question to."""
+    counts = db.meeting_sources(workspace_id)
+    return [{"id": k, "label": SOURCE_LABELS.get(k, k.title()), "count": n}
+            for k, n in sorted(counts.items(), key=lambda kv: -kv[1])]
+
+
 @app.post("/api/ask")
 def ask_everything(body: Question):
-    """Question across all meetings: find the relevant ones with full-text search, answer from them."""
+    """Question across meetings: the ones in scope (a time window, asked for or said in the question, and the
+    sources), all of them if they fit, else the best matches for the question's words, newest first."""
     question = body.question.strip()
     if not question:
         raise HTTPException(422, "Ask a question")
     cfg = settings.get_all()
     _local_llm_paused(cfg)
-    hits = db.search(question, limit=6, any_term=True, workspace_id=body.workspace_id)
-    meetings = db.get_meetings([h["id"] for h in hits]) or db.recent_meetings(5, body.workspace_id)
-    meetings = [m for m in meetings if m.get("transcript")]
-    if not meetings:
-        raise HTTPException(409, "There are no transcribed meetings to search yet")
-    budget = (llm_engine.chain_context_chars(cfg) - len(question) - 500) // len(meetings)
+    days = body.days if body.days is not None else ask_scope.days_in(question)
+    days = days or None  # 0: any time
+    with_tasks = body.tasks or ask_scope.about_tasks(question)
+    room = llm_engine.chain_context_chars(cfg) - len(question) - 800
+    tasks, task_meetings = ask_scope.tasks_block(body.workspace_id, days, body.sources, room // 4) if with_tasks else ("", [])
+    room -= len(tasks)
+    ids = ask_scope.pick(question, ask_scope.room_for(room), body.workspace_id, days, body.sources)
+    meetings = db.get_meetings(ids)
+    if not meetings and not tasks:
+        within = f" from the last {days} days" if days else ""
+        raise HTTPException(409, f"There are no transcribed meetings{within} to search yet" if not body.sources
+                            else f"There are no meetings{within} from those sources")
+    budget = room // max(1, len(meetings))
     blocks = []
     for m in meetings:
         local = datetime.fromisoformat(m["created_at"].replace("Z", "+00:00")).astimezone()
@@ -2152,16 +2217,23 @@ def ask_everything(body: Question):
         if material := attachments.context_block(m["id"], budget // 3):
             body_text += "\n\n" + material
         blocks.append(f"[M{m['id']}] {m['title']} ({when})\n{meeting_text.excerpt(body_text, question, budget)}")
-    context = "MEETINGS (each tagged like [M12]):\n\n" + "\n\n---\n\n".join(blocks)
+    today = datetime.now().astimezone()
+    who = f" The user is {cfg['your_name']}: \"I\" and \"me\" in the question mean them." if cfg.get("your_name") else ""
+    window = f", from the last {days} days" if days else ""
+    context = (f"Today is {today:%A, %B} {today.day}, {today:%Y}.{who}\n\n" + (tasks + "\n\n" if tasks else "")
+               + f"MEETINGS{window}, newest first (each tagged like [M12]):\n\n" + "\n\n---\n\n".join(blocks))
     try:
         with llm_engine.purpose("questions"):
             answer, used = llm_engine.ask(question, context, cfg, cite_meetings=True)
     except llm_engine.LLMError as e:
         raise HTTPException(502, str(e)) from e
+    cited = meetings + db.get_meetings([i for i in task_meetings if i not in ids])
     return {
         "answer": answer,
         "provider": used,
-        "sources": [{"id": m["id"], "title": m["title"], "created_at": m["created_at"]} for m in meetings],
+        "sources": [{"id": m["id"], "title": m["title"], "created_at": m["created_at"]} for m in cited],
+        "scope": {"days": days, "days_from_question": body.days is None and days is not None, "sources": body.sources,
+                  "meetings": len(meetings), "tasks": bool(tasks)},
     }
 
 

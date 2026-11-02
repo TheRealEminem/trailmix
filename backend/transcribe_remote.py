@@ -1,7 +1,7 @@
 """Transcription through any OpenAI-compatible endpoint (POST {base}/audio/transcriptions).
 
 That covers OpenAI and Groq in the cloud, self-hosted servers (speaches, whisper.cpp), and
-Trailmix's own Mac worker (mac_worker.py) - which is how a server install borrows your Mac's GPU.
+Trailmix's own transcription worker (transcription_worker.py) - which is how a server install borrows a faster computer's GPU.
 """
 import io
 import wave

@@ -14,6 +14,7 @@ use crate::client::{set_read_timeout, timed_out, Client, DraftLine, LiveRecordin
 use crate::login;
 use crate::prefs::{MeetingSource, Prefs};
 use crate::server::Server;
+use crate::soundcheck::{self, MakeKit};
 use crate::update::Updater;
 use crate::wire::{AudioSource, Sink, Streamer, MEETING, MIC};
 
@@ -33,6 +34,16 @@ pub enum Connection {
     NeedsToken,
     Outdated,
 }
+
+/// What this computer is, as the recorder reports it (and releases are named).
+#[cfg(all(windows, target_arch = "aarch64"))]
+pub const PLATFORM: &str = "windows-arm64";
+#[cfg(all(windows, not(target_arch = "aarch64")))]
+pub const PLATFORM: &str = "windows-x64";
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+pub const PLATFORM: &str = "linux-arm64";
+#[cfg(all(target_os = "linux", not(target_arch = "aarch64")))]
+pub const PLATFORM: &str = "linux-x86_64";
 
 pub type Sources = Vec<(u8, Box<dyn AudioSource>)>;
 pub type MakeSources = Box<dyn Fn(&Prefs) -> Result<Sources, String> + Send>;
@@ -72,8 +83,12 @@ struct State {
     /// Bumped at every wrap-up, so a stop timeout from an earlier recording does nothing.
     generation: u64,
     recorder_tx: Option<mpsc::Sender<RecorderMsg>>,
-    mic_cache: Option<(Instant, Option<String>)>,
+    /// When looked up, the default mic's name, and whether its privacy switch lets Trailmix use it.
+    mic_cache: Option<(Instant, Option<String>, bool)>,
     call_app_cache: Option<(Instant, Option<String>)>,
+    /// The last sound check's result ({"running": true} meanwhile), reported with each check-in.
+    sound_check: Option<Value>,
+    sound_checking: bool,
 }
 
 /// A copy of the state for the tray and tests.
@@ -99,6 +114,7 @@ pub struct Model {
     prefs: Mutex<Prefs>,
     server: Option<Arc<Server>>,
     make_sources: Mutex<MakeSources>,
+    make_sound_check: Mutex<MakeKit>,
     observers: Mutex<Vec<Arc<dyn Fn() + Send + Sync>>>,
     /// The updater, for an installed Trailmix (not a development build or a test).
     updater: Mutex<Option<Arc<Updater>>>,
@@ -146,14 +162,20 @@ impl Model {
                 recorder_tx: None,
                 mic_cache: None,
                 call_app_cache: None,
+                sound_check: None,
+                sound_checking: false,
             }),
             prefs: Mutex::new(prefs),
             server,
             make_sources: Mutex::new(Box::new(audio::live_sources)),
+            make_sound_check: Mutex::new(Box::new(audio::sound_check_kit)),
             observers: Mutex::new(Vec::new()),
             updater: Mutex::new(None),
             version,
+            #[cfg(windows)]
             machine: std::env::var("COMPUTERNAME").unwrap_or_default(),
+            #[cfg(target_os = "linux")]
+            machine: crate::linux::hostname(),
             server_override,
         })
     }
@@ -167,8 +189,13 @@ impl Model {
     }
 
     pub fn set_source(&self, source: MeetingSource) {
+        self.update_prefs(|prefs| prefs.source = source.raw());
+    }
+
+    /// Changes the settings, saves them, and lets the server and the tray know.
+    pub fn update_prefs(&self, change: impl FnOnce(&mut Prefs)) {
         let mut prefs = self.prefs.lock().unwrap_or_else(|e| e.into_inner());
-        prefs.source = source.raw();
+        change(&mut prefs);
         prefs.save();
         drop(prefs);
         self.check_in_soon();
@@ -177,6 +204,10 @@ impl Model {
 
     pub fn set_make_sources(&self, make: MakeSources) {
         *self.make_sources.lock().unwrap_or_else(|e| e.into_inner()) = make;
+    }
+
+    pub fn set_make_sound_check(&self, make: MakeKit) {
+        *self.make_sound_check.lock().unwrap_or_else(|e| e.into_inner()) = make;
     }
 
     /// Called (from whatever thread) whenever something the tray shows may have changed.
@@ -240,11 +271,17 @@ impl Model {
     /// Which build of the recorder this is, and what it can do: the web app hides what's missing. (An
     /// installed Trailmix also opens at login and updates itself: `recorder_info` adds those.)
     pub fn capabilities() -> Vec<&'static str> {
-        let mut caps = vec!["system_audio"];
-        if audio::wasapi::process_loopback_supported() {
-            caps.push("per_app_audio");
+        #[cfg(target_os = "linux")]
+        return crate::linux::capabilities();
+        #[cfg(windows)]
+        {
+            let mut caps = vec!["system_audio"];
+            if audio::per_app_supported() {
+                caps.push("per_app_audio");
+            }
+            caps.extend(["hotkeys", "call_reminder", "sound_check"]);
+            caps
         }
-        caps
     }
 
     pub fn set_updater(&self, updater: Arc<Updater>) {
@@ -270,10 +307,12 @@ impl Model {
     /// What this recorder would record, for the server (RecorderCheckIn in main.py).
     pub fn recorder_info(&self) -> Value {
         let prefs = self.prefs();
-        let mic = match self.default_mic() {
+        let (default_mic, mic_allowed) = self.default_mic();
+        let mic = match default_mic {
             Some(name) if !name.is_empty() => format!("System default ({name})"),
             _ => "System default (No microphone)".to_string(),
         };
+        let sound_check = self.lock().sound_check.clone();
         let source = match prefs.meeting_source() {
             MeetingSource::AllApps => "All apps' audio".to_string(),
             MeetingSource::None => "Your mic only (in person)".to_string(),
@@ -286,7 +325,8 @@ impl Model {
             capabilities.push("open_at_login");
         }
         let updater = self.updater();
-        if updater.is_some() {
+        // (A Linux .deb or .rpm install only says an update is out: the package manager installs it.)
+        if updater.as_ref().map(|u| u.installs_itself()).unwrap_or(false) {
             capabilities.push("auto_update");
         }
         json!({
@@ -294,33 +334,70 @@ impl Model {
             "source": source,
             "machine": self.machine,
             "version": self.version,
-            "mic_allowed": true,
-            "sound_check": null,
-            "shortcut_record": "",
-            "shortcut_mark": "",
+            "mic_allowed": mic_allowed,
+            "sound_check": sound_check,
+            "shortcut_record": prefs.shortcut_record.display(),
+            "shortcut_mark": prefs.shortcut_mark.display(),
             "open_at_login": open_at_login,
-            "call_reminders": null,
+            "call_reminders": prefs.call_reminders,
             "lockdown": updater.as_ref().map(|u| u.lockdown()),
             "update": updater.as_ref().map(|u| u.report()),
             "call_app": self.call_app(),
-            "platform": "windows-x64",
+            "platform": PLATFORM,
             "capabilities": capabilities,
         })
     }
 
-    /// The default microphone's name, looked up every few seconds at most (it's a COM call).
-    fn default_mic(&self) -> Option<String> {
+    /// The default microphone's name, and whether Windows' privacy settings let Trailmix use it, looked up
+    /// every few seconds at most (it's a COM call).
+    fn default_mic(&self) -> (Option<String>, bool) {
         {
             let s = self.lock();
-            if let Some((at, name)) = &s.mic_cache {
+            if let Some((at, name, allowed)) = &s.mic_cache {
                 if at.elapsed() < Duration::from_secs(10) {
-                    return name.clone();
+                    return (name.clone(), *allowed);
                 }
             }
         }
-        let name = audio::wasapi::default_microphone();
-        self.lock().mic_cache = Some((Instant::now(), name.clone()));
-        name
+        let name = audio::default_microphone();
+        #[cfg(windows)]
+        let allowed = !crate::win::mic_blocked();
+        #[cfg(not(windows))]
+        let allowed = true;
+        self.lock().mic_cache = Some((Instant::now(), name.clone(), allowed));
+        (name, allowed)
+    }
+
+    /// The sound check (SoundCheck.swift), asked for in the Trailmix window: not while recording here, and
+    /// one at a time. "Running" is reported meanwhile, then the result.
+    fn sound_check(self: &Arc<Self>) {
+        {
+            let mut s = self.lock();
+            if s.phase != Phase::Idle || s.sound_checking {
+                return;
+            }
+            s.sound_checking = true;
+            s.sound_check = Some(json!({ "running": true }));
+        }
+        self.check_in_soon();
+        let model = self.clone();
+        thread::spawn(move || {
+            let kit = (model.make_sound_check.lock().unwrap_or_else(|e| e.into_inner()))();
+            let result = soundcheck::run(kit);
+            {
+                let mut s = model.lock();
+                s.sound_check = Some(result);
+                s.sound_checking = false;
+                s.mic_cache = None; // the privacy switch may just have been turned on
+            }
+            model.check_in_soon();
+            model.notify();
+        });
+    }
+
+    /// The last sound check's result, if there was one.
+    pub fn sound_check_result(&self) -> Option<Value> {
+        self.lock().sound_check.clone()
     }
 
     /// A call app playing sound right now (looked up every few seconds): the engine then gets the speech model ready.
@@ -338,12 +415,12 @@ impl Model {
         name
     }
 
-    /// Carries out what the window asked for. Call reminders and the sound check aren't on Windows yet
-    /// (their capability flags are off, so the window doesn't ask).
+    /// Carries out what the window asked for.
     fn perform(self: &Arc<Self>, commands: &[String]) {
         let updater = self.updater();
         for command in commands {
             match command.as_str() {
+                "sound-check" => self.sound_check(),
                 "start" => {
                     let s = self.lock();
                     if s.phase == Phase::Idle && s.other.is_none() {
@@ -351,6 +428,12 @@ impl Model {
                         self.start();
                     }
                 }
+                // Turning reminders on again also asks about the apps you'd said not to (as on the Mac).
+                "call-reminders" => self.update_prefs(|prefs| {
+                    prefs.call_reminders = true;
+                    prefs.muted_call_apps.clear();
+                }),
+                "no-call-reminders" => self.update_prefs(|prefs| prefs.call_reminders = false),
                 "open-at-login" | "no-open-at-login" => {
                     if let Some(exe) = self.installed_exe() {
                         login::set(&exe, command == "open-at-login");

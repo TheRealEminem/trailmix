@@ -14,10 +14,13 @@ import {
   PlusIcon,
   RefreshIcon,
 } from "./icons";
+import { MergeReview } from "./Duplicates";
 import { Collapse, PageHeader, Segmented, Spinner, Switch, useConfirm } from "./ui";
 
 interface Props {
   onImported: () => void;
+  /** Meetings changed here (a merge kept or undone): the list reloads. */
+  onChanged: () => void;
   onOpenMeeting: (id: number) => void;
   onError: (message: string) => void;
 }
@@ -26,6 +29,7 @@ interface Props {
  * list. Import once: one place for files, Trailmix exports and pasted transcripts. */
 export default function ImportPanel({
   onImported,
+  onChanged,
   onOpenMeeting,
   onError,
 }: Props) {
@@ -36,6 +40,7 @@ export default function ImportPanel({
         subtitle="Bring in meetings recorded with other apps. They become searchable, and you can ask about them and summarize them like any meeting."
       />
       <div className="space-y-6">
+        <MergeReview onOpenMeeting={onOpenMeeting} onChanged={onChanged} onError={onError} />
         <Connected onImported={onImported} onError={onError} />
         <ImportOnce
           onImported={onImported}
@@ -286,7 +291,7 @@ function ConnectionRow({
                 onClick={() => revealInFinder(c.path!)}
               >
                 <FolderIcon size={14} />
-                Show in Finder
+                Show in {platformWords().fileManager}
               </button>
             )}
             <button className="btn btn-sm btn-ghost" onClick={() => void remove()}>
@@ -777,7 +782,7 @@ const TRANSCRIPTS = ".vtt,.srt,.txt,.docx,.md";
 
 /** One place for everything brought in by hand: recordings and transcript files, a Trailmix export folder, or a
  * pasted transcript. Trailmix tells which is which. */
-function ImportOnce({ onImported, onOpenMeeting, onError }: Props) {
+function ImportOnce({ onImported, onOpenMeeting, onError }: Omit<Props, "onChanged">) {
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [over, setOver] = useState(false);
@@ -937,7 +942,7 @@ function ImportOnce({ onImported, onOpenMeeting, onError }: Props) {
   );
 }
 
-function PasteForm({ onImported, onOpenMeeting, onError }: Props) {
+function PasteForm({ onImported, onOpenMeeting, onError }: Omit<Props, "onChanged">) {
   const [text, setText] = useState("");
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(() => {

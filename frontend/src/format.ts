@@ -30,7 +30,14 @@ export function formatLongDate(iso: string): string {
   return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year });
 }
 
-/** Sidebar group heading for a meeting date. */
+/** The local calendar day a meeting is on ("2026-10-14"): the sidebar groups by it. */
+export function dayKey(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Sidebar group heading for a meeting date: "Today", "Yesterday", a weekday this past week, then the day itself
+ * ("Oct 14", with the year when it isn't this one). */
 export function dayGroup(iso: string, now = new Date()): string {
   const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const d = new Date(iso);
@@ -38,6 +45,11 @@ export function dayGroup(iso: string, now = new Date()): string {
   if (days <= 0) return "Today";
   if (days === 1) return "Yesterday";
   if (days < 7) return d.toLocaleDateString(undefined, { weekday: "long" });
-  if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString(undefined, { month: "long" });
-  return d.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const year = d.getFullYear() === now.getFullYear() ? undefined : "numeric";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year });
+}
+
+/** Newest first by when each meeting happened (imports keep their own date), whatever order they arrived in. */
+export function newestFirst<T extends { id: number; created_at: string }>(items: T[]): T[] {
+  return [...items].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id - a.id);
 }

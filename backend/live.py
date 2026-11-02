@@ -112,7 +112,7 @@ def live_model(cfg: dict) -> str | None:
     """The model that transcribes while recording on this Mac (None with a remote engine)."""
     if cfg["transcribe_engine"] != "local" or not local_engine.available():
         return None
-    return local_engine.FINAL_MODEL if cfg.get("live_final") else local_engine.LIVE_MODEL
+    return local_engine.final_model(cfg) if cfg.get("live_final") else local_engine.LIVE_MODEL
 
 
 def warm_up(cfg: dict, now: bool = False) -> bool:
@@ -264,8 +264,9 @@ class LiveSession:
                 segs = transcribe_remote.transcribe(chunk[a:b], cfg["transcribe_url"], cfg["transcribe_api_key"],
                                                     cfg["transcribe_model"], local_engine.LANGUAGE, timeout=60)
             else:
-                models.require(local_engine.FINAL_MODEL)
-                segs = local_engine.transcribe_final(chunk[a:b], prompt)
+                model = local_engine.final_model(cfg)
+                models.require(model)
+                segs = local_engine.transcribe_final(chunk[a:b], prompt, model)
             out += [{**seg, "start": seg["start"] + a / SR, "end": seg["end"] + a / SR} for seg in segs]
         return out
 

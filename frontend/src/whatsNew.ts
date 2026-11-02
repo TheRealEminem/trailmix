@@ -9,6 +9,115 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.23.0",
+    items: [
+      {
+        title: "Your meetings, day by day",
+        body: "The meeting list has a heading for each day (Today, Friday, Oct 14) with the newest first, instead of lumping older meetings into one month. Imported meetings sit on the day they happened. Each meeting shows its workspace and topic, so you can tell at a glance what it was about.",
+      },
+      {
+        title: "Review what was merged",
+        body: "When the same meeting comes in from Trailmix and Granola, the merge now waits for you to look at it: what went into what, and what it took. Keep it, or undo it to have both meetings back. Copies that arrived while their twin was still being processed now merge too, instead of staying in the list twice.",
+        where: "Import → Merged automatically",
+      },
+      {
+        title: "Ask about a stretch of time",
+        body: "Ask your meetings about the past week, month or year, or about meetings from one source. \"What did I promise recently?\" reads your tasks from the last two weeks.",
+        where: "Ask your meetings",
+      },
+    ],
+  },
+  {
+    version: "0.22.0",
+    items: [
+      {
+        title: "Photos and scanned pages read on Windows and Linux",
+        body: "Attach a photo of a whiteboard or a scanned PDF and Trailmix reads its text on your own PC, as it already did on a Mac. iPhone photos (HEIC) open everywhere too.",
+        where: "Settings → Attachments",
+      },
+      {
+        title: "Catch me up from the tray",
+        body: "On Windows and Linux, \"Catch Me Up…\" and \"Live Draft…\" in the tray menu show the live transcript and answer \"What did I miss?\" while you record, without bringing up the window.",
+      },
+      {
+        title: "Linux on more computers",
+        body: "Trailmix for Linux now runs on Ubuntu 22.04 and Debian 12 as well, keyboard shortcuts work on Wayland desktops that support them, and the record shortcut is Ctrl+Alt+Shift+S so it doesn't collide with GNOME's screen recorder. Setting up Ollama shows the one command to run.",
+      },
+      {
+        title: "A home server transcribes by itself",
+        body: "The Docker image now transcribes on its own, even on a small NAS, and the transcription worker runs on any Mac, PC or Linux machine.",
+      },
+    ],
+  },
+  {
+    version: "0.21.0",
+    items: [
+      {
+        title: "Pick your speech model",
+        body: "Choose the speech model that runs on your computer: smaller and faster, or bigger and more accurate. Automatic still picks one to suit your computer, and a model you no longer use can be removed to free its space.",
+        where: "Settings → Transcription",
+      },
+      {
+        title: "Uses the AI already on your computer",
+        body: "LM Studio, Jan, llama.cpp or vLLM running on your computer now shows up when you choose who writes your notes: pick a model and Use. Trailmix only looks on your own computer.",
+        where: "Settings → AI providers",
+      },
+      {
+        title: "A notes model sized to your computer",
+        body: "Trailmix now counts a graphics card's memory too, and suggests a local notes model to match: qwen3:8b on most 16 GB computers, a 14B one with more room. Models that think first no longer write their thinking into your notes.",
+      },
+    ],
+  },
+  {
+    version: "0.20.0",
+    items: [
+      {
+        title: "Trailmix for Linux",
+        body: "Linux gets a version of its own, in beta: an AppImage that keeps itself up to date, or a .deb or .rpm, for x86_64 and ARM64. Tell a friend who runs Linux.",
+      },
+    ],
+  },
+  {
+    version: "0.19.5",
+    items: [
+      {
+        title: "Trailmix for Windows on ARM",
+        body: "Snapdragon laptops and other ARM PCs get a Windows version of their own, alongside the one for Intel and AMD PCs.",
+      },
+      {
+        title: "A sound check on Windows",
+        body: "Windows gets the sound check: it listens to your microphone and to other apps' audio, and tells you which Windows setting to change if one is quiet.",
+        where: "Record → Test your audio",
+      },
+      {
+        title: "Check for updates from the tray",
+        body: "On Windows, \"Check for Updates…\" in the tray menu tells you straight away whether a new version is out.",
+      },
+    ],
+  },
+  {
+    version: "0.19.4",
+    items: [
+      {
+        title: "Stop is quick on Intel Macs and Windows",
+        body: "Live drafts no longer try a hard stretch of audio over and over, so pressing Stop never waits on one. They also leave half the processor free for your call.",
+      },
+      {
+        title: "Shortcuts and call reminders on Windows",
+        body: "Start and stop recording with a keyboard shortcut, and get a nudge when a call starts, as on the Mac.",
+      },
+    ],
+  },
+  {
+    version: "0.19.3",
+    items: [
+      {
+        title: "Trailmix for Windows, in beta",
+        body: "Trailmix now runs on Windows 10 and 11 (64-bit), with its own download on the Trailmix site. It records your mic and the other side of the call, lives in the system tray, and updates itself.",
+      },
+    ],
+  },
+  {
     version: "0.19.2",
     items: [
       {
