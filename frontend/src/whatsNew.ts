@@ -9,6 +9,20 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.23.1",
+    items: [
+      {
+        title: "A shorter list of Gemini models",
+        body: "The Gemini model list only offers models that can write notes. Speech, image, video and music models are left out, so it's about half as long. \"Other…\" still takes any model name you type.",
+        where: "Settings → AI providers",
+      },
+      {
+        title: "Opens a little faster",
+        body: "Settings, Setup and Import load the first time you open them instead of at start, so the window comes up sooner.",
+      },
+    ],
+  },
+  {
     version: "0.23.0",
     items: [
       {
