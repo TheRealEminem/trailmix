@@ -9,6 +9,25 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.23.0",
+    items: [
+      {
+        title: "Your meetings, day by day",
+        body: "The meeting list has a heading for each day (Today, Friday, Oct 14) with the newest first, instead of lumping older meetings into one month. Imported meetings sit on the day they happened. Each meeting shows its workspace and topic, so you can tell at a glance what it was about.",
+      },
+      {
+        title: "Review what was merged",
+        body: "When the same meeting comes in from Trailmix and Granola, the merge now waits for you to look at it: what went into what, and what it took. Keep it, or undo it to have both meetings back. Copies that arrived while their twin was still being processed now merge too, instead of staying in the list twice.",
+        where: "Import → Merged automatically",
+      },
+      {
+        title: "Ask about a stretch of time",
+        body: "Ask your meetings about the past week, month or year, or about meetings from one source. \"What did I promise recently?\" reads your tasks from the last two weeks.",
+        where: "Ask your meetings",
+      },
+    ],
+  },
+  {
     version: "0.22.0",
     items: [
       {
