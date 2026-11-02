@@ -71,7 +71,10 @@ fn main() {
     };
 
     let built = tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
+        // Without its link script: that script takes every target=_blank click and asks for the link over Tauri's
+        // IPC, which the window isn't allowed (capabilities/default.json), so the link went nowhere. The window's
+        // new-window handler opens them instead (window.rs).
+        .plugin(tauri_plugin_opener::Builder::new().open_js_links_on_click(false).build())
         .register_uri_scheme_protocol("trailmix", |ctx, request| window::bridge(ctx.app_handle(), request))
         .setup(move |app| {
             let handle = app.handle().clone();
