@@ -790,13 +790,13 @@ fn window_links(t: &mut Test, win: &tauri::WebviewWindow) {
     let opened = clicked && wait_until(5.0, || window::caught_links().iter().any(|u| u == link));
     let page_saw = window::evaluate(win, "[window.__linkClicks, window.__linkTrusted]");
     let _ = window::evaluate(win, "(document.getElementById('self-test-link')?.remove(), true)");
-    t.expect(
-        opened,
-        &format!(
-            "a link for a new window opens in the browser (clicked: {clicked}, the page saw [clicks, trusted]: {page_saw}, caught: {:?})",
-            window::caught_links()
-        ),
-    );
+    let seen = format!("clicked: {clicked}, the page saw [clicks, trusted]: {page_saw}, caught: {:?}", window::caught_links());
+    if !opened && page_saw.starts_with("[0") {
+        // The mouse never reached the page (GitHub's Windows ARM machines): nothing about links to judge.
+        println!("  skip  a link for a new window opens in the browser: the click didn't reach the window ({seen})");
+    } else {
+        t.expect(opened, &format!("a link for a new window opens in the browser ({seen})"));
+    }
 
     let _ = window::evaluate(
         win,
