@@ -171,7 +171,9 @@ export default function Transcript({ meeting: m, pending, onBookmarks, onSpeaker
               <audio
                 ref={audio}
                 src={api.audioUrl(m.id)}
-                preload="metadata"
+                // Nothing loads until Play: on Linux, WebKitGTK's media player starting on the recording as the
+                // tab opened froze the whole window (issue #14). The length shown until then is the meeting's own.
+                preload="none"
                 onPlay={() => setPlaying(true)}
                 onPause={() => setPlaying(false)}
                 onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}

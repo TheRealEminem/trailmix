@@ -297,7 +297,10 @@ jobs:
           sudo apt-get update
           FUSE=libfuse2; apt-cache show libfuse2t64 >/dev/null 2>&1 && FUSE=libfuse2t64
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
-            libpulse-dev file xdg-utils xvfb xauth pulseaudio pulseaudio-utils dbus-x11 "$FUSE"
+            libpulse-dev file xdg-utils xvfb xauth pulseaudio pulseaudio-utils dbus-x11 "$FUSE" \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+      # (GStreamer's plugins: the AppImage brings its own, copied from here, so a recording plays with the WebKitGTK
+      # it ships rather than the computer's GStreamer, which may not match it: issue #14.)
       # With GPU_WHISPER, whisper.cpp is compiled with Vulkan (scripts/build-linux.py, which makes Vulkan's headers and
       # glslc once: cached here). It links against Vulkan's loader, which also makes the runner a computer with a
       # Vulkan driver but no GPU for the smoke tests (the .deb's and .rpm's containers have no Vulkan at all), and
