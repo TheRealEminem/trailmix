@@ -9,6 +9,15 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.23.4",
+    items: [
+      {
+        title: "Smoother scrolling on Linux",
+        body: "Trailmix now draws its window with your graphics card on most Linux computers, instead of on the processor, so pages scroll smoothly and use far less CPU. In a virtual machine or with NVIDIA's driver, where that can leave the window blank, it still draws on the processor as before.",
+      },
+    ],
+  },
+  {
     version: "0.23.3",
     items: [
       {

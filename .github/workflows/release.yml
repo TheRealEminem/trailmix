@@ -328,6 +328,9 @@ jobs:
           path: ~/.cache/huggingface
           key: hf-whispercpp-tiny-linux
       - name: "Smoke test: the AppImage, fresh"
+        # (and what scrolling the window takes, as a report: TRAILMIX_SCROLL_REPORT)
+        env:
+          TRAILMIX_SCROLL_REPORT: "1"
         run: python3 scripts/smoke-test-linux.py dist/Trailmix-*-linux-"$TRAILMIX_ARCH".AppImage
       # The smoke tests run whisper.cpp on the CPU, as there's no GPU here: this runs its Vulkan backend too, on Mesa's
       # software GPU (slow, but the same shaders and code as on a real one), and checks the words it hears.
