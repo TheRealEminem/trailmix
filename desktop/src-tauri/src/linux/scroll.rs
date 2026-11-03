@@ -6,6 +6,10 @@
 //!   Trailmix --scroll-test http://127.0.0.1:8765/#settings [seconds] [--looks=shipped,glass,flat,flat-no-art]
 //!                          [--before=<script run in the page first, such as clicking a tab>]
 //!
+//! React's work is counted too: a stand-in for React's developer tools' hook (React calls it, in production builds
+//! too, after each commit) counts the commits and the components that rendered in each, named by the element they
+//! draw (production builds shorten the components' own names).
+//!
 //! The looks: shipped (as the app is), glass (frosted glass on), flat (glass off, as on the CPU), and flat-no-art
 //! (also without the contour art behind the page), to see what each costs.
 
@@ -108,12 +112,55 @@ fn look_script(look: &str, shipped: &str) -> String {
     )
 }
 
+/// The stand-in for React's developer tools' hook, before the page's own scripts: counts commits, and which
+/// components rendered in them (the way the developer tools tell: new, or marked as having done work, looking
+/// only where the tree changed), while `window.__renders.on`.
+const REACT_COUNTER: &str = r#"(() => {
+  const r = (window.__renders = { on: false, commits: 0, renders: 0, who: {} });
+  const label = (f) => {
+    const t = f.type;
+    let n = (t && (t.displayName || t.name)) || (t && t.type && (t.type.displayName || t.type.name)) || (t && t.render && t.render.name) || '?';
+    let c = f.child;
+    while (c && typeof c.type !== 'string') c = c.child;
+    const el = c && c.stateNode;
+    if (el && el.getAttribute) {
+      const what = el.getAttribute('aria-label') || el.getAttribute('data-testid') || (typeof el.className === 'string' ? el.className.split(' ').slice(0, 3).join('.') : '');
+      n += ' <' + c.type + (what ? ' ' + what : '') + '>';
+    }
+    return n.slice(0, 90);
+  };
+  const walk = (f) => {
+    for (; f; f = f.sibling) {
+      const prev = f.alternate;
+      if ([0, 1, 11, 14, 15].includes(f.tag) && (!prev || (f.flags & 1))) {
+        r.renders += 1;
+        const k = label(f);
+        r.who[k] = (r.who[k] || 0) + 1;
+      }
+      if (!prev || f.child !== prev.child) walk(f.child);
+    }
+  };
+  window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+    supportsFiber: true,
+    renderers: new Map(),
+    inject(internals) { const id = this.renderers.size + 1; this.renderers.set(id, internals); return id; },
+    checkDCE() {}, onScheduleFiberRoot() {}, onCommitFiberUnmount() {}, onPostCommitFiberRoot() {}, setStrictMode() {},
+    onCommitFiberRoot(id, root) { if (!r.on) return; r.commits += 1; try { walk(root.current.child); } catch (e) {} },
+  };
+})();"#;
+
+const COUNT_START: &str = "(Object.assign(window.__renders || {}, { on: true, commits: 0, renders: 0, who: {} }), !!window.__renders)";
+const COUNT_STOP: &str = "(() => { const r = window.__renders; if (!r) return 'no React hook'; r.on = false; \
+  const top = Object.entries(r.who).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, n]) => n + '× ' + k).join('; '); \
+  return r.commits + ' commits, ' + r.renders + ' component renders' + (top ? ': ' + top : ''); })()";
+
 const SCROLL: &str = "(() => { const m = document.querySelector('main'); const s = (window.__scroll = { frames: 0, run: true }); \
   let dir = 1; const step = () => { if (!s.run) return; const max = m.scrollHeight - m.clientHeight; let y = m.scrollTop + dir * 40; \
   if (y >= max) { y = max; dir = -1; } else if (y <= 0) { y = 0; dir = 1; } m.scrollTop = y; s.frames += 1; requestAnimationFrame(step); }; \
   requestAnimationFrame(step); return true; })()";
 
-fn measure(win: &tauri::WebviewWindow, seconds: f64, scroll: bool) -> ([f64; 4], f64) {
+fn measure(win: &tauri::WebviewWindow, seconds: f64, scroll: bool) -> ([f64; 4], f64, String) {
+    let _ = window::evaluate(win, COUNT_START);
     if scroll {
         let _ = window::evaluate(win, SCROLL);
     }
@@ -122,13 +169,14 @@ fn measure(win: &tauri::WebviewWindow, seconds: f64, scroll: bool) -> ([f64; 4],
     thread::sleep(Duration::from_secs_f64(seconds));
     let after = ticks();
     let took = started.elapsed().as_secs_f64();
+    let react = serde_json::from_str::<String>(&window::evaluate(win, COUNT_STOP)).unwrap_or_else(|_| "?".into());
     let mut fps = 0.0;
     if scroll {
         let frames = window::evaluate(win, "(window.__scroll.run = false, window.__scroll.frames)");
         fps = frames.parse::<f64>().unwrap_or(0.0) / took;
         let _ = window::evaluate(win, "(document.querySelector('main').scrollTop = 0, true)");
     }
-    (percent(before, after, took), fps)
+    (percent(before, after, took), fps, react)
 }
 
 fn show(name: &str, [page, window, helpers, x]: [f64; 4], fps: Option<f64>) -> String {
@@ -155,7 +203,7 @@ pub fn scroll_test(app: AppHandle, args: Vec<String>) {
     let before = args.iter().find_map(|a| a.strip_prefix("--before=")).map(str::to_string);
     let model = Model::new(Prefs::default(), None, app.package_info().version.to_string(), Some(url.clone()));
     app.manage(AppState::new(model, None));
-    if let Err(e) = window::create(&app) {
+    if let Err(e) = window::create_with(&app, Some(REACT_COUNTER.to_string())) {
         println!("couldn't make the window: {e}");
         std::process::exit(1);
     }
@@ -181,10 +229,12 @@ pub fn scroll_test(app: AppHandle, args: Vec<String>) {
         for look in &looks {
             let _ = window::evaluate(&win, &look_script(look, &shipped));
             thread::sleep(Duration::from_millis(1500));
-            let (idle, _) = measure(&win, seconds / 2.0, false);
-            let (busy, fps) = measure(&win, seconds, true);
+            let (idle, _, idle_react) = measure(&win, seconds / 2.0, false);
+            let (busy, fps, busy_react) = measure(&win, seconds, true);
             println!("  {}", show(&format!("{look}, idle"), idle, None));
+            println!("      React: {idle_react}");
             println!("  {}", show(&format!("{look}, scrolling"), busy, Some(fps)));
+            println!("      React: {busy_react}");
         }
         std::process::exit(0);
     });
