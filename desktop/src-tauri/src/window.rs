@@ -33,6 +33,21 @@ const BRIDGE_SCRIPT: &str = r#"(() => {
   window.webkit.messageHandlers.trailmix = { postMessage: send };
 })();"#;
 
+/// Tells the page how WebKitGTK draws it (`data-drawing` on <html>): drawn on the CPU, the page leaves out
+/// frosted glass, which is blurred again for every frame of a scroll (index.css). Run before the page has its
+/// <html>, so it waits for it.
+#[cfg(target_os = "linux")]
+fn drawing_script() -> String {
+    let drawing = if crate::linux::draws_on_cpu() { "cpu" } else { "gpu" };
+    format!(
+        r#"(() => {{
+  const mark = () => {{ document.documentElement.dataset.drawing = '{drawing}'; }};
+  if (document.documentElement) mark();
+  else new MutationObserver((_, seen) => {{ if (document.documentElement) {{ seen.disconnect(); mark(); }} }}).observe(document, {{ childList: true }});
+}})();"#
+    )
+}
+
 /// The server the window shows: navigations within it stay in the window, anything else opens in the browser.
 fn allowed() -> &'static Mutex<Option<Url>> {
     static ALLOWED: OnceLock<Mutex<Option<Url>>> = OnceLock::new();
@@ -78,7 +93,10 @@ fn open_outside(app: &AppHandle, url: &str) {
 pub fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let opener = app.clone();
     let new_window_opener = app.clone();
-    let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html".into()))
+    let builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("index.html".into()));
+    #[cfg(target_os = "linux")]
+    let builder = builder.initialization_script(drawing_script());
+    let window = builder
         .title("Trailmix")
         .inner_size(1280.0, 860.0)
         .min_inner_size(420.0, 560.0)

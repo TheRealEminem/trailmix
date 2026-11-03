@@ -151,6 +151,20 @@
   color-scheme: dark;
 }
 
+/* Drawn on the CPU (the Linux app where WebKitGTK can't use the GPU: a virtual machine, NVIDIA's driver; the
+   shell sets data-drawing): no frosted glass, which is blurred again for every frame of a scroll. The glass
+   surfaces turn near-solid instead, as the narrow window's sidebar already is. (After the dusk rule: it wins.) */
+:root[data-drawing="cpu"] {
+  --surface: color-mix(in srgb, var(--surface-solid) 96%, transparent);
+  --sidebar-bg: color-mix(in srgb, var(--surface-solid) 96%, transparent);
+}
+:root[data-drawing="cpu"] *,
+:root[data-drawing="cpu"] *::before,
+:root[data-drawing="cpu"] *::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
 /* ── Base ───────────────────────────────────────────────────────────── */
 
 html,

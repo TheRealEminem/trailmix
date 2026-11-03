@@ -4,10 +4,11 @@
 
 pub mod keys;
 pub mod portal;
+pub mod scroll;
 pub mod selftest;
 
-use std::path::PathBuf;
-use std::sync::mpsc;
+use std::path::{Path, PathBuf};
+use std::sync::{mpsc, OnceLock};
 use std::time::Duration;
 
 use crate::audio::pulse;
@@ -48,12 +49,81 @@ pub fn session() -> Session {
     }
 }
 
-/// Before GTK starts: WebKitGTK's DMA-BUF renderer leaves the window blank on some graphics drivers (and in
-/// virtual machines), so it's off unless asked for.
+/// How WebKitGTK draws the window here (`before_window` decides): "the GPU", or "the CPU (<why>)".
+static DRAWING: OnceLock<String> = OnceLock::new();
+
+/// Before GTK starts: how WebKitGTK draws the page. Its DMA-BUF renderer leaves the window blank on NVIDIA's own
+/// driver and in virtual machines, so it's off there. But off isn't a slower GPU path: since WebKitGTK 2.44 it's
+/// the only way GPU frames reach the window, so without it the page is painted on the CPU, every frame of a
+/// scroll included (issue #14: a core or more while scrolling, on a computer with a working AMD GPU). So it's off
+/// only where it's known to fail, and WEBKIT_DISABLE_DMABUF_RENDERER (=1 or =0) set by you decides instead.
 pub fn before_window() {
-    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+    let set_off = |name: &str| std::env::var(name).map(|v| v != "0");
+    let drawing = if let Ok(true) = set_off("WEBKIT_DISABLE_COMPOSITING_MODE") {
+        "the CPU (WEBKIT_DISABLE_COMPOSITING_MODE is set)".to_string()
+    } else if let Ok(off) = set_off("WEBKIT_DISABLE_DMABUF_RENDERER") {
+        if off { "the CPU (WEBKIT_DISABLE_DMABUF_RENDERER is set)".to_string() } else { "the GPU".to_string() }
+    } else if let Some(why) = dmabuf_fails() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        format!("the CPU ({why})")
+    } else {
+        "the GPU".to_string()
+    };
+    let _ = DRAWING.set(drawing);
+}
+
+/// "the GPU", or "the CPU (<why>)": for the page (window.rs) and the self-test.
+pub fn drawing() -> &'static str {
+    DRAWING.get().map(String::as_str).unwrap_or("the GPU")
+}
+
+pub fn draws_on_cpu() -> bool {
+    drawing().starts_with("the CPU")
+}
+
+/// Why WebKitGTK's DMA-BUF renderer won't work here, if it won't: where it left the window blank (a virtual
+/// machine, NVIDIA's own driver), or where there's no GPU device for it to draw with (a container, no driver).
+fn dmabuf_fails() -> Option<&'static str> {
+    if virtual_machine() {
+        return Some("a virtual machine");
     }
+    if Path::new("/sys/module/nvidia").exists() || Path::new("/proc/driver/nvidia").exists() {
+        return Some("NVIDIA's driver");
+    }
+    let render_node = std::fs::read_dir("/dev/dri")
+        .map(|dir| dir.flatten().any(|e| e.file_name().to_string_lossy().starts_with("renderD")))
+        .unwrap_or(false);
+    if !render_node {
+        return Some("no GPU device");
+    }
+    None
+}
+
+/// systemd's answer where it's there; otherwise the CPU's hypervisor flag (x86) and the firmware's maker.
+fn virtual_machine() -> bool {
+    if let Ok(status) = std::process::Command::new("systemd-detect-virt")
+        .args(["--vm", "--quiet"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+    {
+        return status.success();
+    }
+    let cpu = std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
+    if cpu.lines().any(|l| l.starts_with("flags") && l.split_whitespace().any(|f| f == "hypervisor")) {
+        return true;
+    }
+    let firmware = ["sys_vendor", "product_name", "board_vendor"]
+        .iter()
+        .filter_map(|f| std::fs::read_to_string(format!("/sys/class/dmi/id/{f}")).ok())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
+    ["qemu", "kvm", "vmware", "virtualbox", "innotek", "xen", "parallels", "bochs", "bhyve", "hyper-v", "virtual machine"]
+        .iter()
+        .any(|v| firmware.contains(v))
+        || Path::new("/sys/hypervisor/type").exists()
 }
 
 /// What this recorder can do on this computer, for the web app (it hides the rest). Only what really works

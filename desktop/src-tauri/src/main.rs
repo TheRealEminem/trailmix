@@ -38,6 +38,7 @@ enum Mode {
     Normal { at_login: bool },
     SelfTest(Vec<String>),
     WindowTest(Vec<String>),
+    ScrollTest(Vec<String>),
 }
 
 fn main() {
@@ -66,6 +67,8 @@ fn main() {
         Mode::SelfTest(args.clone())
     } else if args.iter().any(|a| a == "--window-test") {
         Mode::WindowTest(args.clone())
+    } else if args.iter().any(|a| a == "--scroll-test") {
+        Mode::ScrollTest(args.clone())
     } else {
         Mode::Normal { at_login: args.iter().any(|a| a == login::FLAG) }
     };
@@ -82,6 +85,13 @@ fn main() {
                 Mode::Normal { at_login } => app::launch(&handle, at_login)?,
                 Mode::SelfTest(args) => selftest::run(handle, args),
                 Mode::WindowTest(args) => selftest::window_test(handle, args),
+                #[cfg(target_os = "linux")]
+                Mode::ScrollTest(args) => linux::scroll::scroll_test(handle, args),
+                #[cfg(not(target_os = "linux"))]
+                Mode::ScrollTest(_) => {
+                    println!("--scroll-test is Linux's (it reads /proc)");
+                    std::process::exit(2);
+                }
             }
             Ok(())
         })

@@ -451,6 +451,41 @@ def count_meetings() -> int:
     return len(found if isinstance(found, list) else found["meetings"])
 
 
+TRANSCRIPT_TAB = "[...document.querySelectorAll('[role=tab]')].find((b) => b.textContent.trim() === 'Transcript')?.click()"
+
+
+def scroll_report(app: App, env: dict) -> None:
+    """How much CPU scrolling the window takes (issue #14), as a report: a build machine's numbers vary too much to
+    fail on. Only with TRAILMIX_SCROLL_REPORT=1 (release.yml sets it for the AppImage on the runner). With TRAILMIX_SCROLL_COMPARE=1, each look (frosted glass, flat, flat without the art behind the page)
+    on each way of drawing: as the app chooses here, and with WebKit's GPU renderer forced on (on a machine with
+    no GPU, that's Mesa's software GL)."""
+    compare = os.environ.get("TRAILMIX_SCROLL_COMPARE") == "1"
+    if not compare and os.environ.get("TRAILMIX_SCROLL_REPORT") != "1":
+        return
+    log("Scrolling the window: what it takes (a report, not a check)")
+    found = smoke_test.get(f"{URL}/api/meetings")
+    done = [m["id"] for m in (found if isinstance(found, list) else found.get("meetings", [])) if m.get("status") == "done"]
+    pages = [(f"{URL}/#settings", None)]
+    if done:
+        pages.append((f"{URL}/#meeting-{max(done)}", TRANSCRIPT_TAB))
+    runs = [("as chosen here", {}, "glass,flat,flat-no-art" if compare else "shipped")]
+    if compare:
+        runs.append(("GPU renderer forced on", {"WEBKIT_DISABLE_DMABUF_RENDERER": "0"}, "glass,flat"))
+    for name, extra, looks in runs:
+        for page, before in pages:
+            args = ["--scroll-test", page, "8" if compare else "5", f"--looks={looks}"]
+            if before:
+                args.append(f"--before={before}")
+            try:
+                result = app.run(args, {**env, **extra}, 400)
+            except subprocess.TimeoutExpired:
+                print(f"{name}, {page}: timed out")
+                continue
+            print(f"{name}, {page.removeprefix(URL)}:\n{result.stdout.strip()}", flush=True)
+            if result.returncode != 0:
+                print(result.stderr[-2000:], file=sys.stderr)
+
+
 # MARK: Recording for real
 
 def check_capture(app: App, desk: Desktop, env: dict, root: Path) -> None:
@@ -690,6 +725,8 @@ def main(argv: list[str]) -> int:
         kept = package.parent / f"smoke-window-linux-{app.arch}.png"
         shutil.copy2(shot, kept)
         print(f"saved {kept}")
+
+        scroll_report(app, env)
 
         meetings_before = count_meetings()
         kill_group(engine)
