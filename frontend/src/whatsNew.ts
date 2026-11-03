@@ -9,6 +9,16 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.23.3",
+    items: [
+      {
+        title: "Transcripts open on Linux",
+        body: "Opening a meeting's transcript froze the whole window on some Linux computers. The recording now loads only when you press Play, and the AppImage brings its own media player for it. The \"Dev\" label beside Trailmix's name is gone from the installed app on Windows and Linux, too: it's only for copies run from the code.",
+        where: "A meeting → Transcript",
+      },
+    ],
+  },
+  {
     version: "0.23.2",
     items: [
       {

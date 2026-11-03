@@ -767,7 +767,46 @@ fn window_record(t: &mut Test, app: &AppHandle, model: &Arc<Model>, base: &str) 
         !transcript.is_empty()
     });
     let shown: String = transcript.chars().take(80).collect::<String>().replace('\n', " ");
-    t.expect(done && !transcript.starts_with("error") && !transcript.is_empty(), &format!("the transcript arrived: {shown}"));
+    let arrived = done && !transcript.starts_with("error") && !transcript.is_empty();
+    t.expect(arrived, &format!("the transcript arrived: {shown}"));
+    if arrived {
+        window_transcript(t, &win, id);
+    }
+}
+
+/// The meeting's Transcript tab, with its audio player, in the real window. On Linux, opening it froze the whole
+/// window (WebKitGTK's media player started on the recording as soon as the tab showed), so the page has to keep
+/// answering once the tab is open and once the recording plays.
+fn window_transcript(t: &mut Test, win: &tauri::WebviewWindow, id: i64) {
+    println!("11. The meeting's transcript in the real window");
+    // A page that's hung doesn't answer at all: evaluate gives up after 15 s and says "null".
+    let answers = || window::evaluate(win, "1 + 1") == "2";
+    let _ = window::evaluate(win, &format!("(location.hash = '#meeting-{id}', true)"));
+    let tab = "[...document.querySelectorAll('[role=tablist] [role=tab]')].find((b) => b.textContent.trim() === 'Transcript')";
+    let shown = wait_until(20.0, || window::evaluate(win, &format!("!!({tab})")) == "true");
+    t.expect(shown, "the meeting opens, with its Transcript tab");
+    let _ = window::evaluate(win, &format!("(({tab}).click(), true)"));
+    let player = wait_until(15.0, || {
+        window::evaluate(win, &format!("({tab}).getAttribute('aria-selected') === 'true' && !!document.querySelector('[role=tabpanel] audio')"))
+            == "true"
+    });
+    t.expect(player, "the Transcript tab opens, with the audio player");
+    thread::sleep(Duration::from_secs(3));
+    t.expect(answers(), "the window still answers with the Transcript tab open");
+
+    let _ = window::evaluate(
+        win,
+        "(window.__played = 'waiting', document.querySelector('[role=tabpanel] audio').play().then(() => (window.__played = 'ok'), (e) => (window.__played = String(e))), true)",
+    );
+    let mut played = String::new();
+    wait_until(10.0, || {
+        played = window::evaluate(win, "window.__played");
+        played != "\"waiting\""
+    });
+    thread::sleep(Duration::from_secs(2));
+    let at = window::evaluate(win, "document.querySelector('[role=tabpanel] audio')?.currentTime");
+    let _ = window::evaluate(win, "(document.querySelector('[role=tabpanel] audio')?.pause(), true)");
+    t.expect(answers(), &format!("the window still answers after Play (play: {played}, at {at} s)"));
 }
 
 /// A link for a new window goes to the browser, and the page can copy: both did nothing on Linux (Setup's
