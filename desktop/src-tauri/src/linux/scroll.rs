@@ -10,7 +10,7 @@
 //! too, after each commit) counts the commits and the components that rendered in each, named by the element they
 //! draw (production builds shorten the components' own names).
 //!
-//! The looks: shipped (as the app is), glass (frosted glass on), flat (glass off, as on the CPU), and flat-no-art
+//! The looks: shipped or glass (as the app is), flat (no backdrop blur), and flat-no-art
 //! (also without the contour art behind the page), to see what each costs.
 
 use std::collections::HashMap;
@@ -96,19 +96,19 @@ fn percent(before: Ticks, after: Ticks, seconds: f64) -> [f64; 4] {
     ]
 }
 
-/// Sets a look: whether glass is drawn (the page's data-drawing), and whether the art behind the page is there.
-fn look_script(look: &str, shipped: &str) -> String {
-    let drawing = match look {
-        "glass" => "gpu",
-        "flat" | "flat-no-art" => "cpu",
-        _ => shipped,
-    };
-    let no_art = look == "flat-no-art";
+/// Sets a look: whether glass is blurred, and whether the art behind the page is there (a style of the test's own).
+fn look_script(look: &str) -> String {
+    let mut css = String::new();
+    if look == "flat" || look == "flat-no-art" {
+        css.push_str("* { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; } ");
+    }
+    if look == "flat-no-art" {
+        css.push_str(".pointer-events-none.fixed.inset-0.z-0 { display: none !important; }");
+    }
     format!(
-        "(() => {{ document.documentElement.dataset.drawing = '{drawing}'; let s = document.getElementById('scroll-test-look'); \
+        "(() => {{ let s = document.getElementById('scroll-test-look'); \
          if (!s) {{ s = document.createElement('style'); s.id = 'scroll-test-look'; document.head.append(s); }} \
-         s.textContent = {css:?}; return true; }})()",
-        css = if no_art { ".pointer-events-none.fixed.inset-0.z-0 { display: none !important; }" } else { "" }
+         s.textContent = {css:?}; return true; }})()"
     )
 }
 
@@ -227,7 +227,7 @@ pub fn scroll_test(app: AppHandle, args: Vec<String>) {
         let range = window::evaluate(&win, "(() => { const m = document.querySelector('main'); return [m.clientHeight, m.scrollHeight]; })()");
         println!("drawn on {} (the page has data-drawing={shipped}); main is [shown, all] {range} px tall", super::drawing());
         for look in &looks {
-            let _ = window::evaluate(&win, &look_script(look, &shipped));
+            let _ = window::evaluate(&win, &look_script(look));
             thread::sleep(Duration::from_millis(1500));
             let (idle, _, idle_react) = measure(&win, seconds / 2.0, false);
             let (busy, fps, busy_react) = measure(&win, seconds, true);
