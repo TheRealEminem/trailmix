@@ -18,7 +18,7 @@
     },
     "linux": {
       "appimage": {
-        "bundleMediaFramework": false
+        "bundleMediaFramework": true
       },
       "deb": {
         "depends": ["libpulse0"],
