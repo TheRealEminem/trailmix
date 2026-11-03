@@ -940,6 +940,14 @@ def shutdown(request: Request, background: BackgroundTasks):
     return {"ok": True}
 
 
+def _installed_app() -> bool:
+    """Whether this engine is the installed app's rather than one run from the code folder: the Mac app's Python is
+    inside Trailmix.app, and the Windows and Linux apps' in a python folder beside this backend folder."""
+    if "/Contents/Resources/" in sys.executable:
+        return True
+    return Path(sys.executable).resolve().is_relative_to((Path(__file__).resolve().parent.parent / "python").resolve())
+
+
 @app.get("/api/health")
 def health():
     cfg = settings.get_all()
@@ -974,7 +982,7 @@ def health():
         "cloud": {"signed_in": bool(cfg["cloud_token"]), "available": cloud.offered(cfg),
                   "account": cloud.account(cfg=cfg), "level": cloud.level(cfg), "off": off},
         "version": archive.APP_VERSION,
-        "build": "app" if "/Contents/Resources/" in sys.executable else "source",  # the installed app, or from source
+        "build": "app" if _installed_app() else "source",  # the installed app, or from source
         "templates": templates.listing(),
         "providers": [{**provider_info(p), "kind": v["kind"]} for p, v in llm_engine.PROVIDERS.items()
                       if p != "trailmix" or cloud.offered(cfg)],
