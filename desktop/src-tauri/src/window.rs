@@ -33,9 +33,8 @@ const BRIDGE_SCRIPT: &str = r#"(() => {
   window.webkit.messageHandlers.trailmix = { postMessage: send };
 })();"#;
 
-/// Tells the page how WebKitGTK draws it (`data-drawing` on <html>): drawn on the CPU, the page leaves out
-/// frosted glass, which is blurred again for every frame of a scroll (index.css). Run before the page has its
-/// <html>, so it waits for it.
+/// Tells the page how WebKitGTK draws it (`data-drawing="cpu"` or `"gpu"` on <html>), for the scroll test and for
+/// anyone looking at the page. Run before the page has its <html>, so it waits for it.
 #[cfg(target_os = "linux")]
 fn drawing_script() -> String {
     let drawing = if crate::linux::draws_on_cpu() { "cpu" } else { "gpu" };
