@@ -87,6 +87,12 @@ shared stays shared; what's Windows-only is behind `cfg(windows)`, and Linux has
   (AppIndicator only has a menu): Open Trailmix is in the menu.
 - `linux/selftest.rs`: the self-test's Linux parts, `--list-audio`, and `--capture-test <seconds> <folder> [app]`
   (records the real mic, all apps and one app at once and saves them as WAVs).
+- Drawing (`linux/mod.rs` `before_window`): WebKitGTK draws the page on the GPU through its DMA-BUF renderer. That
+  renderer left the window blank in virtual machines and with NVIDIA's driver, so there (and with no GPU device)
+  it's turned off, which since WebKitGTK 2.44 means the page is painted on the CPU (about 5 frames a second while
+  scrolling, a core busy; the shell sets `data-drawing="cpu"` on the page). A blank window elsewhere:
+  start it with `WEBKIT_DISABLE_DMABUF_RENDERER=1`; `=0` forces the GPU renderer on. `--scroll-test <url> [seconds]
+  [--looks=shipped,glass,flat,flat-no-art]` (`linux/scroll.rs`) measures what scrolling the window takes.
 
 `scripts/smoke-test-linux.py` runs the app headless in a private Xvfb and a private PulseAudio (a null speaker and
 a mic fed from a null sink), so nothing of yours is touched or heard: the engine with and without the app, the
