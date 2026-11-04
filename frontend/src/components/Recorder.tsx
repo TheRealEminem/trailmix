@@ -10,6 +10,7 @@ import type {
 import { hasCapability, missingCapabilityReason } from "../api";
 import type { ActiveRecording } from "../capture";
 import { formatDuration, formatLongDate, shortModel } from "../format";
+import Elapsed from "./Elapsed";
 import { cap, platformWords, recorderWords } from "../platform";
 import {
   AlertIcon,
@@ -39,7 +40,8 @@ interface Props {
   remote: LiveRecording | null;
   /** The menu bar recorder, if it's running: then recording goes through it, with its own settings. */
   native: NativeRecorder | null;
-  elapsed: number;
+  /** When the recording's clock read 0 (ms), for its running time; null when nothing is recording. */
+  clockFrom: number | null;
   starting: boolean;
   stopping: boolean;
   micDeviceId: string;
@@ -417,8 +419,8 @@ function Notepad({ p }: { p: Props }) {
     setTab("ask");
     setOpen(true);
   });
-  const elapsed = useRef(p.elapsed);
-  elapsed.current = p.elapsed;
+  const clockFrom = useRef(p.clockFrom);
+  clockFrom.current = p.clockFrom;
   const panel = useRef<HTMLDivElement>(null);
 
   // A timestamp clicked in a catch-up answer: that line of the live transcript, highlighted for a moment. New
@@ -498,7 +500,7 @@ function Notepad({ p }: { p: Props }) {
             key={p.live.id}
             meetingId={p.live.id}
             notes={p.live.my_notes}
-            now={() => elapsed.current}
+            now={() => (clockFrom.current === null ? 0 : Math.max(0, (Date.now() - clockFrom.current) / 1000))}
             autoFocus
             placeholder="Write your notes here. # makes a heading, - a list. The AI builds the meeting's notes around them."
           />
@@ -554,7 +556,7 @@ function Notepad({ p }: { p: Props }) {
           <div className="flex items-center gap-1.5 px-3 py-2 sm:gap-2 sm:px-4">
             <Pulse />
             <span className="ml-1 min-w-[5ch] font-mono text-label font-medium tabular-nums text-ink" aria-live="off">
-              {formatDuration(p.elapsed)}
+              <Elapsed from={p.clockFrom} />
             </span>
             <button
               onClick={() => toggle("transcript")}

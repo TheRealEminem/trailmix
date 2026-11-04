@@ -15,7 +15,8 @@ import type {
 } from "./api";
 import { startRecording } from "./capture";
 import type { ActiveRecording } from "./capture";
-import { formatDuration, tildePath } from "./format";
+import { tildePath } from "./format";
+import Elapsed from "./components/Elapsed";
 import { platformWords, setRecorderPlatform } from "./platform";
 import { PreflightSheet } from "./components/AIChoice";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -47,7 +48,7 @@ import {
   useConfirm,
 } from "./components/ui";
 import type { ToastState } from "./components/ui";
-import { EventsContext, useEvents } from "./events";
+import { useEvent, useEventStream } from "./events";
 import { useTheme } from "./theme";
 
 // The big screens you may never open in a sitting come in their own files, fetched the first time they're shown.
@@ -162,7 +163,6 @@ export default function App() {
   const [rec, setRec] = useState<ActiveRecording | null>(null);
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<DraftLine[]>([]);
   // Live captions being said right now, by channel (cleared when that stretch of speech is final).
@@ -181,7 +181,9 @@ export default function App() {
   const lastRemoteId = useRef<number | null>(null);
   const onRecorderScreenRef = useRef(true);
   // The menu bar recorder, recordings in progress, memory and the speech models, pushed as they change.
-  const events = useEvents(authState === "ok");
+  useEventStream(authState === "ok");
+  const eventRecorder = useEvent("recorder");
+  const eventLive = useEvent("live");
 
   const fail = useCallback(
     (text: string) => setToast({ tone: "error", text }),
@@ -340,23 +342,6 @@ export default function App() {
     return () => clearInterval(t);
   }, [anyActive, writing, selectedId, refreshList, refreshSelected]);
 
-  useEffect(() => {
-    if (rec) {
-      const t = setInterval(
-        () => setElapsed((Date.now() - rec.startedAt) / 1000),
-        250,
-      );
-      return () => clearInterval(t);
-    }
-    if (remote) {
-      const tick = () =>
-        setElapsed(remote.duration + (Date.now() - remoteAt.current) / 1000);
-      tick();
-      const t = setInterval(tick, 250);
-      return () => clearInterval(t);
-    }
-  }, [rec, remote]);
-
   const openMeeting = useCallback((id: number) => {
     setSelectedId(id);
     setTab("summary");
@@ -365,14 +350,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (events.recorder?.available) setRecorderPlatform(events.recorder.platform);
-    setNative(events.recorder?.available ? events.recorder : null);
-  }, [events.recorder]);
+    if (eventRecorder?.available) setRecorderPlatform(eventRecorder.platform);
+    setNative(eventRecorder?.available ? eventRecorder : null);
+  }, [eventRecorder]);
 
   // Recordings can also be started from the menu bar helper. Follow whatever is live; when one ends while
   // you're watching it, open the meeting, just like after a recording made here.
   useEffect(() => {
-    const all = events.live;
+    const all = eventLive;
     const other = all.find((l) => l.id !== recRef.current?.meetingId) ?? null;
     setOwnLive(all.find((l) => l.id === recRef.current?.meetingId) ?? null);
     remoteAt.current = Date.now();
@@ -388,7 +373,7 @@ export default function App() {
         if (id === null && onRecorderScreenRef.current) openMeeting(ended);
       }
     }
-  }, [events.live, refreshList, openMeeting]);
+  }, [eventLive, refreshList, openMeeting]);
 
   // Links like /#meeting-12 (the menu bar helper uses them) open that meeting; #import, #settings, #tasks
   // and #ask open those pages.
@@ -451,7 +436,6 @@ export default function App() {
     setDrafts([]);
     setInterims({});
     setMarks([]);
-    setElapsed(0);
     setStarting(true);
     // In the app window, always record through the menu bar recorder (the window can't capture other apps'
     // audio itself). It may not have checked in yet, e.g. just after Trailmix started or updated: keep asking.
@@ -742,6 +726,8 @@ export default function App() {
   const showRecorder = selectedId === null;
   onRecorderScreenRef.current = showRecorder && view === "main";
   const liveId = rec?.meetingId ?? remote?.id ?? null;
+  // When the recording's clock read 0: its running time ticks in the parts showing it (Elapsed), not here.
+  const clockFrom = rec ? rec.startedAt : remote ? remoteAt.current - remote.duration * 1000 : null;
   const highlighted = view !== "main" ? null : (selectedId ?? liveId);
   const goRecorder = () => {
     setSelectedId(null);
@@ -754,7 +740,6 @@ export default function App() {
   };
 
   return (
-    <EventsContext.Provider value={events}>
     <div className="relative flex h-full">
       <Ambient />
 
@@ -771,7 +756,7 @@ export default function App() {
           loaded={listLoaded}
           selectedId={highlighted}
           recording={liveId !== null}
-          elapsed={elapsed}
+          clockFrom={clockFrom}
           onSelect={(id) => {
             // The meeting being recorded lives on the recorder screen.
             if (id === liveId) goRecorder();
@@ -828,7 +813,7 @@ export default function App() {
             >
               <Pulse />
               <span className="font-mono tabular-nums">
-                {formatDuration(elapsed)}
+                <Elapsed from={clockFrom} />
               </span>
             </button>
           ) : (
@@ -947,7 +932,7 @@ export default function App() {
                 remote={rec ? null : remote}
                 live={rec ? ownLive : remote}
                 native={native}
-                elapsed={elapsed}
+                clockFrom={clockFrom}
                 starting={starting}
                 stopping={stopping || remoteStopping}
                 micDeviceId={micDeviceId}
@@ -1099,6 +1084,5 @@ export default function App() {
         />
       )}
     </div>
-    </EventsContext.Provider>
   );
 }
