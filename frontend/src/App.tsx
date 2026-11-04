@@ -16,6 +16,7 @@ import type {
 import { startRecording } from "./capture";
 import type { ActiveRecording } from "./capture";
 import { tildePath } from "./format";
+import { same, sameItems } from "./same";
 import Elapsed from "./components/Elapsed";
 import { platformWords, setRecorderPlatform } from "./platform";
 import { PreflightSheet } from "./components/AIChoice";
@@ -230,7 +231,7 @@ export default function App() {
       api
         .workspaces()
         .then((ws) => {
-          setWorkspaces(ws);
+          setWorkspaces((prev) => sameItems(prev, ws));
           // A workspace that was deleted: back to everything.
           setWorkspaceState((w) => (typeof w === "number" && !ws.some((x) => x.id === w) ? "all" : w));
         })
@@ -243,9 +244,10 @@ export default function App() {
       void refreshWorkspaces(); // their meeting counts change with the list
       void api
         .questionCounts()
-        .then(setQuestionCounts)
+        .then((c) => setQuestionCounts((prev) => same(prev, c)))
         .catch(() => undefined);
-      setMeetings(await api.listMeetings());
+      const list = await api.listMeetings();
+      setMeetings((prev) => sameItems(prev, list));
       setListLoaded(true);
       setBackendDown(false);
     } catch {
@@ -256,7 +258,8 @@ export default function App() {
   const refreshSelected = useCallback(
     async (id: number) => {
       try {
-        setMeeting(await api.getMeeting(id));
+        const m = await api.getMeeting(id);
+        setMeeting((prev) => (prev?.id === m.id ? same(prev, m) : m));
       } catch (e) {
         fail((e as Error).message);
       }
@@ -276,7 +279,7 @@ export default function App() {
     () =>
       api
         .tasks()
-        .then(setAllTasks)
+        .then((tasks) => setAllTasks((prev) => sameItems(prev, tasks)))
         .catch(() => undefined),
     [],
   );
@@ -326,8 +329,11 @@ export default function App() {
     void refreshSelected(selectedId);
   }, [selectedId, refreshSelected]);
 
-  // Poll while anything is recording / queued / processing.
+  // Poll while anything is recording / queued / processing: the list, and the open meeting while it's the one
+  // being worked on. When its work ends (the list says so), it's read once more for how it came out.
   const anyActive = meetings.some((m) => isActive(m.status));
+  const selectedStatus = meetings.find((m) => m.id === selectedId)?.status;
+  const selectedActive = (selectedStatus !== undefined && isActive(selectedStatus)) || (!!meeting && meeting.id === selectedId && isActive(meeting.status));
   const writing = meeting?.status === "summarizing" && meeting.id === selectedId;
   useEffect(() => {
     if (!anyActive) return;
@@ -335,12 +341,20 @@ export default function App() {
     const t = setInterval(
       () => {
         if (!writing || tick++ % 3 === 0) void refreshList(); // the list needn't keep up with the notes
-        if (selectedId !== null) void refreshSelected(selectedId);
+        if (selectedId !== null && selectedActive) void refreshSelected(selectedId);
       },
       writing ? DRAFT_POLL_MS : POLL_MS,
     );
     return () => clearInterval(t);
-  }, [anyActive, writing, selectedId, refreshList, refreshSelected]);
+  }, [anyActive, writing, selectedId, selectedActive, refreshList, refreshSelected]);
+  const lastStatus = useRef<string | null>(null);
+  useEffect(() => {
+    const now = selectedId === null || selectedStatus === undefined ? null : `${selectedId}:${selectedStatus}`;
+    const before = lastStatus.current;
+    lastStatus.current = now;
+    // (A meeting just opened is read by the effect above it; this is for one already open changing.)
+    if (now && before && before !== now && before.startsWith(`${selectedId}:`)) void refreshSelected(selectedId!);
+  }, [selectedId, selectedStatus, refreshSelected]);
 
   const openMeeting = useCallback((id: number) => {
     setSelectedId(id);
