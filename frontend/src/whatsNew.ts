@@ -9,6 +9,15 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.23.5",
+    items: [
+      {
+        title: "A lighter, quicker window",
+        body: "The window no longer redraws everything each time the memory readout updates, every recording tick or every poll while a meeting is processing. Only the parts that changed draw again. Long transcripts scroll and play back smoothly: during playback only the highlighted lines change, and the page waits a few seconds before following the audio again after you scroll. Trailmix also starts a little faster, because the notes editor loads when it's needed.",
+      },
+    ],
+  },
+  {
     version: "0.23.4",
     items: [
       {
