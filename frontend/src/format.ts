@@ -20,14 +20,23 @@ export const shortModel = (m: string) => m.split("/").pop() ?? m;
 /** "/Users/you/Documents/x.md" -> "~/Documents/x.md" */
 export const tildePath = (p: string) => p.replace(/^\/Users\/[^/]+/, "~");
 
+// Made once and reused: making a formatter is the slow part, and the sidebar formats a date or two per meeting.
+const formatters = new Map<string, Intl.DateTimeFormat>();
+function format(d: Date, options: Intl.DateTimeFormatOptions): string {
+  const key = JSON.stringify(options);
+  let f = formatters.get(key);
+  if (!f) formatters.set(key, (f = new Intl.DateTimeFormat(undefined, options)));
+  return f.format(d);
+}
+
 export function formatTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return format(new Date(iso), { hour: "numeric", minute: "2-digit" });
 }
 
 export function formatLongDate(iso: string): string {
   const d = new Date(iso);
   const year = d.getFullYear() === new Date().getFullYear() ? undefined : "numeric";
-  return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year });
+  return format(d, { weekday: "long", month: "long", day: "numeric", year });
 }
 
 /** The local calendar day a meeting is on ("2026-10-14"): the sidebar groups by it. */
@@ -44,9 +53,9 @@ export function dayGroup(iso: string, now = new Date()): string {
   const days = Math.round((startOf(now) - startOf(d)) / 86_400_000);
   if (days <= 0) return "Today";
   if (days === 1) return "Yesterday";
-  if (days < 7) return d.toLocaleDateString(undefined, { weekday: "long" });
+  if (days < 7) return format(d, { weekday: "long" });
   const year = d.getFullYear() === now.getFullYear() ? undefined : "numeric";
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year });
+  return format(d, { month: "short", day: "numeric", year });
 }
 
 /** Newest first by when each meeting happened (imports keep their own date), whatever order they arrived in. */

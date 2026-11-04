@@ -1,6 +1,6 @@
-import { useContext, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { EventsContext } from "../events";
+import { useEvent } from "../events";
 import { AlertIcon, CheckIcon, DownloadIcon } from "./icons";
 
 /**
@@ -9,7 +9,7 @@ import { AlertIcon, CheckIcon, DownloadIcon } from "./icons";
  * The progress comes with the event stream.
  */
 export default function ModelsBanner() {
-  const info = useContext(EventsContext).models;
+  const info = useEvent("models");
   const [justFinished, setJustFinished] = useState(false);
   const wasDownloading = useRef(false);
 
