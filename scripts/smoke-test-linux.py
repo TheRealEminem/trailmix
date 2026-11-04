@@ -454,34 +454,47 @@ def count_meetings() -> int:
 TRANSCRIPT_TAB = "[...document.querySelectorAll('[role=tab]')].find((b) => b.textContent.trim() === 'Transcript')?.click()"
 
 
+# The sidebar's meeting list, made long enough to scroll: its rows copied (a build machine has a handful).
+LONG_SIDEBAR = ("(() => { const n = document.querySelector('nav[aria-label=Meetings]'); const rows = [...n.children]; "
+                "for (let k = 0; k < 40; k++) rows.forEach((r) => n.append(r.cloneNode(true))); return n.scrollHeight; })()")
+
+
 def scroll_report(app: App, env: dict) -> None:
     """How much CPU scrolling the window takes (issue #14), as a report: a build machine's numbers vary too much to
-    fail on. Only with TRAILMIX_SCROLL_REPORT=1 (release.yml sets it for the AppImage on the runner). With TRAILMIX_SCROLL_COMPARE=1, each look (frosted glass, flat, flat without the art behind the page)
-    on each way of drawing: as the app chooses here, and with WebKit's GPU renderer forced on (on a machine with
-    no GPU, that's Mesa's software GL)."""
+    fail on. Only with TRAILMIX_SCROLL_REPORT=1 (release.yml sets it for the AppImage on the runner).
+
+    With TRAILMIX_SCROLL_COMPARE=1, what each kind of drawing costs: looks that each leave one out (the sidebar's
+    blur, the transcript player's glass, the sidebar list's faded edges, all blur, the art behind the page), on the
+    transcript page and on a long sidebar list, drawn both as the app chooses here and with WebKit's GPU renderer
+    forced on (on a machine without a GPU, that's Mesa's software GL)."""
     compare = os.environ.get("TRAILMIX_SCROLL_COMPARE") == "1"
     if not compare and os.environ.get("TRAILMIX_SCROLL_REPORT") != "1":
         return
     log("Scrolling the window: what it takes (a report, not a check)")
     found = smoke_test.get(f"{URL}/api/meetings")
     done = [m["id"] for m in (found if isinstance(found, list) else found.get("meetings", [])) if m.get("status") == "done"]
-    pages = [(f"{URL}/#settings", None)]
-    if done:
-        pages.append((f"{URL}/#meeting-{max(done)}", TRANSCRIPT_TAB))
-    runs = [("as chosen here", {}, "glass,flat,flat-no-art" if compare else "shipped")]
+    meeting = f"{URL}/#meeting-{max(done)}" if done else f"{URL}/#settings"
+    # (page, script run first, what scrolls, looks)
     if compare:
-        runs.append(("GPU renderer forced on", {"WEBKIT_DISABLE_DMABUF_RENDERER": "0"}, "glass,flat"))
-    for name, extra, looks in runs:
-        for page, before in pages:
-            args = ["--scroll-test", page, "8" if compare else "5", f"--looks={looks}"]
+        scenes = [(meeting, TRANSCRIPT_TAB, "main", "shipped,no-sidebar-blur,no-player-glass,flat,flat-no-art"),
+                  (meeting, LONG_SIDEBAR, "nav[aria-label=Meetings]", "shipped,no-mask,no-sidebar-blur,flat")]
+        renderers = [("as chosen here", {}), ("GPU renderer forced on", {"WEBKIT_DISABLE_DMABUF_RENDERER": "0"})]
+    else:
+        scenes = [(f"{URL}/#settings", None, "main", "shipped")]
+        if done:
+            scenes.append((meeting, TRANSCRIPT_TAB, "main", "shipped"))
+        renderers = [("as chosen here", {})]
+    for name, extra in renderers:
+        for page, before, target, looks in scenes:
+            args = ["--scroll-test", page, "8" if compare else "5", f"--looks={looks}", f"--target={target}"]
             if before:
                 args.append(f"--before={before}")
             try:
-                result = app.run(args, {**env, **extra}, 400)
+                result = app.run(args, {**env, **extra}, 600)
             except subprocess.TimeoutExpired:
-                print(f"{name}, {page}: timed out")
+                print(f"{name}, {page}, {target}: timed out")
                 continue
-            print(f"{name}, {page.removeprefix(URL)}:\n{result.stdout.strip()}", flush=True)
+            print(f"{name}, {page.removeprefix(URL)}, scrolling {target}:\n{result.stdout.strip()}", flush=True)
             if result.returncode != 0:
                 print(result.stderr[-2000:], file=sys.stderr)
 
