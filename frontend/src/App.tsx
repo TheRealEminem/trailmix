@@ -908,7 +908,6 @@ export default function App() {
               />
               <div
                 className="panel animate-enter p-5 sm:p-7"
-                style={{ animationDelay: "60ms" }}
               >
                 <AskPanel
                   health={health}
