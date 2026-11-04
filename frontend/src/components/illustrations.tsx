@@ -132,21 +132,29 @@ export function TrailScene({
   const P = dusk ? DUSK : DAY;
   const animate = walking && !reducedMotion();
 
+  // Only while the pointer is over the scene: following it across the whole window redrew all eight layers for
+  // every move anywhere on the page (issue #14). It drifts back to the middle when the pointer leaves.
   useEffect(() => {
-    if (!parallax || reducedMotion()) return;
+    const el = svg.current;
+    if (!parallax || reducedMotion() || !el) return;
     let raf = 0;
-    const onMove = (e: PointerEvent) => {
+    const set = (x: number, y: number) => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        const el = svg.current;
-        if (!el) return;
-        el.style.setProperty("--px", ((e.clientX / window.innerWidth - 0.5) * -2).toFixed(3));
-        el.style.setProperty("--py", ((e.clientY / window.innerHeight - 0.5) * -2).toFixed(3));
+        el.style.setProperty("--px", x.toFixed(3));
+        el.style.setProperty("--py", y.toFixed(3));
       });
     };
-    window.addEventListener("pointermove", onMove);
+    const onMove = (e: PointerEvent) => {
+      const r = el.getBoundingClientRect();
+      set(((e.clientX - r.left) / r.width - 0.5) * -2, ((e.clientY - r.top) / r.height - 0.5) * -2);
+    };
+    const onLeave = () => set(0, 0);
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerleave", onLeave);
     return () => {
-      window.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerleave", onLeave);
       cancelAnimationFrame(raf);
     };
   }, [parallax]);

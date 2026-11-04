@@ -4,14 +4,15 @@
 //! X server's, which draws what the window hands it. Each look is measured idle first, then scrolling.
 //!
 //!   Trailmix --scroll-test http://127.0.0.1:8765/#settings [seconds] [--looks=shipped,glass,flat,flat-no-art]
-//!                          [--before=<script run in the page first, such as clicking a tab>]
+//!                          [--before=<script run in the page first, such as clicking a tab>] [--target=<what scrolls: main>]
 //!
 //! React's work is counted too: a stand-in for React's developer tools' hook (React calls it, in production builds
 //! too, after each commit) counts the commits and the components that rendered in each, named by the element they
 //! draw (production builds shorten the components' own names).
 //!
-//! The looks: shipped or glass (as the app is), flat (no backdrop blur), and flat-no-art
-//! (also without the contour art behind the page), to see what each costs.
+//! The looks: shipped or glass (as the app is), flat (no backdrop blur anywhere), flat-no-art (also without the
+//! contour art behind the page), no-sidebar-blur, no-player-glass (the transcript's sticky player), and no-mask
+//! (the sidebar list's faded edges): each to see what it costs.
 
 use std::collections::HashMap;
 use std::thread;
@@ -96,15 +97,17 @@ fn percent(before: Ticks, after: Ticks, seconds: f64) -> [f64; 4] {
     ]
 }
 
-/// Sets a look: whether glass is blurred, and whether the art behind the page is there (a style of the test's own).
+/// Sets a look, with a style of the test's own: each leaves out one costly kind of drawing, to see what it costs.
 fn look_script(look: &str) -> String {
-    let mut css = String::new();
-    if look == "flat" || look == "flat-no-art" {
-        css.push_str("* { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; } ");
-    }
-    if look == "flat-no-art" {
-        css.push_str(".pointer-events-none.fixed.inset-0.z-0 { display: none !important; }");
-    }
+    const NO_BLUR: &str = "{ -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }";
+    let css = match look {
+        "flat" => format!("* {NO_BLUR}"),
+        "flat-no-art" => format!("* {NO_BLUR} .pointer-events-none.fixed.inset-0.z-0 {{ display: none !important; }}"),
+        "no-sidebar-blur" => format!(".chrome {NO_BLUR}"),
+        "no-player-glass" => format!("[role=tabpanel] .glass {NO_BLUR}"),
+        "no-mask" => ".fade-edges-y { -webkit-mask-image: none !important; mask-image: none !important; }".to_string(),
+        _ => String::new(),
+    };
     format!(
         "(() => {{ let s = document.getElementById('scroll-test-look'); \
          if (!s) {{ s = document.createElement('style'); s.id = 'scroll-test-look'; document.head.append(s); }} \
@@ -154,15 +157,15 @@ const COUNT_STOP: &str = "(() => { const r = window.__renders; if (!r) return 'n
   const top = Object.entries(r.who).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, n]) => n + '× ' + k).join('; '); \
   return r.commits + ' commits, ' + r.renders + ' component renders' + (top ? ': ' + top : ''); })()";
 
-const SCROLL: &str = "(() => { const m = document.querySelector('main'); const s = (window.__scroll = { frames: 0, run: true }); \
+const SCROLL: &str = "(() => { const m = document.querySelector(TARGET); const s = (window.__scroll = { frames: 0, run: true }); \
   let dir = 1; const step = () => { if (!s.run) return; const max = m.scrollHeight - m.clientHeight; let y = m.scrollTop + dir * 40; \
   if (y >= max) { y = max; dir = -1; } else if (y <= 0) { y = 0; dir = 1; } m.scrollTop = y; s.frames += 1; requestAnimationFrame(step); }; \
   requestAnimationFrame(step); return true; })()";
 
-fn measure(win: &tauri::WebviewWindow, seconds: f64, scroll: bool) -> ([f64; 4], f64, String) {
+fn measure(win: &tauri::WebviewWindow, seconds: f64, scroll: bool, target: &str) -> ([f64; 4], f64, String) {
     let _ = window::evaluate(win, COUNT_START);
     if scroll {
-        let _ = window::evaluate(win, SCROLL);
+        let _ = window::evaluate(win, &SCROLL.replace("TARGET", &format!("{target:?}")));
     }
     let started = Instant::now();
     let before = ticks();
@@ -174,7 +177,7 @@ fn measure(win: &tauri::WebviewWindow, seconds: f64, scroll: bool) -> ([f64; 4],
     if scroll {
         let frames = window::evaluate(win, "(window.__scroll.run = false, window.__scroll.frames)");
         fps = frames.parse::<f64>().unwrap_or(0.0) / took;
-        let _ = window::evaluate(win, "(document.querySelector('main').scrollTop = 0, true)");
+        let _ = window::evaluate(win, &format!("(document.querySelector({target:?}).scrollTop = 0, true)"));
     }
     (percent(before, after, took), fps, react)
 }
@@ -201,6 +204,7 @@ pub fn scroll_test(app: AppHandle, args: Vec<String>) {
         .map(str::to_string)
         .collect();
     let before = args.iter().find_map(|a| a.strip_prefix("--before=")).map(str::to_string);
+    let target = args.iter().find_map(|a| a.strip_prefix("--target=")).unwrap_or("main").to_string();
     let model = Model::new(Prefs::default(), None, app.package_info().version.to_string(), Some(url.clone()));
     app.manage(AppState::new(model, None));
     if let Err(e) = window::create_with(&app, Some(REACT_COUNTER.to_string())) {
@@ -224,13 +228,13 @@ pub fn scroll_test(app: AppHandle, args: Vec<String>) {
         }
         thread::sleep(Duration::from_secs(2));
         let shipped = serde_json::from_str::<String>(&window::evaluate(&win, "document.documentElement.dataset.drawing ?? 'none'")).unwrap_or_default();
-        let range = window::evaluate(&win, "(() => { const m = document.querySelector('main'); return [m.clientHeight, m.scrollHeight]; })()");
-        println!("drawn on {} (the page has data-drawing={shipped}); main is [shown, all] {range} px tall", super::drawing());
+        let range = window::evaluate(&win, &format!("(() => {{ const m = document.querySelector({target:?}); return [m.clientHeight, m.scrollHeight]; }})()"));
+        println!("drawn on {} (the page has data-drawing={shipped}); {target} is [shown, all] {range} px tall", super::drawing());
         for look in &looks {
             let _ = window::evaluate(&win, &look_script(look));
             thread::sleep(Duration::from_millis(1500));
-            let (idle, _, idle_react) = measure(&win, seconds / 2.0, false);
-            let (busy, fps, busy_react) = measure(&win, seconds, true);
+            let (idle, _, idle_react) = measure(&win, seconds / 2.0, false, &target);
+            let (busy, fps, busy_react) = measure(&win, seconds, true, &target);
             println!("  {}", show(&format!("{look}, idle"), idle, None));
             println!("      React: {idle_react}");
             println!("  {}", show(&format!("{look}, scrolling"), busy, Some(fps)));

@@ -518,7 +518,8 @@ function Notepad({ p }: { p: Props }) {
       )}
 
       <div className="sticky bottom-4 z-20 mt-10 animate-enter" style={delay(120)}>
-        <section aria-label="Live recording" className="glass overflow-hidden !bg-surface shadow-lg">
+        {/* Glass's shape and border on a solid background: its blur couldn't be seen through that, but was drawn. */}
+        <section aria-label="Live recording" className="overflow-hidden rounded-xl border border-line bg-surface shadow-lg">
           <Collapse open={open}>
             <div className="border-b border-line">
               <div className="flex items-center justify-between gap-2 px-4 pt-3 sm:px-5">
