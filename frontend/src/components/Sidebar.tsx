@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../api";
 import type { Health, MeetingListItem, SearchHit, Workspace, WorkspaceFilter } from "../api";
@@ -7,6 +7,7 @@ import { ChatIcon, CheckSquareIcon, CloseIcon, DownloadIcon, MicIcon, SearchIcon
 import { AISwitch } from "./AIChoice";
 import { Logo } from "./illustrations";
 import { macKeyboard } from "../platform";
+import Elapsed from "./Elapsed";
 import SystemStatus from "./SystemStatus";
 import { Pulse, Skeleton, Spinner, StatusChip } from "./ui";
 import { WorkspaceDot, WorkspaceSwitcher, inWorkspace } from "./Workspaces";
@@ -18,7 +19,8 @@ interface Props {
   loaded: boolean;
   selectedId: number | null;
   recording: boolean;
-  elapsed: number;
+  /** When the recording's clock read 0 (ms), for its running time. */
+  clockFrom: number | null;
   onSelect: (id: number) => void;
   onNew: () => void;
   onDelete: (m: MeetingListItem) => void;
@@ -117,7 +119,16 @@ function SubjectChips({ space, tag }: { space?: Workspace; tag?: string }) {
   );
 }
 
-function MeetingRow({
+/** A function that stays the same from one draw to the next and calls the latest `fn`: rows given it needn't draw
+ * again when the page around them does. */
+function useSteady<A extends unknown[]>(fn: (...args: A) => void): (...args: A) => void {
+  const latest = useRef(fn);
+  latest.current = fn;
+  return useCallback((...args: A) => latest.current(...args), []);
+}
+
+// Drawn again only when its own meeting (or whether it's open) changes, not with every update to the list around it.
+const MeetingRow = memo(function MeetingRow({
   m,
   active,
   onSelect,
@@ -128,8 +139,8 @@ function MeetingRow({
 }: {
   m: MeetingListItem;
   active: boolean;
-  onSelect: () => void;
-  onDelete: () => void;
+  onSelect: (id: number) => void;
+  onDelete: (m: MeetingListItem) => void;
   /** Shown when looking at all meetings: which workspace this one is in. */
   space?: Workspace;
   /** Questions about it waiting for you. */
@@ -141,7 +152,7 @@ function MeetingRow({
   return (
     <div className="group relative transition-transform duration-150 ease-out hover:translate-x-px">
       <button
-        onClick={onSelect}
+        onClick={() => onSelect(m.id)}
         aria-current={active ? "page" : undefined}
         className={`block w-full rounded-md px-3 py-2.5 pr-9 text-left transition-[background-color,box-shadow] duration-150 ${
           active ? "bg-surface shadow-sm ring-1 ring-line" : "group-hover:bg-forest/[.05]"
@@ -170,7 +181,7 @@ function MeetingRow({
       </button>
       {!busy && (
         <button
-          onClick={onDelete}
+          onClick={() => onDelete(m)}
           className="icon-btn absolute right-1.5 top-2 h-7 w-7 opacity-0 hover:!bg-trail-soft hover:!text-trail-deep focus-visible:opacity-100 group-hover:opacity-100"
           aria-label={`Delete ${m.title}`}
           data-tip="Delete meeting"
@@ -180,14 +191,14 @@ function MeetingRow({
       )}
     </div>
   );
-}
+});
 
 export default function Sidebar({
   meetings: everyMeeting,
   loaded,
   selectedId,
   recording,
-  elapsed,
+  clockFrom,
   onSelect,
   onNew,
   onDelete,
@@ -203,7 +214,12 @@ export default function Sidebar({
   onAIChanged,
   channel,
 }: Props) {
-  const meetings = newestFirst(everyMeeting.filter((m) => inWorkspace(workspace, m.workspace_id)));
+  const meetings = useMemo(
+    () => newestFirst(everyMeeting.filter((m) => inWorkspace(workspace, m.workspace_id))),
+    [everyMeeting, workspace],
+  );
+  const selectRow = useSteady(onSelect);
+  const deleteRow = useSteady(onDelete);
   const spaceOf = (id: number | null) => (workspace === "all" && id ? workspaces.find((w) => w.id === id) : undefined);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[] | null>(null);
@@ -247,13 +263,16 @@ export default function Sidebar({
   }, [workspaces, onWorkspace]);
 
   // One group per day the meetings happened on, newest first
-  const groups: { key: string; label: string; items: MeetingListItem[] }[] = [];
-  for (const m of meetings) {
-    const key = dayKey(m.created_at);
-    const last = groups[groups.length - 1];
-    if (last?.key === key) last.items.push(m);
-    else groups.push({ key, label: dayGroup(m.created_at), items: [m] });
-  }
+  const groups = useMemo(() => {
+    const out: { key: string; label: string; items: MeetingListItem[] }[] = [];
+    for (const m of meetings) {
+      const key = dayKey(m.created_at);
+      const last = out[out.length - 1];
+      if (last?.key === key) last.items.push(m);
+      else out.push({ key, label: dayGroup(m.created_at), items: [m] });
+    }
+    return out;
+  }, [meetings]);
   const toReview = everyMeeting.filter((m) => m.merges_to_review > 0).length;
   const mac = macKeyboard();
 
@@ -319,7 +338,9 @@ export default function Sidebar({
               <Pulse />
               Recording
             </span>
-            <span className="font-mono text-ui tabular-nums">{formatDuration(elapsed)}</span>
+            <span className="font-mono text-ui tabular-nums">
+              <Elapsed from={clockFrom} />
+            </span>
           </button>
         ) : (
           <button onClick={onNew} className="group btn btn-primary h-11 w-full rounded-md text-label font-semibold">
@@ -430,8 +451,8 @@ export default function Sidebar({
                     key={m.id}
                     m={m}
                     active={m.id === selectedId}
-                    onSelect={() => onSelect(m.id)}
-                    onDelete={() => onDelete(m)}
+                    onSelect={selectRow}
+                    onDelete={deleteRow}
                     space={spaceOf(m.workspace_id)}
                     workspaceName={workspaces.find((w) => w.id === m.workspace_id)?.name}
                     asks={questions[String(m.id)]}
