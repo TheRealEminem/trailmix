@@ -82,7 +82,7 @@ export default {
         "check-pop": { "0%": { transform: "scale(0.6)" }, "60%": { transform: "scale(1.12)" }, "100%": { transform: "scale(1)" } },
       },
       animation: {
-        enter: "enter 480ms var(--ease-out) both",
+        enter: "enter 200ms var(--ease-out) both",
         "fade-in": "fade-in 200ms var(--ease-out) both",
         pop: "pop 150ms var(--ease-out) both",
         "dialog-in": "dialog-in 200ms var(--ease-out) both",
