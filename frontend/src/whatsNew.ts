@@ -9,6 +9,19 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.23.6",
+    items: [
+      {
+        title: "Pages open faster",
+        body: "A page now fades in over a fifth of a second, all at once, instead of piece by piece over about half a second.",
+      },
+      {
+        title: "A lighter sidebar on Linux",
+        body: "On Linux the sidebar no longer blurs what's behind it. The blur was barely visible, but it made scrolling noticeably slower.",
+      },
+    ],
+  },
+  {
     version: "0.23.5",
     items: [
       {
