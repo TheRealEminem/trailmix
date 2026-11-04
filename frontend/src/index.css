@@ -485,6 +485,12 @@ textarea::placeholder {
     -webkit-backdrop-filter: blur(18px) saturate(1.5);
     backdrop-filter: blur(18px) saturate(1.5);
   }
+  /* In the Linux app (the shell sets data-drawing), without the blur: there's only the faint art behind the
+     sidebar, so it looks the same, and with WebKitGTK the blur cost a quarter of the frames while scrolling. */
+  :root[data-drawing] .chrome {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
   .chrome-opaque {
     background: color-mix(in srgb, var(--surface-solid) 96%, transparent);
   }
