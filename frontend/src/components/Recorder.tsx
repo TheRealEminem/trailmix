@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import type {
   Bookmark,
   DraftLine,
@@ -67,7 +67,6 @@ interface Props {
   onMark: () => void;
 }
 
-const delay = (ms: number): CSSProperties => ({ animationDelay: `${ms}ms` });
 
 /** A tiny menu bar with a status item, for "recording in the menu bar helper" (a taskbar at the bottom, off a Mac). */
 const MenuBarIcon = () => (
@@ -256,7 +255,7 @@ export default function Recorder(p: Props) {
         </div>
       </div>
 
-      <div className="mt-8 animate-enter" style={delay(60)}>
+      <div className="mt-8 animate-enter">
         <p className="eyebrow mb-2.5">
           {formatLongDate(new Date().toISOString())}
         </p>
@@ -267,7 +266,7 @@ export default function Recorder(p: Props) {
         </p>
       </div>
 
-      <div className="mt-7 animate-enter" style={delay(120)}>
+      <div className="mt-7 animate-enter">
         <RecordControl p={p} />
       </div>
 
@@ -289,7 +288,7 @@ export default function Recorder(p: Props) {
         </div>
       )}
 
-      <div className="mt-14 animate-enter sm:mt-16" style={delay(180)}>
+      <div className="mt-14 animate-enter sm:mt-16">
         <section
         aria-label="Recording setup"
         className="glass overflow-hidden"
@@ -504,7 +503,7 @@ function Notepad({ p }: { p: Props }) {
         )}
       </header>
 
-      <div className="mt-6 flex-1 animate-enter" style={delay(60)}>
+      <div className="mt-6 flex-1 animate-enter">
         {/* Loaded once the recording's notes have arrived, so a page reopened mid-meeting starts from them. */}
         {p.live && p.live.id === v.meetingId ? (
           <Suspense fallback={<NotesComing />}>
@@ -523,12 +522,12 @@ function Notepad({ p }: { p: Props }) {
       </div>
 
       {v.meetingId > 0 && (
-        <div className="mt-8 border-t border-line pt-5 animate-enter" style={delay(90)}>
+        <div className="mt-8 border-t border-line pt-5 animate-enter">
           <LiveAttachments meetingId={v.meetingId} />
         </div>
       )}
 
-      <div className="sticky bottom-4 z-20 mt-10 animate-enter" style={delay(120)}>
+      <div className="sticky bottom-4 z-20 mt-10 animate-enter">
         {/* Glass's shape and border on a solid background: its blur couldn't be seen through that, but was drawn. */}
         <section aria-label="Live recording" className="overflow-hidden rounded-xl border border-line bg-surface shadow-lg">
           <Collapse open={open}>

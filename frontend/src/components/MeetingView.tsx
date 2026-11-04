@@ -259,7 +259,7 @@ export default function MeetingView({
         />
       )}
 
-      <div className="mb-4 animate-enter" style={{ animationDelay: "60ms" }}>
+      <div className="mb-4 animate-enter">
         <Segmented
           kind="tab"
           label="Meeting sections"
@@ -292,7 +292,6 @@ export default function MeetingView({
       <div
         role="tabpanel"
         className="panel animate-enter p-5 sm:p-8"
-        style={{ animationDelay: "100ms" }}
       >
         <div key={tab} className="animate-fade-in">
           {tab === "summary" && (
@@ -358,7 +357,6 @@ export default function MeetingView({
 
       <section
         className="mt-10 animate-enter"
-        style={{ animationDelay: "140ms" }}
         aria-labelledby="files-heading"
       >
         <h2 id="files-heading" className="eyebrow mb-2 px-1">
