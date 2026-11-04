@@ -1,5 +1,5 @@
-import { useContext, useState } from "react";
-import { EventsContext } from "../events";
+import { useState } from "react";
+import { useEvent } from "../events";
 import { platformWords } from "../platform";
 import { ChevronDownIcon } from "./icons";
 import { Collapse } from "./ui";
@@ -17,7 +17,7 @@ function Stat({ label, value, warn }: { label: string; value: string; warn?: boo
 
 /** Live resource readout (from the event stream), framed as the weather for the trail ahead. */
 export default function SystemStatus() {
-  const sys = useContext(EventsContext).system;
+  const sys = useEvent("system");
   const [open, setOpen] = useState(() => {
     try {
       return localStorage.getItem(OPEN_KEY) === "1";

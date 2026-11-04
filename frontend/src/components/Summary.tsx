@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -139,13 +140,14 @@ const COMPONENTS = {
 };
 const PLUGINS = [remarkGfm];
 
-function Markdown({ children }: { children: string }) {
+// Parsing (remark and GFM) runs only when the text changes, not each time the page around it draws again.
+const Markdown = memo(function Markdown({ children }: { children: string }) {
   return (
     <ReactMarkdown remarkPlugins={PLUGINS} components={COMPONENTS}>
       {children}
     </ReactMarkdown>
   );
-}
+});
 
 /** The draft up to its last finished line, so nothing shows half-written. */
 function finishedLines(draft: string): string {
