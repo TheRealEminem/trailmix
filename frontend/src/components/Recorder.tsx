@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import type {
   Bookmark,
@@ -30,7 +30,7 @@ import LevelMeters from "./LevelMeter";
 import MicPicker from "./MicPicker";
 import { CatchUpAnswers, CatchUpAsk, useCatchUp } from "./CatchUp";
 import { LiveAttachments } from "./Attachments";
-import NotesEditor from "./NotesEditor";
+import { NotesEditor, preloadNotesEditor } from "./LazyNotesEditor";
 import SoundCheck from "./SoundCheck";
 import { Collapse, ControlRow, Pulse, Segmented, SpeakerChip, Spinner, SwitchRow } from "./ui";
 
@@ -210,6 +210,8 @@ function liveView(p: Props) {
 }
 
 export default function Recorder(p: Props) {
+  // The notes editor comes in its own file: fetched now, so it's ready when a recording starts.
+  useEffect(preloadNotesEditor, []);
   const recording = p.rec !== null || p.remote !== null;
   const gemini = p.health?.transcription.engine === "gemini";
   const remote = p.health?.transcription.engine === "remote";
@@ -411,6 +413,15 @@ type BarTab = "ask" | "transcript" | "notes";
  * timer, Mark and Stop, the latest words said, and Catch me up; it opens upward onto the answers, the live
  * transcript and the notes written so far.
  */
+/** Shown while the recording's notes, or the editor for them, are on their way. */
+function NotesComing() {
+  return (
+    <p className="flex items-center gap-2 text-label text-ink-soft">
+      <Spinner /> Getting your notes ready…
+    </p>
+  );
+}
+
 function Notepad({ p }: { p: Props }) {
   const v = liveView(p);
   const [open, setOpen] = useState(false);
@@ -496,18 +507,18 @@ function Notepad({ p }: { p: Props }) {
       <div className="mt-6 flex-1 animate-enter" style={delay(60)}>
         {/* Loaded once the recording's notes have arrived, so a page reopened mid-meeting starts from them. */}
         {p.live && p.live.id === v.meetingId ? (
-          <NotesEditor
-            key={p.live.id}
-            meetingId={p.live.id}
-            notes={p.live.my_notes}
-            now={() => (clockFrom.current === null ? 0 : Math.max(0, (Date.now() - clockFrom.current) / 1000))}
-            autoFocus
-            placeholder="Write your notes here. # makes a heading, - a list. The AI builds the meeting's notes around them."
-          />
+          <Suspense fallback={<NotesComing />}>
+            <NotesEditor
+              key={p.live.id}
+              meetingId={p.live.id}
+              notes={p.live.my_notes}
+              now={() => (clockFrom.current === null ? 0 : Math.max(0, (Date.now() - clockFrom.current) / 1000))}
+              autoFocus
+              placeholder="Write your notes here. # makes a heading, - a list. The AI builds the meeting's notes around them."
+            />
+          </Suspense>
         ) : (
-          <p className="flex items-center gap-2 text-label text-ink-soft">
-            <Spinner /> Getting your notes ready…
-          </p>
+          <NotesComing />
         )}
       </div>
 

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { inApp, revealInFinder } from "../api";
 import { platformWords } from "../platform";
@@ -26,7 +26,7 @@ import { WorkspacePicker } from "./Workspaces";
 import PipelineStatus from "./PipelineStatus";
 import Questions from "./Questions";
 import MeetingDate from "./MeetingDate";
-import NotesEditor from "./NotesEditor";
+import { NotesEditor, preloadNotesEditor } from "./LazyNotesEditor";
 import Summary from "./Summary";
 import Transcript from "./Transcript";
 import Versions from "./Versions";
@@ -177,6 +177,7 @@ export default function MeetingView({
   onTab,
   ...on
 }: Props) {
+  useEffect(preloadNotesEditor, []); // ready by the time "Your notes" is opened
   const audioGone = m.audio_deleted || m.audio_bytes === 0;
   const voices = new Set((m.segments ?? []).map((s) => s.speaker).filter((x) => x && x !== "You" && x !== "Them")).size;
 
@@ -310,7 +311,9 @@ export default function MeetingView({
                 What you typed during the meeting. The notes AI builds the summary around them, headings and all, and
                 keeps every link. Edits save as you type; press Regenerate under the summary to use them.
               </p>
-              <NotesEditor key={m.id} meetingId={m.id} notes={m.my_notes} onSaved={on.onChanged} />
+              <Suspense fallback={<div className="min-h-[7rem]" />}>
+                <NotesEditor key={m.id} meetingId={m.id} notes={m.my_notes} onSaved={on.onChanged} />
+              </Suspense>
               <div className="mt-8 border-t border-line pt-5">
                 <Attachments meetingId={m.id} items={m.attachments} onChanged={on.onChanged} />
               </div>
