@@ -174,7 +174,7 @@ def test_inline_marks_what_only_one_side_has():
 
 @pytest.fixture
 def client(fresh_db, monkeypatch):
-    monkeypatch.setattr(main, "_warm_loop", lambda: _never())
+    monkeypatch.setattr(main, "_unload_loop", lambda: _never())
     return TestClient(main.app)
 
 

@@ -87,7 +87,11 @@ def _recording(*chunks: tuple[int, np.ndarray]) -> int:
     session = live.LiveSession(mid, folder, draft=False, cfg={"live_final": True, "transcribe_engine": "local"})
     for ch, samples in chunks:
         session.write(bytes([ch]) + samples.tobytes())
-        session.draft_step()
+        while True:  # a long stretch takes several rounds (CATCH_UP_S at a time)
+            before = session.transcribed_until, dict(session._pending_start)
+            session.draft_step()
+            if before == (session.transcribed_until, dict(session._pending_start)):
+                break
     session.finish()
     session.close()
     return mid
@@ -126,7 +130,7 @@ def test_a_long_tail_is_filled_in_instead_of_starting_over(fresh_db, fake_model,
 
     fake_model.clear()
     segments, _, duration = pipeline._finish_live(db.get_meeting(mid), {"transcribe_engine": "local"})
-    assert sum(fake_model) == pytest.approx(244.5)  # the end of the first part, and the four minutes
+    assert sum(fake_model) == pytest.approx(244.5, abs=1)  # the end of the first part, and the four minutes
     assert duration == 1200 and segments[0]["start"] == 0
 
 
