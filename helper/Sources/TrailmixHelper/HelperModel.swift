@@ -595,7 +595,7 @@ final class HelperModel: ObservableObject {
         case "status":
             notice = object["message"] as? String
         case "stopped":
-            finished(stoppedElsewhere: !stopRequested)
+            finished(stoppedElsewhere: !stopRequested, reason: object["reason"] as? String)
         default:
             break
         }
@@ -615,11 +615,15 @@ final class HelperModel: ObservableObject {
         alertIfHidden("Recording interrupted", error!)
     }
 
-    private func finished(stoppedElsewhere: Bool) {
+    private func finished(stoppedElsewhere: Bool, reason: String? = nil) {
         guard phase == .recording || phase == .stopping else { return }
         if stoppedElsewhere {
             stopSources(sources)
-            alertIfHidden("Recording stopped in Trailmix", "It's being transcribed now.")
+            if let reason {
+                alertIfHidden("Recording stopped", "\(reason). Your notes are next.")
+            } else {
+                alertIfHidden("Recording stopped in Trailmix", "It's being processed now.")
+            }
         }
         wrapUp()
         play("Bottle")

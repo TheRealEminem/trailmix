@@ -27,8 +27,9 @@ interface Options {
   onMarked: (b: Bookmark) => void;
   /** Called if the socket drops without stop() being requested. The backend still processes what it got. */
   onDropped: () => void;
-  /** Called when the other app (the menu bar helper) stopped this recording. Call stop() to release the mic. */
-  onStoppedElsewhere: () => void;
+  /** Called when the other app (the menu bar helper) stopped this recording, or it stopped by itself because the
+   *  meeting ended (then `reason` says why). Call stop() to release the mic. */
+  onStoppedElsewhere: (reason?: string) => void;
 }
 
 // Wire format: 1 channel byte (0 = your mic, 1 = meeting audio) followed by little-endian int16 PCM @ 16 kHz.
@@ -142,7 +143,7 @@ export async function startRecording(opts: Options): Promise<ActiveRecording> {
         onStopped();
         if (!stopping) {
           stoppedElsewhere = true;
-          opts.onStoppedElsewhere();
+          opts.onStoppedElsewhere(msg.reason ?? undefined);
         }
       }
     };

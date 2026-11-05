@@ -66,6 +66,7 @@ DEFAULTS = {
     "gemini_transcribe_model": "gemini-3.5-transcribe",   # the Google model for transcripts made after a recording
     "gemini_mix_tracks": True,          # send your mic and the call mixed as one recording: half the cost (mixdown.py)
     "live_final": _ROOMY,               # transcribe with the accurate model while recording (see live.py)
+    "auto_stop": True,                  # a recording stops by itself when the call ends (live.end_of_meeting)
     "live_notes": "auto",               # notes written during the meeting: auto | on | off (live_notes.py)
     # Trailmix Cloud (cloud.py): this Mac's device token, from signing in, and the account as last seen (plan, level,
     # hours). Set by signing in, never from the settings page.

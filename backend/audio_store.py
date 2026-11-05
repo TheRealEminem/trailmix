@@ -7,6 +7,7 @@ After retention:  the whole folder is deleted (the audio_retention_days setting;
 import os
 import shutil
 import subprocess
+import threading
 from datetime import datetime, timedelta, UTC
 from pathlib import Path
 
@@ -21,6 +22,8 @@ OPUS_BITRATE = os.getenv("TRAILMIX_OPUS_BITRATE", "48k")
 PLAYBACK_COPY_DAYS = 3  # a played-back mix (mix.ogg) is kept this long after it was last played
 
 TRACKS = {0: "mic", 1: "system"}  # channel id used on the wire -> track name
+
+_compressing = threading.Lock()  # one at a time; anyone who needs a meeting's .ogg files waits for the one under way
 
 
 def retention_days() -> int:
@@ -48,31 +51,40 @@ def duration_of_pcm(folder: Path) -> float:
 
 
 def compress_pending(meeting: dict) -> None:
-    """Opus-encode any leftover .pcm tracks, deleting each .pcm only after its .ogg is verified."""
+    """Opus-encode any leftover .pcm tracks of a meeting that isn't recording."""
     folder = track_dir(meeting)
-    if not folder or not folder.exists():
+    if folder:
+        compress_folder(folder)
+
+
+def compress_folder(folder: Path) -> None:
+    """Opus-encodes a folder's .pcm tracks, deleting each .pcm only after its .ogg is verified."""
+    if not folder.exists():
         return
-    for pcm in folder.glob("*.pcm"):
-        out = pcm.with_suffix(".ogg")
-        if pcm.stat().st_size == 0:
+    with _compressing:
+        for pcm in folder.glob("*.pcm"):
+            out = pcm.with_suffix(".ogg")
+            if pcm.stat().st_size == 0:
+                pcm.unlink()
+                continue
+            proc = subprocess.run(
+                ["ffmpeg", "-loglevel", "error", "-y", "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "1",
+                 "-i", str(pcm), "-c:a", "libopus", "-b:a", OPUS_BITRATE, str(out)],
+                capture_output=True, text=True,
+            )
+            if proc.returncode != 0 or not out.exists() or out.stat().st_size == 0:
+                out.unlink(missing_ok=True)  # keep the .pcm so nothing is lost; the job reports the error
+                raise RuntimeError(f"Could not compress {pcm.name}: {proc.stderr.strip()[:300]}")
             pcm.unlink()
-            continue
-        proc = subprocess.run(
-            ["ffmpeg", "-loglevel", "error", "-y", "-f", "s16le", "-ar", str(SAMPLE_RATE), "-ac", "1",
-             "-i", str(pcm), "-c:a", "libopus", "-b:a", OPUS_BITRATE, str(out)],
-            capture_output=True, text=True,
-        )
-        if proc.returncode != 0 or not out.exists() or out.stat().st_size == 0:
-            out.unlink(missing_ok=True)  # keep the .pcm so nothing is lost; the job reports the error
-            raise RuntimeError(f"Could not compress {pcm.name}: {proc.stderr.strip()[:300]}")
-        pcm.unlink()
 
 
 def load_track(folder: Path, track: str) -> np.ndarray | None:
     """Decodes a track to float32 mono 16 kHz in memory (~230 MB per hour). None if absent."""
     ogg, pcm = ogg_path(folder, track), pcm_path(folder, track)
-    if pcm.exists():  # not yet compressed
+    try:  # not yet compressed
         return np.fromfile(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+    except FileNotFoundError:
+        pass
     if not ogg.exists():
         return None
     proc = subprocess.run(

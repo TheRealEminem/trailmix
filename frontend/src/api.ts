@@ -487,6 +487,8 @@ export interface Settings {
   gemini_mix_tracks: boolean;
   gemini_transcribe_model: string;
   live_final: boolean;
+  /** A recording stops by itself when the call ends */
+  auto_stop: boolean;
   /** Notes written during the meeting (see LiveNotesPlan) */
   live_notes: "auto" | "on" | "off";
   /** Anonymous usage stats (on by default; sent only once the choice was seen) */

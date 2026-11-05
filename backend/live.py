@@ -5,14 +5,15 @@ multi-hour meeting costs no RAM, and a crash loses at most the last fraction of 
 
 With "Final transcript while recording" (settings.live_final) each stretch of speech is transcribed by the
 accurate model as the meeting goes, the same way the after-the-meeting job would (speech regions, then the
-model), and kept per track. When you stop, only the last few seconds are left to do (pipeline.py), so the
-transcript and summary follow straight away. If anything was missed (a chunk failed, the model wasn't
-downloaded yet), the pipeline falls back to transcribing the whole recording afterwards.
+model), and kept per track. When you stop, only what's still missing is left to do (pipeline.py): the last few
+seconds, and any chunk that failed. The transcript and summary then follow straight away. The whole recording is
+transcribed again only if most of it is missing (the model wasn't downloaded yet, say).
 
 With Gemini (your own Google key, or Trailmix Cloud at the Pro level) it works the same way, with live captions on:
 clips cut at pauses go to Google as you talk, and what comes back is both the captions and the transcript you keep.
 """
 import json
+import logging
 import threading
 import time
 from difflib import SequenceMatcher
@@ -32,6 +33,8 @@ import transcribe_gemini
 import transcribe_remote
 import vad
 
+log = logging.getLogger("trailmix.live")
+
 SR = store.SAMPLE_RATE
 MIN_CHUNK_S = 2.0      # don't transcribe less than this
 MAX_CHUNK_S = 5.0      # force a cut if nobody pauses: text appears within about 5 s of being said
@@ -41,10 +44,15 @@ MAX_CHUNK_S = 5.0      # force a cut if nobody pauses: text appears within about
 CLIP_MIN_CHUNK_S = 8.0
 CLIP_MAX_CHUNK_S = 15.0
 QUIET_SEARCH_S = 1.5   # a forced cut goes at the quietest moment of the last 1.5 s (between words, not in one)
+CATCH_UP_S = 60.0      # the most one chunk takes on when a track has fallen behind
 CONTEXT_CHARS = 200    # what was just said on a track, given to the model with the next chunk
 FRAME_S = 0.25
 SILENCE_RMS = 0.006    # below this a frame counts as a pause / is not worth transcribing
 LABELS = {0: "You", 1: "Them"}
+# When a recording stops by itself (the auto_stop setting, end_of_meeting below).
+CALL_SEEN_S = 60       # a call app has had audio open this long: a call, not a notification sound
+CALL_GONE_S = 30       # and has been gone this long: the call ended, it wasn't a hiccup
+QUIET_STOP_S = 600     # with no call app to go by: nobody has said anything for this long
 
 _active: dict[int, "LiveSession"] = {}
 _registry_lock = threading.Lock()
@@ -71,7 +79,9 @@ def rms(x: np.ndarray) -> float:
 
 def find_cut(audio: np.ndarray, max_s: float = MAX_CHUNK_S, min_s: float = MIN_CHUNK_S) -> int | None:
     """Sample index to cut at: the end of the latest pause (>= `min_s` in); if nobody has paused by
-    `max_s`, the quietest moment just before it, so the cut falls between words rather than in one."""
+    `max_s`, the quietest moment just before it, so the cut falls between words rather than in one.
+    A track far behind takes up to CATCH_UP_S at once: a mic with a steady background hum never shows a pause, and
+    at `max_s` a round it could never catch up after one slow moment."""
     frame = int(FRAME_S * SR)
     n_frames = len(audio) // frame
     for i in range(n_frames - 1, -1, -1):
@@ -83,7 +93,8 @@ def find_cut(audio: np.ndarray, max_s: float = MAX_CHUNK_S, min_s: float = MIN_C
     if len(audio) < max_s * SR:
         return None
     small = frame // 5  # 50 ms steps
-    lo, hi = int((max_s - QUIET_SEARCH_S) * SR), int(max_s * SR)
+    end_s = min(len(audio) / SR, max(max_s, CATCH_UP_S)) if len(audio) >= 2 * max_s * SR else max_s
+    lo, hi = int((end_s - QUIET_SEARCH_S) * SR), int(end_s * SR)
     quietest = min(range(lo, hi - small + 1, small), key=lambda a: rms(audio[a:a + small]))
     return quietest + small // 2
 
@@ -158,7 +169,8 @@ class LiveSession:
         self.final = self.near_live or (bool(cfg.get("live_final")) and (
             cfg["transcribe_engine"] == "remote" or (cfg["transcribe_engine"] == "local" and local_engine.available())))
         self.final_segments: dict[int, list[dict]] = {0: [], 1: []}
-        self.final_complete = True  # False once any chunk was skipped: then the pipeline redoes it all
+        self.final_complete = True  # False once it stopped for good partway (the month's live hours ran out)
+        self.missed: dict[int, list[list[int]]] = {0: [], 1: []}  # samples of chunks that failed: the pipeline redoes these
         self._step_lock = threading.Lock()  # one draft_step at a time; finish() waits for the running one
         self._context = {0: "", 1: ""}  # the latest words on each track, for the next chunk's model call
         self._vocab = questions.vocabulary_prompt()[:300]  # names and terms you confirmed: spelled right
@@ -173,6 +185,9 @@ class LiveSession:
         self._recent_them: list[tuple[float, str]] = []         # for suppressing speaker->mic echo
         self.drafts: list[dict] = []                            # kept for the draft-vs-final comparison
         self.bookmarks: list[dict] = []                         # moments you flagged while recording
+        self.stop_reason: str | None = None                     # set when it stopped by itself: what to tell you
+        self._last_speech: float | None = None                  # where in the recording words were last heard
+        self._call: dict = {}                                   # the call app seen during this recording
         # Set by the audio WebSocket, so the other app can mark or stop this recording too.
         self.request_stop = lambda: None
         self.notify = None  # async: pushes a message to the recording app
@@ -305,6 +320,7 @@ class LiveSession:
             db.update_meeting(self.meeting_id, live_json=json.dumps({
                 "tracks": {store.TRACKS[ch]: segs for ch, segs in self.final_segments.items()},
                 "covered": covered, "complete": self.final_complete,
+                "missed": {store.TRACKS[ch]: spans for ch, spans in self.missed.items()},
                 "engine": self.cfg["transcribe_engine"],
             }))
 
@@ -341,7 +357,7 @@ class LiveSession:
                 else:
                     segs = self._draft_text(chunk, f"{self._vocab} {self._context[ch]}".strip())
             except transcribe_remote.RemoteError as e:
-                self.final_complete = False
+                self._missed(ch, start, cut)
                 out.append({"type": "status", "message": f"Live draft paused: {e}"})
                 continue
             except transcribe_gemini.BasicLevel as e:  # the month's live hours ran out during this meeting
@@ -352,24 +368,27 @@ class LiveSession:
                                                           "right after you stop."})
                 break
             except transcribe_gemini.GeminiError as e:
-                self.final_complete = False  # the whole recording is transcribed afterwards instead
+                self._missed(ch, start, cut)
                 out.append({"type": "status", "message": f"Live captions paused: {e}"})
                 continue
             except models.NotReady as e:
-                self.final_complete = False
+                self._missed(ch, start, cut)
                 out.append({"type": "status", "message": str(e)})
                 continue
             except Exception:
                 if not self.final:
                     raise
-                self.final_complete = False  # the whole recording is transcribed afterwards instead
+                log.exception("Meeting %s: a chunk of the live transcript failed; it's redone after the meeting", self.meeting_id)
+                self._missed(ch, start, cut)
                 continue
             if segs is None:
+                self._last_speech = start / SR
                 out.append({"type": "status", "message": "Live draft paused while another job uses the transcriber"})
                 continue
             text = " ".join(s["text"] for s in segs).strip()
             if not text:
                 continue
+            self._last_speech = start / SR
             self._context[ch] = (self._context[ch] + " " + text)[-CONTEXT_CHARS:].lstrip()
             t = start / SR
             if ch == 1:
@@ -382,6 +401,31 @@ class LiveSession:
         if any(x["type"] == "draft" for x in out):
             db.update_meeting(self.meeting_id, draft_json=json.dumps(self.drafts))
         return out
+
+    def _missed(self, ch: int, start: int, length: int) -> None:
+        """This chunk failed: the pipeline transcribes it after the meeting."""
+        self.missed[ch].append([start, start + length])
+        self._last_speech = start / SR  # it may well have been speech: no sign that the meeting is over
+
+    def end_of_meeting(self, recorder_status: dict, now: float | None = None) -> str | None:
+        """Why this recording should stop by itself now, if it should; called every few seconds. The call app you were
+        in has gone quiet, or (with no call app in the picture, such as a call in a browser or a meeting in a room)
+        nobody has said anything for a long while. Before anyone has spoken it waits: you may be early."""
+        now = time.monotonic() if now is None else now
+        calling = recorder_status.get("call_app")
+        call = self._call
+        if calling:
+            call.update(name=calling, seen=now)
+            call.setdefault("since", now)
+            return None
+        if call and recorder_status.get("available") and now - call["seen"] >= CALL_GONE_S:
+            if call["seen"] - call["since"] >= CALL_SEEN_S:
+                return f"The {call['name']} call ended"
+            call.clear()  # a notification sound, not a call
+        if call or self._last_speech is None:
+            return None
+        return ("Nobody has spoken for 10 minutes"
+                if self.transcribed_until - self._last_speech >= QUIET_STOP_S else None)
 
     def _is_echo(self, t: float, text: str) -> bool:
         """The mic can hear the speakers; drop mic text that duplicates recent system text."""

@@ -810,8 +810,9 @@ impl Model {
             "status" => s.notice = object.get("message").and_then(|m| m.as_str()).map(String::from),
             "stopped" => {
                 let elsewhere = !s.stop_requested;
+                let reason = object.get("reason").and_then(|r| r.as_str()).map(String::from);
                 drop(s);
-                self.finished(elsewhere);
+                self.finished(elsewhere, reason);
                 self.notify();
                 return true;
             }
@@ -829,7 +830,7 @@ impl Model {
         }
         if s.stop_requested {
             drop(s);
-            self.finished(false);
+            self.finished(false, None);
             self.notify();
             return;
         }
@@ -845,7 +846,7 @@ impl Model {
         self.notify();
     }
 
-    fn finished(&self, stopped_elsewhere: bool) {
+    fn finished(&self, stopped_elsewhere: bool, reason: Option<String>) {
         let mut s = self.lock();
         if !matches!(s.phase, Phase::Recording | Phase::Stopping) {
             return;
@@ -853,7 +854,10 @@ impl Model {
         if stopped_elsewhere {
             let sources = std::mem::take(&mut s.sources);
             stop_sources(sources);
-            s.notice = Some("Recording stopped in Trailmix. It's being transcribed now.".into());
+            s.notice = Some(match reason {
+                Some(why) => format!("{why}, so the recording stopped. Your notes are next."),
+                None => "Recording stopped in Trailmix. It's being processed now.".into(),
+            });
         }
         wrap_up(&mut s);
     }
@@ -888,7 +892,7 @@ impl Model {
             let s = model.lock();
             if s.generation == generation && s.phase == Phase::Stopping {
                 drop(s);
-                model.finished(false);
+                model.finished(false, None);
                 model.notify();
             }
         });
