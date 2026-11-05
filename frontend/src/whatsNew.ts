@@ -9,6 +9,19 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.23.7",
+    items: [
+      {
+        title: "Notes start right after a meeting",
+        body: "When a meeting was transcribed as it happened, Trailmix could still transcribe the whole recording again afterwards. Now it keeps that transcript, fills in only what's missing, and goes straight to the notes.",
+      },
+      {
+        title: "Recording stops when the meeting ends",
+        body: "Recording stops 30 seconds after your call ends in Zoom, Teams, FaceTime or a similar app. For a call in a browser or a meeting in a room, it stops after 10 minutes without a word. You can turn this off in Settings.",
+      },
+    ],
+  },
+  {
     version: "0.23.6",
     items: [
       {
