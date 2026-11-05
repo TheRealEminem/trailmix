@@ -1,11 +1,13 @@
 import importlib
 import math
+import sys
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
 import local_engine
+import mlx_engine
 import models
 import whispercpp_engine
 
@@ -32,6 +34,42 @@ def test_a_small_intel_cpu_gets_the_small_model():
     assert whispercpp_engine.pick_final("AMD64", 4) == whispercpp_engine.SMALL           # Windows reports it so
     assert whispercpp_engine.pick_final("x86_64", 8) == whispercpp_engine.TURBO
     assert whispercpp_engine.pick_final("arm64", 4) == whispercpp_engine.TURBO           # Windows ARM, Linux arm64
+
+
+@pytest.fixture
+def fake_mlx(monkeypatch):
+    """Stands in for MLX (it only installs on an Apple silicon Mac). `calls` records the order things happen in."""
+    calls = []
+    core = SimpleNamespace(clear_cache=lambda: calls.append("clear"))
+    whisper = SimpleNamespace()
+    monkeypatch.setitem(sys.modules, "mlx", SimpleNamespace(core=core))
+    monkeypatch.setitem(sys.modules, "mlx.core", core)
+    monkeypatch.setitem(sys.modules, "mlx_whisper", whisper)
+    return SimpleNamespace(calls=calls, whisper=whisper)
+
+
+def test_mlx_gives_its_spare_memory_back_after_each_chunk(fake_mlx):
+    def transcribe(audio, **kw):
+        fake_mlx.calls.append("transcribe")
+        return {"segments": [{"text": " Hello ", "start": 0, "end": 1}]}
+    fake_mlx.whisper.transcribe = transcribe
+
+    for _ in range(2):
+        segments = mlx_engine.run(np.zeros(16000, dtype=np.float32), "model", None, "en")
+
+    assert [s["text"] for s in segments] == ["Hello"]
+    assert fake_mlx.calls == ["transcribe", "clear"] * 2
+
+
+def test_mlx_gives_its_spare_memory_back_after_a_failed_chunk(fake_mlx):
+    def transcribe(audio, **kw):
+        raise RuntimeError("out of memory")
+    fake_mlx.whisper.transcribe = transcribe
+
+    with pytest.raises(RuntimeError):
+        mlx_engine.run(np.zeros(16000, dtype=np.float32), "model", None, "en")
+
+    assert fake_mlx.calls == ["clear"]
 
 
 def test_no_engine_means_not_available(pick):
