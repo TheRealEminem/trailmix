@@ -139,6 +139,7 @@ def _exit_with_parent() -> None:
 
 WARM_EVERY_S = 15
 LIVE_NOTES_EVERY_S = 10
+AUTO_STOP_EVERY_S = 5
 
 
 async def _warm_loop():
@@ -158,6 +159,23 @@ async def _warm_loop():
         except Exception:
             log.exception("Warming the speech model failed")
         await asyncio.sleep(WARM_EVERY_S)
+
+
+async def _auto_stop_loop():
+    """A recording stops by itself when the meeting is over (live.end_of_meeting); the notes then start at once."""
+    while True:
+        await asyncio.sleep(AUTO_STOP_EVERY_S)
+        try:
+            if live.active_count() and settings.get_all()["auto_stop"]:
+                status = recorder.status()
+                for session in live.sessions():
+                    reason = session.end_of_meeting(status)
+                    if reason:
+                        log.info("Meeting %s stopped by itself: %s", session.meeting_id, reason)
+                        session.stop_reason = reason
+                        session.request_stop()
+        except Exception:
+            log.exception("Checking whether the meeting ended failed")
 
 
 async def _live_notes_loop():
@@ -239,6 +257,7 @@ async def lifespan(_: FastAPI):
     sweeper = asyncio.create_task(_sweep_loop())
     warmer = asyncio.create_task(_warm_loop()) if os.getenv("TRAILMIX_WARM") != "0" else None
     note_taker = asyncio.create_task(_live_notes_loop())
+    auto_stopper = asyncio.create_task(_auto_stop_loop())
     batches = asyncio.create_task(_batch_loop())
     stats = asyncio.create_task(_stats_loop())
     syncing = os.getenv("TRAILMIX_SYNC") != "0"
@@ -252,6 +271,7 @@ async def lifespan(_: FastAPI):
     batches.cancel()
     stats.cancel()
     note_taker.cancel()
+    auto_stopper.cancel()
     sweeper.cancel()
     ticker.cancel()
     if warmer:
@@ -1213,7 +1233,7 @@ async def stream(ws: WebSocket, meeting_id: int, draft: int = 1, client: str = "
         )
         pipeline.enqueue(meeting_id)
         try:
-            await send({"type": "stopped", "by": "remote" if stop_requested.is_set() else "you"})
+            await send({"type": "stopped", "by": "remote" if stop_requested.is_set() else "you", "reason": session.stop_reason})
             await ws.close()
         except Exception:
             pass

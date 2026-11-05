@@ -135,6 +135,7 @@ def export_meeting(m: dict, cfg: dict, include_audio: bool | None = None) -> lis
     audio = None
     with_audio = cfg.get("export_audio") if include_audio is None else include_audio
     if (with_audio or m.get("keep_audio")) and store.audio_bytes(m):
+        store.compress_pending(m)  # it may still be under way in the background (pipeline.py): wait for whole files
         audio = {"tracks": {}}
         tracks = store.track_dir(m)
         mix = store.playback_path(m)

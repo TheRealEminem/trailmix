@@ -2026,6 +2026,13 @@ export default function Settings({
         <FindDuplicates onChanged={onWorkspacesChanged} />
         <SwitchRow
           icon={<LinesIcon size={16} />}
+          label="Stop recording when the meeting ends"
+          hint="Stops 30 seconds after the call in Zoom, Teams, FaceTime or a similar app ends. For a call in a browser, or a meeting in a room: after 10 minutes without a word. Off: recording runs until you stop it."
+          checked={s.auto_stop}
+          onChange={(v) => save({ auto_stop: v })}
+        />
+        <SwitchRow
+          icon={<LinesIcon size={16} />}
           label="Auto-generate transcript"
           hint="Off: the meeting waits for you to press “Generate transcript”."
           checked={s.auto_transcribe}
