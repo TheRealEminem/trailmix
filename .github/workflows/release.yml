@@ -79,6 +79,7 @@ jobs:
       release: ${{ inputs.release || false }}
 
   mac:
+    name: mac (${{ matrix.arch }})
     needs: plan
     if: needs.plan.outputs.mac != '[]'
     strategy:
@@ -153,6 +154,7 @@ jobs:
   # The Windows installer (scripts/build-windows.py): the desktop shell in desktop/ around the same server and web app,
   # tried as a fresh install by scripts/smoke-test-windows.py. A failure here never holds up the Mac release.
   windows:
+    name: windows (${{ matrix.arch }})
     needs: plan
     if: needs.plan.outputs.windows != '[]'
     strategy:
@@ -259,6 +261,7 @@ jobs:
   # is what lets it run on glibc 2.35 and later (Ubuntu 22.04, Debian 12); TRAILMIX_MAX_GLIBC stops a build that
   # needs newer. 22.04 has WebKitGTK 4.1 and libsoup 3, which Tauri 2 needs.
   linux:
+    name: linux (${{ matrix.arch }})
     needs: plan
     if: needs.plan.outputs.linux != '[]'
     strategy:
