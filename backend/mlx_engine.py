@@ -2,6 +2,7 @@
 the one Trailmix.app uses on an Apple silicon Mac.
 """
 import gc
+import sys
 
 import numpy as np
 
@@ -48,6 +49,8 @@ def run(audio: np.ndarray, model: str, prompt: str | None, language: str | None,
 
 
 def loaded() -> str | None:
+    if "mlx_whisper.transcribe" not in sys.modules:  # never used in this process: importing MLX just to ask costs memory
+        return None
     try:
         from mlx_whisper.transcribe import ModelHolder
     except ImportError:
@@ -63,6 +66,8 @@ def available() -> bool:
 
 
 def unload() -> None:
+    if "mlx_whisper.transcribe" not in sys.modules:
+        return
     try:
         import mlx.core as mx
         from mlx_whisper.transcribe import ModelHolder

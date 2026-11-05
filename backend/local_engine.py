@@ -128,15 +128,13 @@ def loaded() -> str | None:
 
 def warm(model: str) -> bool:
     """Loads `model` and runs it once on a moment of silence, so a recording's first words come out in about
-    a second instead of waiting for the model to load. False if it was busy or failed."""
+    a second after this. False if the engine was busy; a failure to load raises."""
     if not _lock.acquire(blocking=False):
         return False
     try:
         if loaded() != model:
             run(np.zeros(16000, dtype=np.float32), model)
         return True
-    except Exception:
-        return False
     finally:
         _lock.release()
 

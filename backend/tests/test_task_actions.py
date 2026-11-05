@@ -32,7 +32,7 @@ async def _never():
 
 @pytest.fixture
 def client(fresh_db, monkeypatch):
-    monkeypatch.setattr(main, "_warm_loop", lambda: _never())
+    monkeypatch.setattr(main, "_unload_loop", lambda: _never())
     monkeypatch.setattr(main.pipeline, "reexport", lambda mid: None)
     return TestClient(main.app)
 

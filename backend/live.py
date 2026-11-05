@@ -53,6 +53,8 @@ LABELS = {0: "You", 1: "Them"}
 CALL_SEEN_S = 60       # a call app has had audio open this long: a call, not a notification sound
 CALL_GONE_S = 30       # and has been gone this long: the call ended, it wasn't a hiccup
 QUIET_STOP_S = 600     # with no call app to go by: nobody has said anything for this long
+UNLOAD_AFTER_S = 60    # no recording for this long and nothing transcribing: the speech model's memory goes back
+BEHIND_NOTICE_S = 15   # captions this far behind say so
 
 _active: dict[int, "LiveSession"] = {}
 _registry_lock = threading.Lock()
@@ -82,6 +84,7 @@ def find_cut(audio: np.ndarray, max_s: float = MAX_CHUNK_S, min_s: float = MIN_C
     `max_s`, the quietest moment just before it, so the cut falls between words rather than in one.
     A track far behind takes up to CATCH_UP_S at once: a mic with a steady background hum never shows a pause, and
     at `max_s` a round it could never catch up after one slow moment."""
+    audio = audio[:int(CATCH_UP_S * SR)]  # however far behind, a chunk stays this size (the latest pause would be anywhere)
     frame = int(FRAME_S * SR)
     n_frames = len(audio) // frame
     for i in range(n_frames - 1, -1, -1):
@@ -114,9 +117,13 @@ def transcribe_clip(cfg: dict, audio: np.ndarray, meeting_id: int, track: str, c
     return transcribe_gemini.transcribe_clip(audio, cred, local_engine.LANGUAGE, model, context, usage=usage)
 
 
-# ── Keeping the live model ready ────────────────────────────────────────
+# ── The speech model: in memory only while a meeting needs it ───────────
+# Nothing keeps it loaded while idle. A recording starts at once and loads it in the background; audio goes to disk and
+# waits in the session's queue meanwhile, and the transcript catches up once the model is ready.
 
 _warming = threading.Lock()
+_load_error: str | None = None  # why the latest load didn't happen; such a meeting is transcribed after it ends
+_last_recording = 0.0           # time.monotonic() of the latest recording's end
 
 
 def live_model(cfg: dict) -> str | None:
@@ -126,25 +133,40 @@ def live_model(cfg: dict) -> str | None:
     return local_engine.final_model(cfg) if cfg.get("live_final") else local_engine.LIVE_MODEL
 
 
-def warm_up(cfg: dict, now: bool = False) -> bool:
-    """Loads the live model in the background if it isn't in memory, so a recording's first words appear
-    within seconds. Not while a recording or the pipeline is using the transcriber, unless `now` (Record
-    was just pressed). True if it started loading."""
+def warm_up(cfg: dict) -> bool:
+    """A recording just started: loads its model in the background. True if it started loading. No memory gate: captions
+    during a call are what this is for, macOS swaps if it must, and a load that fails leaves the job to the pipeline."""
+    global _load_error
     model = live_model(cfg)
     if not model or local_engine.loaded() == model or not models.installed(model):
         return False
-    if not now and (active_count() or db.meetings_with_status("queued", "transcribing", "summarizing")):
-        return False
     if not _warming.acquire(blocking=False):
         return False
+    _load_error = None
 
     def go():
+        global _load_error
         try:
             local_engine.warm(model)
+        except Exception as e:
+            log.exception("Loading the speech model failed")
+            _load_error = str(e) or type(e).__name__
         finally:
             _warming.release()
 
     threading.Thread(target=go, daemon=True, name="warm-up").start()
+    return True
+
+
+def unload_if_idle(now: float | None = None) -> bool:
+    """Frees the speech model once nothing needs it. Normally the pipeline already has; this catches every other way
+    out of a meeting (one that waits for your go-ahead, a discarded recording, a load that finished after the stop).
+    The wait lets a stopped meeting's last seconds use the model still in memory. True if it unloaded."""
+    now = time.monotonic() if now is None else now
+    if (not local_engine.loaded() or active_count() or _warming.locked() or now - _last_recording < UNLOAD_AFTER_S
+            or db.meetings_with_status("transcribing")):
+        return False
+    local_engine.unload()
     return True
 
 
@@ -174,7 +196,7 @@ class LiveSession:
         self._step_lock = threading.Lock()  # one draft_step at a time; finish() waits for the running one
         self._context = {0: "", 1: ""}  # the latest words on each track, for the next chunk's model call
         self._vocab = questions.vocabulary_prompt()[:300]  # names and terms you confirmed: spelled right
-        warm_up(cfg, now=True)  # if it isn't loaded yet, start now rather than at the first words
+        self._no_model = False  # the model couldn't load: the whole transcript is made after the meeting
         self.folder = folder
         folder.mkdir(parents=True, exist_ok=True)
         self._files = {}
@@ -191,6 +213,9 @@ class LiveSession:
         # Set by the audio WebSocket, so the other app can mark or stop this recording too.
         self.request_stop = lambda: None
         self.notify = None  # async: pushes a message to the recording app
+        self._local = cfg["transcribe_engine"] == "local" and self.polls_drafts
+        if self._local:
+            warm_up(cfg)  # the recording doesn't wait for it: _draft_step holds its audio back until it's ready
         with _registry_lock:
             _active[meeting_id] = self
         events.notify()  # the windows and the menu bar app hear of it now
@@ -234,7 +259,21 @@ class LiveSession:
     @property
     def polls_drafts(self) -> bool:
         """Whether draft_step() has chunks to transcribe here (with Gemini only when they're sent as you talk)."""
-        return (self.draft and self.cfg["transcribe_engine"] not in ("gemini", "trailmix")) or self.final
+        return not self._no_model and (
+            (self.draft and self.cfg["transcribe_engine"] not in ("gemini", "trailmix")) or self.final)
+
+    @property
+    def model_status(self) -> str | None:
+        """Why captions are late, if they are, for the recording window."""
+        if not self.draft or not self._local:
+            return None
+        if self._no_model or (_load_error and not _warming.locked()):
+            return "The transcription model couldn't load. Your audio is safe: the transcript is made after you stop."
+        if _warming.locked():
+            return "Loading transcription model… Recording has started; captions follow when it's ready."
+        with self._lock:
+            behind = max((self._written[ch] - self._pending_start[ch] for ch in (0, 1)), default=0) / SR
+        return "Catching up on the transcript…" if behind >= BEHIND_NOTICE_S else None
 
     @property
     def captions_off_reason(self) -> str | None:
@@ -256,7 +295,7 @@ class LiveSession:
         return {
             "id": self.meeting_id, "title": title, "client": self.client, "started_at": self.started_at,
             "duration": round(self.duration, 2), "has_system": self.has_system, "draft": self.draft,
-            "drafts": self.drafts[-recent:], "bookmarks": list(self.bookmarks),
+            "drafts": self.drafts[-recent:], "bookmarks": list(self.bookmarks), "model_status": self.model_status,
         }
 
     def mark(self, note: str = "") -> dict:
@@ -297,10 +336,12 @@ class LiveSession:
         return local_engine.transcribe_live(chunk, prompt)
 
     def close(self) -> None:
+        global _last_recording
         for f in self._files.values():
             f.close()
         with _registry_lock:
             _active.pop(self.meeting_id, None)
+            _last_recording = time.monotonic()
         events.notify()
 
     def finish(self) -> None:
@@ -331,12 +372,21 @@ class LiveSession:
 
     def _draft_step(self) -> list[dict]:
         out = []
+        if self._local:
+            if _warming.locked():  # the backlog waits for the model, in order
+                return out
+            if _load_error and not self._no_model:
+                log.warning("Meeting %s: no speech model (%s); transcribing after the meeting", self.meeting_id, _load_error)
+                self._no_model, self.final, self.final_complete = True, False, False
+                with self._lock:
+                    self._pending = {0: [], 1: []}
+                return out
         for ch in (0, 1):
             with self._lock:
                 if not self._pending[ch]:
                     continue
                 buf = np.concatenate(self._pending[ch])
-                audio = buf.astype(np.float32) / 32768.0
+                audio = buf[:int(CATCH_UP_S * SR)].astype(np.float32) / 32768.0  # a long backlog doesn't hold up write()
                 cut = (find_cut(audio, CLIP_MAX_CHUNK_S, CLIP_MIN_CHUNK_S) if self.near_live
                        else find_cut(audio))
                 if cut is None:
