@@ -23,16 +23,22 @@ MODELS = [
 
 
 def run(audio: np.ndarray, model: str, prompt: str | None, language: str | None, meeting: bool = False) -> list[dict]:
+    import mlx.core as mx
     import mlx_whisper  # lazy: slow import, and lets the API boot without it
 
-    result = mlx_whisper.transcribe(
-        audio,
-        path_or_hf_repo=model,
-        language=language,
-        condition_on_previous_text=False,  # avoids repetition loops on long recordings
-        initial_prompt=prompt or None,
-        verbose=None,
-    )
+    try:
+        result = mlx_whisper.transcribe(
+            audio,
+            path_or_hf_repo=model,
+            language=language,
+            condition_on_previous_text=False,  # avoids repetition loops on long recordings
+            initial_prompt=prompt or None,
+            verbose=None,
+        )
+    finally:
+        # MLX keeps freed GPU buffers for reuse, up to nearly a Mac's whole RAM by default, so a long meeting
+        # would otherwise grow by gigabytes. The model stays loaded; only the spare buffers go back to macOS.
+        mx.clear_cache()
     segments = []
     for seg in result.get("segments", []):
         text = seg["text"].strip()
