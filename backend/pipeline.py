@@ -3,7 +3,8 @@
   compress audio -> [approve] -> [RAM gate] -> final transcript (local: large model in its own process;
                                                                     remote: an OpenAI-compatible endpoint;
                                                                     gemini: Google's, with speaker labels)
-                 (or, when it was transcribed while recording: just the last few seconds, no approval or gate)
+                 (or, when it was transcribed while recording: only what's missing, no approval or gate, and the
+                  audio compresses in the background instead of holding up the notes)
                  -> [approve] -> [RAM gate] -> summary + title + action items (any provider) -> export
 
 [approve]: automatic when the matching "auto" setting is on (and it isn't an import waiting for you to choose which
@@ -17,6 +18,7 @@ import json
 import logging
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -86,6 +88,21 @@ def recover_unfinished() -> None:
                               has_system=int(bool(folder and (folder / "system.pcm").exists())))
         db.update_meeting(m["id"], status="queued", wait_reason=None)
         enqueue(m["id"])
+    # Compression cut short when Trailmix quit (it runs behind the notes). Listed now: nothing is recording yet.
+    _compress_soon(sorted({pcm.parent for pcm in db.AUDIO_DIR.glob("*/*.pcm")}))
+
+
+def _compress_soon(folders: list[Path]) -> None:
+    """Shrinks a meeting's audio without holding up what comes next (audio_store takes them one at a time)."""
+    def go():
+        for folder in folders:
+            try:
+                store.compress_folder(folder)
+            except (OSError, RuntimeError):
+                log.exception("Couldn't compress the audio in %s; the uncompressed copy is kept", folder)
+
+    if folders:
+        threading.Thread(target=go, daemon=True, name="compress").start()
 
 
 def _run(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> None:
@@ -190,19 +207,17 @@ def _run_stages(meeting_id: int, go: frozenset[str], force: frozenset[str]) -> N
     if not m["transcribed"]:
         if m["audio_deleted"] or not m["audio_dir"]:
             raise RuntimeError("Audio has been deleted, so this meeting can't be transcribed")
-        store.compress_pending(m)  # cheap: shrinks ~10x on disk before anything heavy happens
-        had_live = bool(m.get("live_json"))
-        done_live = _finish_live(m, cfg)
-        if done_live:  # transcribed while recording: the accurate model ran once, during the meeting
+        done_live = _finish_live(m, cfg)  # the audio is still uncompressed here, so this loads in a moment
+        if not done_live:
+            store.compress_pending(m)  # shrinks ~10x on disk before anything heavy happens
+        else:  # transcribed while recording: the accurate model ran once, during the meeting
+            _compress_soon([store.track_dir(m)])
             _save_transcript(m, *done_live, made_with=f"{_speech_model(cfg)}, while recording",
                              engine=cfg["transcribe_engine"], model=_speech_model(cfg),
                              seconds=round(time.monotonic() - started))
             stats.update(transcribed="while recording", transcribe_seconds=round(time.monotonic() - started))
             m = db.get_meeting(meeting_id)
             fresh = True
-        elif had_live:
-            log.warning("Meeting %s: the transcript made while recording missed a part; transcribing it all again",
-                        meeting_id)
     if not m["transcribed"]:
         if "transcribe" not in go and (ask or not cfg["auto_transcribe"]):
             db.update_meeting(meeting_id, status="ready_transcribe", wait_reason=None)
@@ -351,21 +366,22 @@ def _transcribe_local(m: dict) -> tuple[list[dict], bool, float]:
     return _label(per_track, tracks), "system" in tracks and "mic" in tracks, duration
 
 
-LIVE_TAIL_MAX_S = 90  # more left over than this (the live job fell behind or stopped): transcribe it all afterwards
+LIVE_GAP_FINE_S = 90  # this much missing from a live transcript is always just filled in; beyond it, up to half the meeting
 
 
 def _finish_live(m: dict, cfg: dict) -> tuple[list[dict], bool, float] | None:
-    """Completes a transcript made while recording (live.py): transcribes the few seconds after the last
-    chunk, then cleans up and labels it like any other. None if there isn't a usable one."""
+    """Completes a transcript made while recording (live.py): transcribes only what it's missing (what came after the
+    last chunk, any chunk that failed), then cleans up and labels it like any other. None if there isn't a usable one:
+    none was made, or most of the meeting is missing from it, when a proper pass over the recording is the better job."""
     data = json.loads(m["live_json"]) if m.get("live_json") else None
     if not data or not data.get("complete") or data.get("engine") != cfg["transcribe_engine"]:
         return None
     local = cfg["transcribe_engine"] == "local"
     folder = store.track_dir(m)
-    sent, used = 0.0, {}  # the tail's audio sent to Google with your own key, and the tokens a general model reported
+    sent, used = 0.0, {}  # audio sent to Google with your own key, and the tokens a general model reported
     try:
-        tracks, per_track = [], {}
-        duration = 0.0
+        tracks, per_track, regions = [], {}, []
+        duration = most_missing = 0.0
         for name in store.TRACKS.values():
             audio = store.load_track(folder, name)
             if audio is None:
@@ -374,25 +390,31 @@ def _finish_live(m: dict, cfg: dict) -> tuple[list[dict], bool, float] | None:
             if np.max(np.abs(audio), initial=0) <= 0.01:  # silent track, as the worker skips it
                 continue
             tracks.append(name)
-            covered = int(data["covered"].get(name, 0))
-            tail = audio[covered:]
-            if len(tail) > LIVE_TAIL_MAX_S * store.SAMPLE_RATE:
-                return None
-            segs = list(data["tracks"].get(name, []))
-            db.update_meeting(m["id"], status="transcribing", wait_reason="Finishing the transcript")
-            off = covered / store.SAMPLE_RATE
-            for a, b in vad.speech_regions(tail):
-                if local:
-                    found = local_engine.transcribe_final(tail[a:b], questions.vocabulary_prompt()[:300] or None)
-                elif cfg["transcribe_engine"] in ("gemini", "trailmix"):
-                    found = live.transcribe_clip(cfg, tail[a:b], m["id"], _side(name), usage=used)
-                    sent += (b - a) / store.SAMPLE_RATE
-                else:
-                    found = transcribe_remote.transcribe(tail[a:b], cfg["transcribe_url"], cfg["transcribe_api_key"],
-                                                         cfg["transcribe_model"], local_engine.LANGUAGE)
-                start = off + a / store.SAMPLE_RATE
-                segs += [{**seg, "start": seg["start"] + start, "end": seg["end"] + start} for seg in found]
-            per_track[name] = segs
+            per_track[name] = list(data["tracks"].get(name, []))
+            spans = [*data.get("missed", {}).get(name, []), [int(data["covered"].get(name, 0)), len(audio)]]
+            most_missing = max(most_missing, sum(b - a for a, b in spans) / store.SAMPLE_RATE)
+            for start, end in spans:
+                part = audio[start:end]
+                regions += [(name, part[a:b].copy(), (start + a) / store.SAMPLE_RATE) for a, b in vad.speech_regions(part)]
+        if most_missing > max(LIVE_GAP_FINE_S, duration / 2):
+            log.warning("Meeting %s: %.0f s of %.0f s is missing from the live transcript; transcribing it all instead",
+                        m["id"], most_missing, duration)
+            return None
+        db.update_meeting(m["id"], status="transcribing", wait_reason="Finishing the transcript")
+        for i, (name, clip, start) in enumerate(regions):
+            if local:
+                found = local_engine.transcribe_final(clip, questions.vocabulary_prompt()[:300] or None)
+            elif cfg["transcribe_engine"] in ("gemini", "trailmix"):
+                found = live.transcribe_clip(cfg, clip, m["id"], _side(name), usage=used)
+                sent += len(clip) / store.SAMPLE_RATE
+            else:
+                found = transcribe_remote.transcribe(clip, cfg["transcribe_url"], cfg["transcribe_api_key"],
+                                                     cfg["transcribe_model"], local_engine.LANGUAGE)
+            per_track[name] += [{**seg, "start": seg["start"] + start, "end": seg["end"] + start} for seg in found]
+            if len(regions) > 5:  # more than the usual last few seconds: show it's moving
+                db.update_meeting(m["id"], wait_reason=f"Finishing the transcript: {i + 1}/{len(regions)}")
+        for segs in per_track.values():
+            segs.sort(key=lambda s: s["start"])
         if sent and cfg["transcribe_engine"] == "gemini":
             model = cfg["gemini_transcribe_model"]
             db.log_usage(m["id"], "transcript", "gemini", model, sent, pricing.transcript_cost(model, sent, used))

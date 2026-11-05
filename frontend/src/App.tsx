@@ -515,12 +515,14 @@ export default function App() {
           );
           void finishRecording(current.meetingId);
         },
-        onStoppedElsewhere: () => {
+        onStoppedElsewhere: (reason) => {
           const current = recRef.current;
           if (!current) return;
           setToast({
             tone: "success",
-            text: `Recording stopped from the ${platformWords().helperName}.`,
+            text: reason
+              ? `${reason}, so the recording stopped.`
+              : `Recording stopped from the ${platformWords().helperName}.`,
           });
           void current.stop().then(() => finishRecording(current.meetingId));
         },
