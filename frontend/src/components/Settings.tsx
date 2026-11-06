@@ -669,7 +669,7 @@ function BatchNotes({ up, onChanged }: { up: Upgrades; onChanged: () => void }) 
             <span>Batch jobs</span>
             <button
               className="btn btn-sm btn-ghost"
-              onClick={() => void api.checkBatches().then((r) => { setJobs(r.jobs); onChanged(); })}
+              onClick={() => void api.checkBatches().then((r) => { setJobs(r.jobs); onChanged(); }).catch(() => undefined)}
             >
               Check now
             </button>
@@ -684,7 +684,7 @@ function BatchNotes({ up, onChanged }: { up: Upgrades; onChanged: () => void }) 
                 <span className="flex items-center gap-2 text-ink-soft">
                   {stateText(j)}
                   {(j.state === "pending" || j.state === "running") && (
-                    <button className="btn btn-sm btn-ghost" onClick={() => void api.cancelBatch(j.id).then(load)}>
+                    <button className="btn btn-sm btn-ghost" onClick={() => void api.cancelBatch(j.id).then(load).catch(() => undefined)}>
                       Cancel
                     </button>
                   )}
@@ -879,7 +879,7 @@ function TranscriptUpgrades({ up, onChanged }: { up: Upgrades; onChanged: () => 
               {average != null && ` · on average ${Math.round(average * 1000) / 10}% of the words agree with the current transcripts`}
             </span>
             {working && (
-              <button className="btn btn-sm btn-ghost" onClick={() => void api.cancelTrials().then(load)}>
+              <button className="btn btn-sm btn-ghost" onClick={() => void api.cancelTrials().then(load).catch(() => undefined)}>
                 Stop the rest
               </button>
             )}
