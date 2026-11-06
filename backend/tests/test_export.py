@@ -127,3 +127,58 @@ def test_an_export_from_before_versions_existed_still_imports(fresh_db):
     db.delete_meeting(m["id"])
     new_id = archive.restore(record, None)
     assert db.get_meeting(new_id)["title"] == "Launch sync" and len(db.transcript_versions(new_id)) == 1  # its original
+
+
+def test_export_empty_fields(fresh_db):
+    mid = db.create_meeting("Empty test", title_auto=False)
+    # create a meeting without a transcript, summary, etc.
+    db.update_meeting(mid, transcript="", summary="")
+    m = db.get_meeting(mid)
+
+    paths = exporter.export_meeting(m, cfg(fresh_db, export_summary=True, export_transcript=True))
+    assert len(paths) == 1
+    assert "meeting.json" in paths[0]
+
+    folder = Path(paths[0]).parent
+    record = json.loads((folder / "meeting.json").read_text())
+    assert record["title"] == "Empty test"
+
+
+def test_export_without_formats(fresh_db):
+    m = make_meeting(audio=False)
+    # exporter code falls back to 'pdf' if export_formats is missing/empty and docs are enabled
+    paths = exporter.export_meeting(m, cfg(fresh_db, export_formats=[]))
+    assert len(paths) == 2
+    assert any("meeting.json" in p for p in paths)
+    assert any("pdf" in p for p in paths)
+
+
+def test_export_all(fresh_db, monkeypatch):
+    make_meeting(audio=False)
+
+    class MockThread:
+        def __init__(self, target, args, daemon, name):
+            self.target = target
+            self.args = args
+        def start(self):
+            # Do not run `_run_all` as mock, but instead directly call the original `_run_all` so it sets the state
+            self.target(*self.args)
+
+    # clear job state just in case
+    exporter._job.clear()
+
+    monkeypatch.setattr(exporter.threading, "Thread", MockThread)
+
+    started = exporter.export_all(cfg(fresh_db), False)
+    assert started
+    # MockThread starts it synchronously, so job_status should reflect the done count
+    # (however, `_run_all` marks `active`=False when finished, so `done` is available)
+    assert exporter.job_status().get("done") == 1
+    assert not exporter.job_status().get("active")
+
+
+def test_export_all_already_active(fresh_db):
+    exporter._job.clear()
+    exporter._job["active"] = True
+    assert not exporter.export_all(cfg(fresh_db), False)
+    exporter._job.clear()
