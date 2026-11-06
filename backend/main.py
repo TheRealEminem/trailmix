@@ -137,28 +137,19 @@ def _exit_with_parent() -> None:
     threading.Thread(target=watch, daemon=True, name="parent-watch").start()
 
 
-WARM_EVERY_S = 15
+UNLOAD_CHECK_EVERY_S = 15
 LIVE_NOTES_EVERY_S = 10
 AUTO_STOP_EVERY_S = 5
 
 
-async def _warm_loop():
-    """Keeps the live speech model loaded while Trailmix is idle, so a recording's first words show up within
-    seconds: from startup, again after each meeting's processing (which frees it for the summary model), and
-    as soon as a call app (Zoom, Teams, FaceTime…) opens audio. Only with room to spare in memory, unless a
-    call is starting (then only not when it would be dire)."""
+async def _unload_loop():
+    """No speech model in memory while idle (live.unload_if_idle). A recording loads its own when it starts."""
     while True:
+        await asyncio.sleep(UNLOAD_CHECK_EVERY_S)
         try:
-            cfg = settings.get_all()
-            model = live.live_model(cfg)
-            if model and local_engine.loaded() != model:
-                need = local_engine.final_model_ram_gb(cfg) if cfg["live_final"] else 0.5
-                calling = bool(recorder.status().get("call_app"))
-                if resources.has_room(need) or (calling and resources.check(need, "The speech model") is None):
-                    live.warm_up(cfg)
+            await run_in_threadpool(live.unload_if_idle)
         except Exception:
-            log.exception("Warming the speech model failed")
-        await asyncio.sleep(WARM_EVERY_S)
+            log.exception("Unloading the speech model failed")
 
 
 async def _auto_stop_loop():
@@ -255,7 +246,7 @@ async def lifespan(_: FastAPI):
                      "models": models.status}
     ticker = asyncio.create_task(events.run())
     sweeper = asyncio.create_task(_sweep_loop())
-    warmer = asyncio.create_task(_warm_loop()) if os.getenv("TRAILMIX_WARM") != "0" else None
+    unloader = asyncio.create_task(_unload_loop())
     note_taker = asyncio.create_task(_live_notes_loop())
     auto_stopper = asyncio.create_task(_auto_stop_loop())
     batches = asyncio.create_task(_batch_loop())
@@ -274,8 +265,7 @@ async def lifespan(_: FastAPI):
     auto_stopper.cancel()
     sweeper.cancel()
     ticker.cancel()
-    if warmer:
-        warmer.cancel()
+    unloader.cancel()
 
 
 app = FastAPI(title="Trailmix", lifespan=lifespan)
