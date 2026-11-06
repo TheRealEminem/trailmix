@@ -140,7 +140,7 @@ def warm_up(cfg: dict) -> bool:
     if not _warming.locked():
         _load_error = None  # an earlier recording's failed load doesn't condemn this one (the model may be loaded by now)
     model = live_model(cfg)
-    if not model or local_engine.loaded() == model or not models.installed(model):
+    if not model or not models.installed(model):  # (a model already loaded is for warm() to see, under the engine lock)
         return False
     if not _warming.acquire(blocking=False):
         return False
@@ -152,6 +152,10 @@ def warm_up(cfg: dict) -> bool:
         except Exception as e:
             log.exception("Loading the speech model failed")
             _load_error = str(e) or type(e).__name__
+            try:
+                local_engine.unload()  # weights that did load before the failure aren't kept for the whole meeting
+            except Exception:
+                log.exception("Unloading after a failed load failed")
         finally:
             _warming.release()
 
@@ -164,11 +168,14 @@ def unload_if_idle(now: float | None = None) -> bool:
     out of a meeting (one that waits for your go-ahead, a discarded recording, a load that finished after the stop).
     The wait lets a stopped meeting's last seconds use the model still in memory. True if it unloaded."""
     now = time.monotonic() if now is None else now
-    if (not local_engine.loaded() or active_count() or _warming.locked() or now - _last_recording < UNLOAD_AFTER_S
-            or db.meetings_with_status("transcribing")):
+
+    def idle() -> bool:
+        return not (active_count() or _warming.locked() or now - _last_recording < UNLOAD_AFTER_S
+                    or db.meetings_with_status("transcribing"))
+
+    if not local_engine.loaded() or not idle():
         return False
-    local_engine.unload()
-    return True
+    return bool(local_engine.unload(idle))  # checked again under the engine lock: a recording may have just started
 
 
 class LiveSession:
@@ -215,10 +222,10 @@ class LiveSession:
         self.request_stop = lambda: None
         self.notify = None  # async: pushes a message to the recording app
         self._local = cfg["transcribe_engine"] == "local" and self.polls_drafts
+        with _registry_lock:
+            _active[meeting_id] = self  # before the warm-up: from here the idle unloader leaves the model alone
         if self._local:
             warm_up(cfg)  # the recording doesn't wait for it: _draft_step holds its audio back until it's ready
-        with _registry_lock:
-            _active[meeting_id] = self
         events.notify()  # the windows and the menu bar app hear of it now
 
     @property
