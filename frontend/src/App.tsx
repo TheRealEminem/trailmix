@@ -878,7 +878,7 @@ export default function App() {
               onQuit={() => void handleQuit()}
               onRunSetup={() => setWelcome(true)}
               onSignOut={() =>
-                void api.logout().then(() => setAuthState("needed"))
+                void api.logout().then(() => setAuthState("needed")).catch(() => undefined)
               }
             />
             </Suspense>

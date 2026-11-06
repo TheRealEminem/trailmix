@@ -9,6 +9,19 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.23.8",
+    items: [
+      {
+        title: "Less memory while Trailmix sits idle",
+        body: "The speech model is no longer kept in memory between meetings. Recording starts at once, loads the model in the background and catches up on the transcript; a minute after the meeting it is let go again.",
+      },
+      {
+        title: "Long meetings on a Mac stay small",
+        body: "Transcribing a long meeting used to make Trailmix grow by gigabytes. Spare memory is now handed back after each stretch of speech.",
+      },
+    ],
+  },
+  {
     version: "0.23.7",
     items: [
       {
