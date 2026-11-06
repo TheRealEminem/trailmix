@@ -128,15 +128,11 @@ def loaded() -> str | None:
 
 def warm(model: str) -> bool:
     """Loads `model` and runs it once on a moment of silence, so a recording's first words come out in about
-    a second after this. False if the engine was busy; a failure to load raises."""
-    if not _lock.acquire(blocking=False):
-        return False
-    try:
+    a second after this. Waits its turn if the engine is busy (it runs in the background); a failure to load raises."""
+    with _lock:
         if loaded() != model:
             run(np.zeros(16000, dtype=np.float32), model)
         return True
-    finally:
-        _lock.release()
 
 
 def available() -> bool:
@@ -145,9 +141,14 @@ def available() -> bool:
     return ENGINE is not None
 
 
-def unload() -> None:
-    """Drop the cached model: the small live one, or the accurate one after a final-while-recording meeting."""
+def unload(still_idle=None) -> bool:
+    """Drop the cached model: the small live one, or the accurate one after a final-while-recording meeting. With
+    `still_idle`, asked again once the engine is ours: a recording that started meanwhile keeps its model. True if it
+    unloaded."""
     if ENGINE is None:
-        return
+        return False
     with _lock:
+        if still_idle is not None and not still_idle():
+            return False
         ENGINE.unload()
+        return True
