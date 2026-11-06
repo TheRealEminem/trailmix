@@ -29,7 +29,7 @@ for an x64 whisper.cpp with GPU support, which it compiles once and keeps in `bu
 `cargo test` in `src-tauri` wants the staged resources to exist first: `python scripts/build-windows.py --stage-only`,
 or empty `build/windows/{python,backend,ui,bin}` folders and a `build/windows/VERSION` as the CI job makes. The GitHub
 `windows` job in `.github/workflows/release.yml` does that and runs the smoke test on every tag: as a fresh install,
-and as an update from the current release (until there's a Windows release, from the same build made as 0.0.1), then
+and (on releases, and test builds with "Extra checks") as an update from the current release (until there's a Windows release, from the same build made as 0.0.1), then
 going back to it.
 
 - `hotkeys.rs` is the global shortcuts (`HotKeys.swift`): `RegisterHotKey` on a thread of its own, Ctrl+Alt+Shift+R
@@ -99,4 +99,5 @@ a mic fed from a null sink), so nothing of yours is touched or heard: the engine
 checks shared with the Mac, real recording of speech played into those devices, a stand-in Zoom holding the mic,
 the self-test, a picture of the window, and (given a previous AppImage) updating and going back. It tests a .deb
 or .rpm by installing it (as root or with sudo). The `linux` job in `release.yml` runs it on GitHub's x86_64 and
-ARM runners, and the packages on Debian and Fedora too.
+ARM runners, and its `distros` job (app-ci's `linux-distros.yml`) the packages on Debian, Ubuntu and Fedora too, on
+releases and on test builds with "Extra checks".
