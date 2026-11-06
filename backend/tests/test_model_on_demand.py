@@ -183,3 +183,13 @@ def test_asking_the_mlx_engine_about_its_model_does_not_import_mlx(monkeypatch):
     assert mlx_engine.loaded() is None
     mlx_engine.unload()
     assert "mlx_whisper.transcribe" not in sys.modules
+
+
+def test_an_earlier_failed_load_does_not_stop_the_next_recording_captions(fresh_db, engine):
+    live._load_error = "out of memory"       # the previous recording's load failed
+    engine["loaded"] = "m"                   # since then the model got loaded (by a job, say)
+    s = session()
+    s.write(speech(30))
+    s.draft_step()
+    assert not s._no_model
+    s.close()
