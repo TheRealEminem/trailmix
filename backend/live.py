@@ -137,12 +137,13 @@ def warm_up(cfg: dict) -> bool:
     """A recording just started: loads its model in the background. True if it started loading. No memory gate: captions
     during a call are what this is for, macOS swaps if it must, and a load that fails leaves the job to the pipeline."""
     global _load_error
+    if not _warming.locked():
+        _load_error = None  # an earlier recording's failed load doesn't condemn this one (the model may be loaded by now)
     model = live_model(cfg)
     if not model or local_engine.loaded() == model or not models.installed(model):
         return False
     if not _warming.acquire(blocking=False):
         return False
-    _load_error = None
 
     def go():
         global _load_error
