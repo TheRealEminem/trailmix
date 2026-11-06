@@ -660,6 +660,7 @@ export interface MyNote {
 
 /** A recording in progress, whichever app is capturing it. */
 export interface LiveRecording {
+  model_status?: string | null; // why captions are late: the speech model is loading, or catching up
   id: number;
   title: string;
   /** "web" = a Trailmix window, "helper" = the menu bar helper */
