@@ -557,7 +557,7 @@ function Notepad({ p }: { p: Props }) {
             </div>
           </Collapse>
 
-          {p.live?.model_status && !p.notice && (
+          {p.live?.model_status && (
             <div role="status" className="border-b border-line px-4 py-2.5 text-ui leading-relaxed text-ink-soft sm:px-5">
               {p.live.model_status}
             </div>

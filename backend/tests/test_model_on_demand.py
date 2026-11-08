@@ -48,9 +48,12 @@ def engine(monkeypatch):
         state["chunks"].append(len(audio) / SR)
         return [{"start": 0.0, "end": len(audio) / SR, "text": f"chunk {len(state['chunks'])}"}]
 
-    def unload():
+    def unload(still_idle=None):
+        if still_idle is not None and not still_idle():
+            return False
         state["unloads"] += 1
         state["loaded"] = None
+        return True
 
     for name, fn in {"warm": warm, "transcribe_final": final, "unload": unload, "loaded": lambda: state["loaded"],
                      "available": lambda: True, "final_model": lambda cfg=None: "m"}.items():
@@ -193,3 +196,82 @@ def test_an_earlier_failed_load_does_not_stop_the_next_recording_captions(fresh_
     s.draft_step()
     assert not s._no_model
     s.close()
+
+
+def test_a_recording_that_starts_as_the_idle_check_runs_keeps_its_model(fresh_db, engine):
+    engine["loaded"] = "m"
+    later = time.monotonic() + live.UNLOAD_AFTER_S + 1
+    real_loaded = local_engine.loaded
+
+    def starts_during_the_check():  # the recording begins after the unloader's first look, before it unloads
+        if not live._active:
+            session()
+        return real_loaded()
+
+    local_engine.loaded = starts_during_the_check  # (monkeypatch in the fixture restores it)
+    try:
+        assert not live.unload_if_idle(later)
+    finally:
+        local_engine.loaded = real_loaded
+    assert engine["loaded"] == "m" and engine["unloads"] == 0
+    for s in list(live._active.values()):
+        s.close()
+
+
+def test_the_session_is_registered_before_its_warm_up(fresh_db, engine):
+    seen = []
+    engine["gate"].clear()
+    real = live.warm_up
+    live.warm_up = lambda cfg: seen.append(live.active_count()) or real(cfg)
+    try:
+        s = session()
+    finally:
+        live.warm_up = real
+    assert seen == [1]
+    engine["gate"].set()
+    wait_loaded()
+    s.close()
+
+
+def test_a_load_that_fails_after_the_weights_arrived_does_not_keep_them(fresh_db, engine):
+    engine["fail"] = RuntimeError("out of memory in the decoder")
+    s = session()
+    wait_loaded()
+    assert engine["unloads"] == 1 and engine["loaded"] is None
+    s.close()
+
+
+def test_warming_waits_for_a_busy_engine_instead_of_giving_up(monkeypatch):
+    calls = []
+    monkeypatch.setattr(local_engine, "ENGINE", type("E", (), {"loaded": staticmethod(lambda: None)}))
+    monkeypatch.setattr(local_engine, "run", lambda audio, model, *a, **k: calls.append(model) or [])
+    local_engine._lock.acquire()
+    done = []
+    t = threading.Thread(target=lambda: done.append(local_engine.warm("m")))
+    t.start()
+    time.sleep(0.1)
+    assert not done and not calls  # waiting its turn
+    local_engine._lock.release()
+    t.join(5)
+    assert done == [True] and calls == ["m"]
+
+
+def test_a_failed_load_after_stop_still_gets_a_full_pass(fresh_db, engine, monkeypatch):
+    """The recording ended while the model was loading, then the load failed: the pipeline's gap-filling can't use the
+    model either, and falls back to transcribing the whole recording."""
+    engine["gate"].clear()
+    s = session()
+    s.write(speech(30))
+    s.finish()
+    s.close()
+    engine["fail"] = RuntimeError("bad model")
+    engine["gate"].set()
+    wait_loaded()
+
+    def broken(*a, **k):
+        raise RuntimeError("bad model")
+
+    monkeypatch.setattr(local_engine, "transcribe_final", broken)
+    m = db.get_meeting(s.meeting_id)
+    monkeypatch.setattr(pipeline.store, "track_dir", lambda _m: s.folder)
+    assert pipeline._finish_live(m, {"transcribe_engine": "local"}) is None
