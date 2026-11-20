@@ -1034,9 +1034,17 @@ def provider_models(pid: str):
     if pid not in llm_engine.PROVIDERS:
         raise HTTPException(404, "Unknown provider")
     try:
-        return {"models": llm_engine.list_models(pid, settings.get_all())}
+        cfg = settings.get_all()
+        names = llm_engine.list_models(pid, cfg)
     except llm_engine.LLMError as e:
         raise HTTPException(502, str(e)) from e
+    out = {"models": names}
+    if pid == "ollama":
+        # The installed models that don't fit this computer's graphics card, each with why; and the one "Automatic" means.
+        notes = {name: llm_engine.ollama_card_warning(cfg, name) for name in names}
+        out["warnings"] = {name: why for name, why in notes.items() if why}
+        out["automatic"] = llm_engine.model_for("ollama", {**cfg, "ollama_model": ""})
+    return out
 
 
 @app.post("/api/providers/{pid}/test")

@@ -249,6 +249,26 @@ def ollama_ram_needed_gb(cfg: dict) -> float:
     return (ollama_model_size_gb(cfg) or 0) * 1.1 + 1.5 * ollama_num_ctx(cfg) / OLLAMA_NUM_CTX
 
 
+def ollama_card_warning(cfg: dict, model: str | None = None) -> str | None:
+    """Why the chosen Ollama model (or `model`) is a poor fit for this computer's graphics card, in words, or None.
+    It needs more memory than the card has, so Ollama keeps part of it in main memory: slower, and where a model
+    has been seen to stop mid-answer (Ollama's "unexpected EOF"). Only where Ollama runs here on a card with memory
+    of its own: a Mac shares its memory, and resources.check looks after main memory everywhere."""
+    if model:
+        cfg = {**cfg, "ollama_model": model}
+    if not (cfg.get("ollama_url") and is_local("ollama", cfg)):
+        return None
+    card = hardware.cards_gb(hardware.profile().get("gpus") or [])
+    if not card or not ollama_model_size_gb(cfg):
+        return None
+    need = ollama_ram_needed_gb(cfg)
+    if need <= card:
+        return None
+    return (f"{model_for('ollama', cfg)} needs about {need:.1f} GB and the graphics card has {card:.0f} GB, so Ollama "
+            "runs part of it in main memory. That's slower, and it's the likely reason if notes fail with "
+            "“unexpected EOF”. A smaller model fits on the card.")
+
+
 def _ollama(cfg: dict, prompt: str, system: str | None, keep_alive: str, temperature: float = 0.2,
             on_text: OnText = None, images: list[bytes] | None = None) -> str:
     model = model_for("ollama", cfg)
