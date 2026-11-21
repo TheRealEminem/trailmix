@@ -1,6 +1,7 @@
 #!/bin/bash
-# Promotes the newest beta on its own: once a pre-release has been out for BETA_DAYS days (default 3) and nobody
-# has an open "[Beta X.Y.Z] [blocks me]" issue against it, it becomes the release everyone gets (like scripts/promote.sh).
+# Promotes a beta on its own: the newest one that has been out for BETA_DAYS days (default 3) with nobody having an
+# open "[Beta X.Y.Z] [blocks me]" issue against it becomes the release everyone gets (like scripts/promote.sh), even if
+# a newer beta exists.
 # Run daily by .github/workflows/promote-beta.yml.
 #   scripts/auto-promote.sh                          -> promotes the newest beta if it's ready, otherwise says why not
 #   DRY_RUN=1 scripts/auto-promote.sh                -> only says what it would do (read-only)
@@ -26,50 +27,56 @@ if [[ "${1:-}" == --test-match ]]; then
   echo "no match"; exit 1
 fi
 
-# Newest beta and newest stable release, by version (only plain vX.Y.Z tags; drafts ignored)
+# The pre-releases newer than the current release, newest first, and the current release (only plain vX.Y.Z tags;
+# drafts ignored). The 3 days count from each beta's own date, so a newer beta never keeps an older one waiting: the
+# newest beta that is ready is promoted even when an even newer one is still being tried.
 releases=$(gh release list --repo "$REPO" --limit 100 --json tagName,isPrerelease,isDraft,publishedAt)
-pick() {  # pick true|false -> "TAG PUBLISHED_AT" of the newest pre-release / stable release, or nothing
+pick() {  # pick true|false -> "TAG PUBLISHED_AT" lines of the pre-releases / stable releases, newest version first
   jq -r --argjson pre "$1" '
     [.[] | select(.isDraft | not) | select(.isPrerelease == $pre) | select(.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))
      | .v = (.tagName | ltrimstr("v") | split(".") | map(tonumber))]
-    | max_by(.v) // empty | "\(.tagName) \(.publishedAt)"' <<<"$releases"
+    | sort_by(.v) | reverse | .[] | "\(.tagName) \(.publishedAt)"' <<<"$releases"
 }
-read -r TAG PUBLISHED <<<"$(pick true)" || true
-read -r STABLE _ <<<"$(pick false)" || true
+STABLE=$(pick false | head -n1 | cut -d' ' -f1)
+betas=$(pick true)
+[[ -n "$betas" ]] || { echo "Nothing to promote: there's no pre-release."; exit 0; }
 
-[[ -n "${TAG:-}" ]] || { echo "Nothing to promote: there's no pre-release."; exit 0; }
-VERSION=${TAG#v}
-
-if [[ -n "${STABLE:-}" ]] && ! jq -en --arg a "$VERSION" --arg b "${STABLE#v}" \
-    '($a | split(".") | map(tonumber)) > ($b | split(".") | map(tonumber))' >/dev/null; then
-  echo "Nothing to promote: the newest pre-release $TAG isn't newer than the current release $STABLE."; exit 0
-fi
-
-# Days since it was published (jq does the date math, so it's the same on GNU and BSD systems)
-AGE=$(jq -rn --arg t "$PUBLISHED" '(now - ($t | fromdateiso8601)) / 86400 | . * 10 | floor / 10')
-if ! jq -en --argjson age "$AGE" --argjson days "$BETA_DAYS" '$age >= $days' >/dev/null; then
-  echo "Not promoting $TAG yet: it's been out $AGE days, under the $BETA_DAYS it needs."; exit 0
-fi
-
-# Open "blocks me" reports for this version
+# Open "blocks me" reports (listed once)
 reports=$(gh issue list --repo "$REPO" --state open --limit 200 --search '"[blocks me]" in:title' \
             --json number,title -q '.[] | "\(.number)\t\(.title)"')  # a failure here stops the script, so it never promotes unchecked
-blockers=()
-while IFS=$'\t' read -r number title; do
-  if [[ -n "$number" ]] && blocks "$VERSION" "$title"; then blockers+=("#$number $title"); fi
-done <<<"$reports"
-if (( ${#blockers[@]} )); then
-  echo "Open reports blocking $TAG:"
-  printf '  %s\n' "${blockers[@]}"
-  echo "Not promoting $TAG: ${#blockers[@]} open \"blocks me\" report(s)."; exit 0
-fi
 
-# The computers it has an installer for, as scripts/promote.sh works them out. One whose build failed has none:
-# people on it stay on the last release that has one, while everyone else moves on.
-PLATFORMS=$(gh release view "$TAG" --repo "$REPO" --json assets -q '.assets[].name' \
-  | sed -nE -e "s/^Trailmix-$VERSION-arm64\.dmg$/macos-arm64/p" -e "s/^Trailmix-$VERSION-([a-z]+-[a-z0-9_]+)\.[a-zA-Z]+$/\1/p" \
-  | sort -u | paste -sd ' ' -)
-[[ -n "$PLATFORMS" ]] || { echo "Not promoting $TAG: it has no installers."; exit 0; }
+CHOSEN="" AGE="" PLATFORMS=""
+while read -r TAG PUBLISHED; do
+  VERSION=${TAG#v}
+  if [[ -n "$STABLE" ]] && ! jq -en --arg a "$VERSION" --arg b "${STABLE#v}" \
+      '($a | split(".") | map(tonumber)) > ($b | split(".") | map(tonumber))' >/dev/null; then
+    echo "Not promoting $TAG: it isn't newer than the current release $STABLE."; continue
+  fi
+  # Days since it was published (jq does the date math, so it's the same on GNU and BSD systems)
+  age=$(jq -rn --arg t "$PUBLISHED" '(now - ($t | fromdateiso8601)) / 86400 | . * 10 | floor / 10')
+  if ! jq -en --argjson age "$age" --argjson days "$BETA_DAYS" '$age >= $days' >/dev/null; then
+    echo "Not promoting $TAG yet: it's been out $age days, under the $BETA_DAYS it needs."; continue
+  fi
+  blockers=()
+  while IFS=$'\t' read -r number title; do
+    if [[ -n "$number" ]] && blocks "$VERSION" "$title"; then blockers+=("#$number $title"); fi
+  done <<<"$reports"
+  if (( ${#blockers[@]} )); then
+    echo "Open reports blocking $TAG:"
+    printf '  %s\n' "${blockers[@]}"
+    echo "Not promoting $TAG: ${#blockers[@]} open \"blocks me\" report(s)."; continue
+  fi
+  # The computers it has an installer for, as scripts/promote.sh works them out. One whose build failed has none:
+  # people on it stay on the last release that has one, while everyone else moves on.
+  platforms=$(gh release view "$TAG" --repo "$REPO" --json assets -q '.assets[].name' \
+    | sed -nE -e "s/^Trailmix-$VERSION-arm64\.dmg$/macos-arm64/p" -e "s/^Trailmix-$VERSION-([a-z]+-[a-z0-9_]+)\.[a-zA-Z]+$/\1/p" \
+    | sort -u | paste -sd ' ' -)
+  [[ -n "$platforms" ]] || { echo "Not promoting $TAG: it has no installers."; continue; }
+  CHOSEN=$TAG AGE=$age PLATFORMS=$platforms
+  break
+done <<<"$betas"
+[[ -n "$CHOSEN" ]] || { echo "Nothing to promote today."; exit 0; }
+TAG=$CHOSEN
 
 if [[ "$DRY_RUN" == 1 ]]; then
   echo "Would run: gh release edit $TAG --repo $REPO --prerelease=false --latest"
