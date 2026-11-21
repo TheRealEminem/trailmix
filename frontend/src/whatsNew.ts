@@ -9,6 +9,16 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    version: "0.23.10",
+    items: [
+      {
+        title: "A heads-up when a model is too big for your graphics card",
+        body: "On a PC with an NVIDIA or AMD graphics card, Trailmix now tells you when the Ollama model you picked needs more memory than the card has. Ollama then runs part of it in main memory, which is slower and a likely cause of notes failing with “unexpected EOF”.",
+        where: "Settings → AI providers → Ollama",
+      },
+    ],
+  },
+  {
     version: "0.23.8",
     items: [
       {
