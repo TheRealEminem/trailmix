@@ -1453,9 +1453,15 @@ function ProviderCard({
 }) {
   const [open, setOpen] = useState(primary);
   const [models, setModels] = useState<string[]>([]);
+  // Ollama: the installed models that don't fit this computer's graphics card (name → why), and what "Automatic" picks.
+  const [fit, setFit] = useState<{ warnings: Record<string, string>; automatic: string }>({ warnings: {}, automatic: "" });
   const [result, setResult] = useState<
     { ok: boolean; text: string } | "busy" | null
   >(null);
+  const listed = (r: Awaited<ReturnType<typeof api.providerModels>>) => {
+    setModels(r.models);
+    setFit({ warnings: r.warnings ?? {}, automatic: r.automatic ?? "" });
+  };
   const meta = PROVIDER_META[id];
   const hint = s.secret_hints?.[id === "trailmix" ? "cloud_token" : `${id}_api_key`];
   const modelKey = `${id}_model` as keyof SettingsT;
@@ -1464,12 +1470,13 @@ function ProviderCard({
   const onThisComputer = local || (id === "custom" && isLocalUrl(s.custom_base_url));
   const hosted = id === "trailmix";
   const ready = local || (id === "custom" ? !!s.custom_base_url : !!hint);
+  const cardWarning = local ? fit.warnings[String(s[modelKey] ?? "") || fit.automatic] : undefined;
 
   useEffect(() => {
     if (!open || !ready || models.length || hosted) return;
     api
       .providerModels(id)
-      .then((r) => setModels(r.models))
+      .then(listed)
       .catch(() => {}); // "Load models" shows the reason
   }, [open, ready, id, models.length, hosted]);
 
@@ -1612,12 +1619,18 @@ function ProviderCard({
                 onLoad={() =>
                   void run(async () => {
                     const r = await api.providerModels(id);
-                    setModels(r.models);
+                    listed(r);
                     return `Found ${r.models.length} models.`;
                   })
                 }
               />
             </Row>
+            {cardWarning && (
+              <div className="mb-1 flex items-start gap-2 rounded-md border border-sun/25 bg-sun-soft/60 px-3 py-2 text-hint leading-relaxed text-sun-deep">
+                <AlertIcon size={14} className="mt-[3px] shrink-0" />
+                <span>{cardWarning}</span>
+              </div>
+            )}
             <div className="py-3.5">
               <button
                 className="btn btn-sm btn-soft"
