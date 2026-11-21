@@ -234,6 +234,14 @@ def ai_memory(ram_gb: float, gpus: list[dict]) -> tuple[float, str]:
     return round(ram_gb * CPU_SHARE, 1), "cpu"
 
 
+def cards_gb(gpus: list[dict]) -> float:
+    """The memory of the graphics cards Ollama runs a model on, together (it spreads one over several): 0 with none,
+    and on a Mac, whose graphics chip shares main memory."""
+    if any(g["unified"] for g in gpus):
+        return 0.0
+    return sum(g["vram_gb"] for g in gpus if g["vendor"] in OLLAMA_GPU_VENDORS and (g["vram_gb"] or 0) >= MIN_VRAM_GB)
+
+
 def gpu_label(gpus: list[dict]) -> str:
     """The graphics card worth naming, e.g. "NVIDIA GeForce RTX 4070 (12 GB)": the one with the most memory of its
     own. "" when there's none: a Mac's is part of its chip, and an integrated one makes no difference here."""

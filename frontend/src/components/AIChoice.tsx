@@ -349,6 +349,7 @@ export function PreflightSheet({
                           : ""}
                         .
                       </PlanLine>
+                      {plan.card_warning && <PlanLine tone="warn">{plan.card_warning}</PlanLine>}
                       {data.recording && <PlanLine tone="warn">A recording is running: this waits until it ends.</PlanLine>}
                     </>
                   ) : (

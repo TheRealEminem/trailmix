@@ -107,6 +107,8 @@ def notes_plan(meetings: list[dict], pid: str, cfg: dict) -> dict:
         "window_chars": llm_engine.context_chars(pid, cfg),
         "ram_needed_gb": round(llm_engine.ollama_ram_needed_gb(cfg), 1) if local else None,
         "ram_free_gb": round(vm.available / GB, 1), "ram_total_gb": round(vm.total / GB, 1),
+        # the model is bigger than this computer's graphics card: why that matters, or None
+        "card_warning": llm_engine.ollama_card_warning(cfg) if pid == "ollama" else None,
     }
 
 

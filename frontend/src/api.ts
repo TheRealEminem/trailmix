@@ -746,6 +746,8 @@ export interface Preflight {
       ram_needed_gb: number | null;
       ram_free_gb: number;
       ram_total_gb: number;
+      /** the model is bigger than this computer's graphics card: why that matters (missing from older servers) */
+      card_warning?: string | null;
     };
   };
   transcribe: {
@@ -1124,7 +1126,10 @@ export const api = {
   getSettings: () => request<Settings>("/settings"),
   putSettings: (changes: Partial<Settings>) => request<Settings>("/settings", json("PUT", changes)),
   recordingLaws: () => request<RecordingLaws>("/recording-laws"),
-  providerModels: (id: ProviderId) => request<{ models: string[] }>(`/providers/${id}/models`),
+  /** Ollama also says which installed models don't fit this computer's graphics card (name → why), and the model
+   *  "Automatic" picks. */
+  providerModels: (id: ProviderId) =>
+    request<{ models: string[]; warnings?: Record<string, string>; automatic?: string }>(`/providers/${id}/models`),
   providerTest: (id: ProviderId) => request<{ message: string }>(`/providers/${id}/test`, json("POST")),
   transcriptionTest: () => request<{ message: string }>("/transcription/test", json("POST")),
   cloudLink: () => request<CloudLink>("/cloud/link", json("POST")),
