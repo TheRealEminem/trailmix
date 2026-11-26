@@ -1,0 +1,159 @@
+# Decides what a build of an app makes: which release (if any), which platforms, and whether the extra checks run.
+# Call it as the first job of an app's release.yml, then gate each platform's job on its output:
+#
+#   plan:
+#     uses: ./.github/workflows/plan.yml
+#     with:
+#       platforms: ${{ inputs.platforms }}
+#       extra_checks: ${{ inputs.extra_checks }}
+#       release: ${{ inputs.release }}
+#   linux:
+#     needs: plan
+#     if: needs.plan.outputs.linux != '[]'
+#     strategy: { fail-fast: false, matrix: { include: "${{ fromJSON(needs.plan.outputs.linux) }}" } }
+#
+# The rules (see ~/.claude/skills/app-ci/SKILL.md):
+#   - A release (a pushed v* tag, or "Release it" on the release branch) always builds every target and runs every
+#     check. The platforms input can't trim it.
+#   - A test build builds only the platforms asked for, and runs the extra checks (distros, updating from the current
+#     release) only when extra_checks is ticked.
+name: plan
+
+on:
+  workflow_call:
+    inputs:
+      platforms:
+        description: "all, mac, windows or linux. Ignored for a release, which always builds all."
+        type: string
+        default: all
+      extra_checks:
+        description: "Run the release-only checks (distros, update from the current release) on a test build too"
+        type: boolean
+        default: false
+      release:
+        description: "Release it: make the release v<VERSION> from the release branch (the 'Release it' box)"
+        type: boolean
+        default: false
+      release_branch:
+        type: string
+        default: main
+      version_file:
+        type: string
+        default: VERSION
+      check_tag_matches_version:
+        description: "On a pushed tag, fail unless the tag is v<the version file>"
+        type: boolean
+        default: true
+      targets:
+        description: >-
+          JSON array of every target the app builds, each {"os": mac|windows|linux, "arch", "runner", "target"} plus
+          anything else the app's jobs want from matrix.*. Defaults to the six desktop targets.
+        type: string
+        default: >-
+          [
+            {"os":"mac","arch":"arm64","runner":"macos-15","target":"aarch64-apple-darwin"},
+            {"os":"mac","arch":"x86_64","runner":"macos-15-intel","target":"x86_64-apple-darwin"},
+            {"os":"windows","arch":"x64","runner":"windows-latest","target":"x86_64-pc-windows-msvc"},
+            {"os":"windows","arch":"arm64","runner":"windows-11-arm","target":"aarch64-pc-windows-msvc"},
+            {"os":"linux","arch":"x86_64","runner":"ubuntu-22.04","target":"x86_64-unknown-linux-gnu"},
+            {"os":"linux","arch":"arm64","runner":"ubuntu-22.04-arm","target":"aarch64-unknown-linux-gnu"}
+          ]
+    outputs:
+      tag:
+        description: "The release this run makes (v1.2.3), or empty for a test build"
+        value: ${{ jobs.plan.outputs.tag }}
+      version:
+        description: "The version file's contents, trimmed"
+        value: ${{ jobs.plan.outputs.version }}
+      full:
+        description: "'true' when the extra checks run (every release, or a test build with extra_checks)"
+        value: ${{ jobs.plan.outputs.full }}
+      mac:
+        description: "JSON array of the Mac targets to build ('[]' for none)"
+        value: ${{ jobs.plan.outputs.mac }}
+      windows:
+        description: "JSON array of the Windows targets to build ('[]' for none)"
+        value: ${{ jobs.plan.outputs.windows }}
+      linux:
+        description: "JSON array of the Linux targets to build ('[]' for none)"
+        value: ${{ jobs.plan.outputs.linux }}
+      linux_arches:
+        description: "JSON array of the Linux arches being built, for linux-distros.yml"
+        value: ${{ jobs.plan.outputs.linux_arches }}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.plan.outputs.tag }}
+      version: ${{ steps.plan.outputs.version }}
+      full: ${{ steps.plan.outputs.full }}
+      mac: ${{ steps.plan.outputs.mac }}
+      windows: ${{ steps.plan.outputs.windows }}
+      linux: ${{ steps.plan.outputs.linux }}
+      linux_arches: ${{ steps.plan.outputs.linux_arches }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # Every input goes in through env, never written into the script.
+      - name: Plan
+        id: plan
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+          EXTRA: ${{ inputs.extra_checks }}
+          RELEASE: ${{ inputs.release }}
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
+          VERSION_FILE: ${{ inputs.version_file }}
+          CHECK_TAG: ${{ inputs.check_tag_matches_version }}
+          TARGETS: ${{ inputs.targets }}
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' <"$VERSION_FILE")"
+          tag=""
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+            if [[ "$CHECK_TAG" == true && "${tag#v}" != "$version" ]]; then
+              echo "::error::The tag is $tag but $VERSION_FILE says $version. Bump $VERSION_FILE, commit, and tag that commit."; exit 1
+            fi
+          elif [[ "$RELEASE" == true ]]; then
+            [[ "$GITHUB_REF" == "refs/heads/$RELEASE_BRANCH" ]] \
+              || { echo "::error::Releases are made from $RELEASE_BRANCH, not $GITHUB_REF_NAME"; exit 1; }
+            tag="v$version"
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "::error::$tag is already out. Bump $VERSION_FILE (and add a What's new entry) first."; exit 1
+            fi
+          fi
+
+          sel="${PLATFORMS:-all}"
+          full=false
+          if [[ -n "$tag" ]]; then
+            [[ "$sel" == all ]] || echo "::notice::A release builds every platform: ignoring platforms=$sel"
+            sel=all full=true   # a release is never trimmed
+          elif [[ "$EXTRA" == true ]]; then
+            full=true
+          fi
+          case "$sel" in all|mac|windows|linux) ;; *) echo "::error::platforms must be all, mac, windows or linux, not '$sel'"; exit 1 ;; esac
+
+          targets="$(jq -c --arg p "$sel" 'map(select($p == "all" or .os == $p))' <<<"$TARGETS")"
+          [[ "$targets" != "[]" ]] || { echo "::error::No targets for platforms=$sel"; exit 1; }
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "full=$full"
+            for os in mac windows linux; do echo "$os=$(jq -c --arg o "$os" 'map(select(.os == $o))' <<<"$targets")"; done
+            echo "linux_arches=$(jq -c 'map(select(.os == "linux") | .arch)' <<<"$targets")"
+          } >>"$GITHUB_OUTPUT"
+
+          {
+            echo "### ${tag:-Test build (nothing is published)}"
+            echo
+            echo "- Version file: \`$version\`"
+            echo "- Platforms: \`$sel\` → $(jq -r 'map("\(.os) \(.arch)") | join(", ")' <<<"$targets")"
+            echo "- Extra checks (distros, updating from the current release): $full"
+          } >>"$GITHUB_STEP_SUMMARY"
+          cat "$GITHUB_STEP_SUMMARY"

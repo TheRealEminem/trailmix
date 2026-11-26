@@ -1,0 +1,194 @@
+# Tries a Linux build's packages on other distros, every distro and arch as its own job, all at once: the run waits
+# for the slowest one (about 3 minutes) rather than for all of them one after another.
+#
+# Runs after the app's Linux build, which uploads each arch's packages as the artifact <artifact_prefix><arch>
+# (its .deb, .rpm and .AppImage named *-linux-<arch>.<ext>). Each job installs what the app's smoke test needs on a
+# fresh container, then runs `<smoke_command> <the package>` from the app's own checkout.
+#
+#   distros:
+#     needs: [plan, linux]
+#     if: always() && needs.plan.outputs.full == 'true' && needs.plan.outputs.linux != '[]'
+#     uses: ./.github/workflows/linux-distros.yml
+#     with:
+#       arches: ${{ needs.plan.outputs.linux_arches }}
+#       artifact_prefix: Trailmix-linux-
+#       smoke_command: python3 scripts/smoke-test-linux.py
+#
+# Its `drop` output lists the packages a release should leave out: "<arch>/<deb|rpm|AppImage>" for each package that
+# failed a distro marked required. A distro that isn't required only warns.
+name: linux-distros
+
+on:
+  workflow_call:
+    inputs:
+      arches:
+        description: 'JSON array of arches to try ("x86_64", "arm64")'
+        type: string
+        default: '["x86_64","arm64"]'
+      artifact_prefix:
+        description: The Linux build's artifact name, less the arch
+        type: string
+        required: true
+      smoke_command:
+        description: Run from the app's checkout with the package's path after it
+        type: string
+        required: true
+      runner_x86_64:
+        type: string
+        default: ubuntu-22.04
+      runner_arm64:
+        type: string
+        default: ubuntu-22.04-arm
+      cache_path:
+        description: A folder on the runner to restore (not save) and mount in each container, a model cache say
+        type: string
+        default: ""
+      cache_key:
+        type: string
+        default: ""
+      container_env:
+        description: 'KEY=value lines set in each container; $APP_CI_CACHE in a value is where cache_path is mounted'
+        type: string
+        default: ""
+      distros:
+        description: >-
+          JSON array of {"id", "name", "image" ("" for the runner itself), "package" (deb|rpm|AppImage),
+          "required" (a failure leaves that package out of a release), "setup" (shell run as root first)}.
+          The default is what a Tauri app's headless smoke test (Xvfb, PulseAudio, D-Bus) needs.
+        type: string
+        default: >-
+          [
+            {"id":"runner-deb","name":"the .deb, on the runner's Ubuntu","image":"","package":"deb","required":true,
+             "setup":"sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends xvfb xauth pulseaudio pulseaudio-utils dbus-x11 >/dev/null"},
+            {"id":"debian-stable","name":"the .deb, on Debian (stable)","image":"debian:stable","package":"deb","required":true,
+             "setup":"apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends python3 xvfb xauth pulseaudio pulseaudio-utils dbus-daemon ca-certificates >/dev/null"},
+            {"id":"debian-12","name":"the .deb, on Debian 12","image":"debian:12","package":"deb","required":true,
+             "setup":"apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends python3 xvfb xauth pulseaudio pulseaudio-utils dbus ca-certificates >/dev/null"},
+            {"id":"ubuntu-22.04","name":"the .deb, on Ubuntu 22.04","image":"ubuntu:22.04","package":"deb","required":true,
+             "setup":"apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends python3 xvfb xauth pulseaudio pulseaudio-utils dbus ca-certificates >/dev/null"},
+            {"id":"ubuntu-24.04","name":"the .deb, on Ubuntu 24.04","image":"ubuntu:24.04","package":"deb","required":true,
+             "setup":"apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends python3 xvfb xauth pulseaudio pulseaudio-utils dbus ca-certificates >/dev/null"},
+            {"id":"appimage-ubuntu-24.04","name":"the AppImage, on Ubuntu 24.04","image":"ubuntu:24.04","package":"AppImage","required":false,
+             "setup":"apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends python3 xvfb xauth pulseaudio pulseaudio-utils dbus ca-certificates libpulse0 libx11-6 libx11-xcb1 libxcb1 libgl1 libegl1 libgbm1 libfontconfig1 libfreetype6 libharfbuzz0b fonts-dejavu-core libasound2t64 libexpat1 >/dev/null"},
+            {"id":"fedora","name":"the .rpm, on Fedora","image":"fedora:latest","package":"rpm","required":true,
+             "setup":"dnf install -y -q python3 xorg-x11-server-Xvfb pulseaudio pulseaudio-utils dbus-daemon which >/dev/null"}
+          ]
+    outputs:
+      drop:
+        description: 'JSON array of "<arch>/<package>" a release should leave out'
+        value: ${{ jobs.verdict.outputs.drop }}
+
+permissions:
+  contents: read
+
+jobs:
+  distro:
+    name: ${{ matrix.arch }} ${{ matrix.distro.id }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJSON(inputs.arches) }}
+        distro: ${{ fromJSON(inputs.distros) }}
+    runs-on: ${{ matrix.arch == 'arm64' && inputs.runner_arm64 || inputs.runner_x86_64 }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        id: download
+        continue-on-error: true   # (no artifact: that arch's build failed; recorded as missing below)
+        with:
+          name: ${{ inputs.artifact_prefix }}${{ matrix.arch }}
+          path: dist
+      - uses: actions/cache/restore@v4
+        if: inputs.cache_path != ''
+        with:
+          path: ${{ inputs.cache_path }}
+          key: ${{ inputs.cache_key }}
+      - name: ${{ matrix.distro.name }}
+        id: smoke
+        continue-on-error: true
+        env:
+          ARCH: ${{ matrix.arch }}
+          EXT: ${{ matrix.distro.package }}
+          IMAGE: ${{ matrix.distro.image }}
+          SETUP: ${{ matrix.distro.setup }}
+          SMOKE: ${{ inputs.smoke_command }}
+          CACHE_PATH: ${{ inputs.cache_path }}
+          CONTAINER_ENV: ${{ inputs.container_env }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=(dist/*-linux-"$ARCH"."$EXT")
+          [ ${#packages[@]} -eq 1 ] || { echo "::error::Expected one dist/*-linux-$ARCH.$EXT, found ${#packages[@]}"; exit 1; }
+          # The test as a script in the checkout, so the same thing runs on the runner or in a container.
+          { echo 'set -euo pipefail'; echo "$SETUP"; echo "$SMOKE \"\$1\""; } >.app-ci-smoke.sh
+          if [ -z "$IMAGE" ]; then
+            bash .app-ci-smoke.sh "${packages[0]}"
+          else
+            args=()
+            if [ -n "$CACHE_PATH" ]; then
+              mkdir -p "${CACHE_PATH/#\~/$HOME}"
+              args+=(-v "${CACHE_PATH/#\~/$HOME}:/app-ci-cache")
+            fi
+            while IFS= read -r line; do
+              [ -n "$line" ] && args+=(-e "${line//\$APP_CI_CACHE//app-ci-cache}")
+            done <<<"$CONTAINER_ENV"
+            docker run --rm -v "$PWD:/w" -w /w ${args[@]+"${args[@]}"} "$IMAGE" bash .app-ci-smoke.sh "${packages[0]}"
+          fi
+      - name: Record the result
+        if: always()
+        env:
+          ARCH: ${{ matrix.arch }}
+          ID: ${{ matrix.distro.id }}
+          NAME: ${{ matrix.distro.name }}
+          PACKAGE: ${{ matrix.distro.package }}
+          REQUIRED: ${{ matrix.distro.required }}
+          OUTCOME: ${{ steps.download.outcome == 'success' && steps.smoke.outcome || 'missing' }}
+        run: |
+          mkdir -p app-ci-result
+          jq -n --arg arch "$ARCH" --arg id "$ID" --arg name "$NAME" --arg package "$PACKAGE" \
+            --argjson required "$REQUIRED" --arg outcome "$OUTCOME" \
+            '{arch: $arch, id: $id, name: $name, package: $package, required: $required, outcome: $outcome}' \
+            >"app-ci-result/$ARCH-$ID.json"
+          cat "app-ci-result/$ARCH-$ID.json"
+          [ "$OUTCOME" = success ] || echo "::warning::$ARCH: $NAME: $OUTCOME"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: app-ci-distro-${{ matrix.arch }}-${{ matrix.distro.id }}
+          path: app-ci-result/
+          retention-days: 3
+
+  verdict:
+    needs: distro
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      drop: ${{ steps.verdict.outputs.drop }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: app-ci-distro-*
+          path: results
+          merge-multiple: true
+      - name: Which packages passed
+        id: verdict
+        run: |
+          shopt -s nullglob
+          files=(results/*.json)
+          all="$(if [ ${#files[@]} -gt 0 ]; then jq -s 'sort_by(.arch, .id)' "${files[@]}"; else echo '[]'; fi)"
+          drop="$(jq -c '[.[] | select(.required and .outcome != "success") | "\(.arch)/\(.package)"] | unique' <<<"$all")"
+          echo "drop=$drop" >>"$GITHUB_OUTPUT"
+          {
+            echo "### Linux distros"
+            echo
+            echo "| Arch | Check | Result | Required |"
+            echo "|---|---|---|---|"
+            jq -r '.[] | "| \(.arch) | \(.name) | \(if .outcome == "success" then "✅" else "❌ \(.outcome)" end) | \(if .required then "yes" else "warning only" end) |"' <<<"$all"
+            echo
+            echo "Left out of a release: $(jq -r 'if length == 0 then "nothing" else join(", ") end' <<<"$drop")"
+          } >>"$GITHUB_STEP_SUMMARY"
+          cat "$GITHUB_STEP_SUMMARY"
