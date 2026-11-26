@@ -21,6 +21,15 @@ jobs:
       - run: ruff check backend
       - run: python -m pytest -q backend/tests
 
+  # The release's publish step (scripts/publish-release.sh), against a stand-in for GitHub: a new release, a failed
+  # build run again, an upload that broke off, a release that's already been promoted.
+  scripts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/test-publish-release.sh
+
   # The speech engine used where MLX isn't (Intel Macs, Windows, Linux), on real speech with its tiny model.
   whispercpp:
     runs-on: ubuntu-latest

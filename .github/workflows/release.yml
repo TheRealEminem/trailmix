@@ -421,55 +421,13 @@ jobs:
           # and .rpm passed their tests. "0" keeps them out of releases (they're still built, smoke-tested and kept as
           # this run's Trailmix-linux-<arch> artifacts).
           PUBLISH_LINUX: "1"
-        # Each disk image is named for the computer it's for, Trailmix-<version>-macos-<arch>.dmg (the app's updater picks
-        # its own by that name), and has a copy with a fixed name, Trailmix-macos-<arch>.dmg, so a link to
-        # releases/latest/download/... always works ("latest" skips pre-releases: the last promoted version).
-        # Also under the names from before there were other platforms (Trailmix-<version>-arm64.dmg, Trailmix-arm64.dmg):
-        # apps from then look for those, and links to them are out there. Each Windows installer,
-        # Trailmix-<version>-windows-<arch>.exe (+ .sha256, + the fixed name Trailmix-windows-<arch>.exe), comes along
-        # when its build passed (and its switch is on).
-        # --target makes the tag on this commit when the run was started with "Release it" (a tag made with this
-        # workflow's token doesn't start another run, so it isn't built twice).
-        run: |
-          cd dist
-          rm -f *-failed* *.png  # (never published)
-          V="${TAG#v}"
-          [ -f "Trailmix-$V-macos-arm64.dmg" ] || { echo "::error::The Apple silicon build didn't pass, so nothing is published"; exit 1; }
-          [ -f "Trailmix-$V-macos-x86_64.dmg" ] || echo "::warning::The Intel build didn't pass: this release has none, and Intel Macs stay on the last one that did"
-          for dmg in Trailmix-"$V"-macos-*.dmg; do
-            cp "$dmg" "Trailmix-${dmg#Trailmix-"$V"-}"
-          done
-          cp "Trailmix-$V-macos-arm64.dmg" "Trailmix-$V-arm64.dmg"
-          shasum -a 256 "Trailmix-$V-arm64.dmg" >"Trailmix-$V-arm64.dmg.sha256"
-          cp Trailmix-macos-arm64.dmg Trailmix-arm64.dmg
-          WINDOWS=()
-          for arch in x64 arm64; do
-            if [ "$PUBLISH_WINDOWS" != 1 ] || { [ "$arch" = arm64 ] && [ "$PUBLISH_WINDOWS_ARM64" != 1 ]; }; then
-              echo "Windows $arch installer built and tested, not published (PUBLISH_WINDOWS, PUBLISH_WINDOWS_ARM64)"
-            elif [ -f "Trailmix-$V-windows-$arch.exe" ]; then
-              cp "Trailmix-$V-windows-$arch.exe" "Trailmix-windows-$arch.exe"
-              WINDOWS+=("Trailmix-$V-windows-$arch.exe" "Trailmix-$V-windows-$arch.exe.sha256" "Trailmix-windows-$arch.exe")
-            else
-              echo "::warning::The Windows $arch build didn't pass: this release has no installer for those PCs"
-            fi
-          done
-          LINUX=()
-          for arch in x86_64 arm64; do
-            if [ "$PUBLISH_LINUX" != 1 ]; then
-              echo "Linux $arch packages built and tested, not published (PUBLISH_LINUX)"
-            elif [ -f "Trailmix-$V-linux-$arch.AppImage" ]; then
-              for ext in AppImage deb rpm; do
-                [ -f "Trailmix-$V-linux-$arch.$ext" ] || { echo "::warning::No Linux $arch .$ext this time (its test didn't pass)"; continue; }
-                cp "Trailmix-$V-linux-$arch.$ext" "Trailmix-linux-$arch.$ext"
-                LINUX+=("Trailmix-$V-linux-$arch.$ext" "Trailmix-$V-linux-$arch.$ext.sha256" "Trailmix-linux-$arch.$ext")
-              done
-            else
-              echo "::warning::The Linux $arch build didn't pass: this release has nothing for those computers"
-            fi
-          done
-          gh release create "$TAG" Trailmix-"$V"-macos-*.dmg Trailmix-"$V"-macos-*.dmg.sha256 Trailmix-macos-*.dmg \
-            "Trailmix-$V-arm64.dmg" "Trailmix-$V-arm64.dmg.sha256" Trailmix-arm64.dmg ${WINDOWS[@]+"${WINDOWS[@]}"} ${LINUX[@]+"${LINUX[@]}"} \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Trailmix ${TAG#v}" --generate-notes --prerelease
+          # A run started with "To everyone" may add files to a release that's already been promoted (a failed build
+          # run again after the "Give it to everyone" step). Otherwise that's refused: see the script.
+          ALLOW_PROMOTED: ${{ inputs.everyone && '1' || '0' }}
+        # Makes the release from what passed, or, when it's already there (a failed build was run again), adds the
+        # files it doesn't have yet. Which files, their names and the rules are in the script;
+        # scripts/test-publish-release.sh tries it (test.yml's "scripts" job).
+        run: scripts/publish-release.sh "$TAG" dist
       - name: Give it to everyone
         if: inputs.everyone
         env:
