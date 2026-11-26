@@ -1,0 +1,77 @@
+# Fetches one file of the app's current release (the one everyone has: "latest" skips pre-releases), for an
+# "update from the current release" test. It's cached under the release's tag, so these tests add one download per
+# release to its count on GitHub, not one per run, and the counts stay about people.
+#
+#   - uses: ./.github/actions/previous-release
+#     id: previous
+#     with:
+#       assets: |
+#         Trailmix-macos-${{ matrix.arch }}.dmg
+#         Trailmix-arm64.dmg
+#       save-as: previous/Trailmix-macos-${{ matrix.arch }}.dmg
+#   - run: scripts/smoke-test.sh dist/Trailmix.app new.dmg "${{ steps.previous.outputs.path }}"
+#     if: steps.previous.outputs.path != ''
+#
+# Reads public releases only, so the job's default read-only token is enough: no secrets.
+name: previous release
+description: The current release's copy of one file, cached under its tag
+
+inputs:
+  assets:
+    description: File names to try on the release, one per line; the first one there is used (older releases' names last)
+    required: true
+  save-as:
+    description: Where to put it
+    required: true
+  repo:
+    description: The repo whose releases to look in
+    default: ${{ github.repository }}
+  token:
+    default: ${{ github.token }}
+
+outputs:
+  path:
+    description: The file, or empty when the current release has none of those names (or there's no release yet)
+    value: ${{ steps.fetch.outputs.path }}
+  tag:
+    description: The current release's tag, or 'none'
+    value: ${{ steps.which.outputs.tag }}
+
+runs:
+  using: composite
+  steps:
+    - name: Which release is current
+      id: which
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ inputs.repo }}
+      run: echo "tag=$(gh release view --repo "$REPO" --json tagName -q .tagName 2>/dev/null || echo none)" >>"$GITHUB_OUTPUT"
+
+    - uses: actions/cache@v4
+      if: steps.which.outputs.tag != 'none'
+      with:
+        path: ${{ inputs.save-as }}
+        key: current-release-${{ inputs.save-as }}-${{ steps.which.outputs.tag }}
+
+    - name: Fetch it
+      id: fetch
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ inputs.repo }}
+        TAG: ${{ steps.which.outputs.tag }}
+        ASSETS: ${{ inputs.assets }}
+        OUT: ${{ inputs.save-as }}
+      run: |
+        mkdir -p "$(dirname "$OUT")"
+        if [ ! -f "$OUT" ] && [ "$TAG" != none ]; then
+          tmp="$(mktemp -d)"
+          while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            if gh release download "$TAG" --repo "$REPO" --pattern "$name" --dir "$tmp" 2>/dev/null && [ -f "$tmp/$name" ]; then
+              mv "$tmp/$name" "$OUT"; echo "From $TAG: $name"; break
+            fi
+          done <<<"$ASSETS"
+        fi
+        if [ -f "$OUT" ]; then echo "path=$OUT" >>"$GITHUB_OUTPUT"; else echo "The current release ($TAG) has none of: $(echo $ASSETS)"; fi

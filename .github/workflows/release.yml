@@ -20,7 +20,8 @@
 # without a build for it).
 #
 # The shared parts (which platforms a run builds, toolchain caches, the current release's files, the Linux distro
-# checks) come from TheRealEminem/app-ci at @v1: change them there, and move this file to a new tag on purpose.
+# checks) live in this repo: .github/workflows/plan.yml and linux-distros.yml, and .github/actions/setup and
+# previous-release.
 name: Build the apps
 
 on:
@@ -72,7 +73,7 @@ jobs:
   # The release this run makes, if any (the pushed tag, or v<VERSION> with "Release it", checked before the builds so
   # a version that's already out stops here), which platforms it builds, and whether the extra checks run.
   plan:
-    uses: TheRealEminem/app-ci/.github/workflows/plan.yml@v1
+    uses: ./.github/workflows/plan.yml
     with:
       platforms: ${{ inputs.platforms }}
       extra_checks: ${{ inputs.extra_checks || false }}
@@ -86,7 +87,7 @@ jobs:
       fail-fast: false   # an Intel failure mustn't stop the Apple silicon build, or the other way round
       matrix:
         # arm64 on macos-15 (Apple silicon, Xcode 16); x86_64 on macos-15-intel (GitHub's last Intel Mac image,
-        # until about August 2027). The runners are listed in app-ci's plan.yml.
+        # until about August 2027). The runners are listed in plan.yml.
         include: ${{ fromJSON(needs.plan.outputs.mac) }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40   # (about 8 minutes on Apple silicon, 16 on Intel)
@@ -96,7 +97,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: TheRealEminem/app-ci/setup@v1
+      - uses: ./.github/actions/setup
         with:
           node-lockfiles: frontend/package-lock.json
           runtime-cache-path: build/cache
@@ -114,7 +115,7 @@ jobs:
         run: scripts/smoke-test.sh dist/Trailmix.app
       # Updating from the current release: releases, and test builds with "Extra checks".
       # (Releases from before the per-platform names have only Trailmix-arm64.dmg; none before that has an Intel build.)
-      - uses: TheRealEminem/app-ci/previous-release@v1
+      - uses: ./.github/actions/previous-release
         if: needs.plan.outputs.full == 'true'
         id: previous
         with:
@@ -171,7 +172,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: TheRealEminem/app-ci/setup@v1
+      - uses: ./.github/actions/setup
         with:
           node-lockfiles: |
             frontend/package-lock.json
@@ -217,7 +218,7 @@ jobs:
         shell: pwsh
         run: python scripts/smoke-test-windows.py (Get-Item "dist/Trailmix-*-windows-$env:TRAILMIX_ARCH.exe").FullName
       # Updating from the current release: releases, and test builds with "Extra checks".
-      - uses: TheRealEminem/app-ci/previous-release@v1
+      - uses: ./.github/actions/previous-release
         if: needs.plan.outputs.full == 'true'
         id: previous
         with:
@@ -281,7 +282,7 @@ jobs:
       # What building and the smoke test need. (apt-fuse: FUSE 2 for the AppImage, libfuse2 on Ubuntu 22.04,
       # libfuse2t64 from 24.04. GStreamer's plugins: the AppImage brings its own, copied from here, so a recording
       # plays with the WebKitGTK it ships rather than the computer's GStreamer, which may not match it: issue #14.)
-      - uses: TheRealEminem/app-ci/setup@v1
+      - uses: ./.github/actions/setup
         with:
           node-lockfiles: |
             frontend/package-lock.json
@@ -326,7 +327,7 @@ jobs:
         if: env.TRAILMIX_GPU_WHISPER == '1'
         run: python3 scripts/build-linux.py --try-vulkan
       # Updating from the current release: releases, and test builds with "Extra checks".
-      - uses: TheRealEminem/app-ci/previous-release@v1
+      - uses: ./.github/actions/previous-release
         if: needs.plan.outputs.full == 'true'
         id: previous
         with:
@@ -364,12 +365,12 @@ jobs:
 
   # The .deb on the runner's Ubuntu and on Ubuntu 22.04 and 24.04 and Debian 12 and stable as they come, the .rpm on
   # Fedora, and the AppImage on Ubuntu 24.04 (with what a desktop has that an AppImage doesn't bring), each its own
-  # job, all at once (app-ci's linux-distros.yml has the list). A release leaves out a .deb or .rpm that failed any of
+  # job, all at once (linux-distros.yml has the list). A release leaves out a .deb or .rpm that failed any of
   # its distros; the AppImage on 24.04 only warns. Releases, and test builds with "Extra checks".
   distros:
     needs: [plan, linux]
     if: always() && needs.plan.outputs.full == 'true' && needs.plan.outputs.linux != '[]'
-    uses: TheRealEminem/app-ci/.github/workflows/linux-distros.yml@v1
+    uses: ./.github/workflows/linux-distros.yml
     with:
       arches: ${{ needs.plan.outputs.linux_arches }}
       artifact_prefix: Trailmix-linux-

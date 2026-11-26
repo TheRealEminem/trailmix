@@ -99,5 +99,5 @@ a mic fed from a null sink), so nothing of yours is touched or heard: the engine
 checks shared with the Mac, real recording of speech played into those devices, a stand-in Zoom holding the mic,
 the self-test, a picture of the window, and (given a previous AppImage) updating and going back. It tests a .deb
 or .rpm by installing it (as root or with sudo). The `linux` job in `release.yml` runs it on GitHub's x86_64 and
-ARM runners, and its `distros` job (app-ci's `linux-distros.yml`) the packages on Debian, Ubuntu and Fedora too, on
+ARM runners, and its `distros` job (`.github/workflows/linux-distros.yml`) the packages on Debian, Ubuntu and Fedora too, on
 releases and on test builds with "Extra checks".

@@ -1,0 +1,159 @@
+# Sets up the toolchains a desktop app's build needs, each with a cache keyed on what pins it, so a cache only
+# changes when its inputs do. Leave an input empty to skip that part.
+#
+#   - uses: ./.github/actions/setup
+#     with:
+#       node-lockfiles: |
+#         frontend/package-lock.json
+#         desktop/package-lock.json
+#       rust-workspace: desktop/src-tauri
+#       rust-key: linux-ubuntu2204-${{ matrix.arch }}
+#       runtime-cache-path: build/cache
+#       runtime-cache-files: scripts/build-linux.py
+#       pip-cache-files: backend/requirements*.txt backend/constraints.txt
+#
+# Rust's cache is saved only from the release branch and from tags: other branches reuse it without each adding
+# their own, which keeps the repo under GitHub's cache limit (the oldest caches are evicted first).
+name: setup
+description: Node, Python, uv, Rust, Linux packages and bundled runtimes, each cached on its lockfile
+
+inputs:
+  node-version:
+    description: Node version (empty to skip Node)
+    default: "20"
+  node-lockfiles:
+    description: package-lock.json files, one per line, that key npm's cache
+    default: package-lock.json
+  python-version:
+    description: Python version for actions/setup-python (empty to skip it)
+    default: ""
+  pip-cache-files:
+    description: >-
+      Files (space- or newline-separated globs) that pin Python packages. When set, pip's own cache folder is
+      cached on them: it covers pip run by any Python, a bundled runtime's included, and keeps wheels compiled
+      from source (whisper.cpp on Windows ARM, say).
+    default: ""
+  uv:
+    description: "'true' to install uv with its cache on"
+    default: "false"
+  uv-cache-files:
+    description: Glob(s) of uv.lock or requirements files that key uv's cache
+    default: "**/uv.lock"
+  rust-workspace:
+    description: "Cargo workspace (desktop/src-tauri). Empty skips Rust."
+    default: ""
+  rust-key:
+    description: Extra cache key, unique per target and build image (the arch, plus the distro on Linux)
+    default: ""
+  rust-save-branch:
+    description: The one branch whose builds save Rust's cache (tags always do)
+    default: main
+  apt-packages:
+    description: Linux packages to install (space-separated). Skipped on other systems.
+    default: ""
+  apt-fuse:
+    description: "'true' to add FUSE 2 for AppImages: libfuse2 on Ubuntu 22.04, libfuse2t64 from 24.04"
+    default: "false"
+  runtime-cache-path:
+    description: "A folder of downloaded runtimes (build/cache: a bundled Python, ffmpeg, models). Empty to skip."
+    default: ""
+  runtime-cache-files:
+    description: Files (space- or newline-separated globs) that pin what's in it, usually the build script
+    default: ""
+  cache-suffix:
+    description: Extra key for the runtime and pip caches (the arch is already in it)
+    default: ""
+
+outputs:
+  runtime-cache-hit:
+    description: "'true' when the runtime folder came from the cache exactly"
+    value: ${{ steps.runtime.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      if: inputs.node-version != ''
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: npm
+        cache-dependency-path: ${{ inputs.node-lockfiles }}
+
+    - uses: actions/setup-python@v5
+      if: inputs.python-version != ''
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      if: inputs.uv == 'true'
+      with:
+        enable-cache: true
+        cache-dependency-glob: ${{ inputs.uv-cache-files }}
+
+    # The keys for the pip and runtime caches: a hash of the files that pin them, made with git so it's the same
+    # command on every system (hashFiles() can't take a list from an input).
+    - name: Cache keys
+      id: keys
+      shell: bash
+      env:
+        PIP_FILES: ${{ inputs.pip-cache-files }}
+        RUNTIME_FILES: ${{ inputs.runtime-cache-files }}
+      run: |
+        # macOS runners' bash is 3.2, which has nullglob but not globstar, and `shopt -s globstar` stopping the step
+        # there stopped every Mac build. So on a Mac `**` in these lists only reaches one folder down.
+        shopt -s nullglob
+        shopt -s globstar 2>/dev/null || true
+        hash() { local f=(); for g in $1; do f+=($g); done; [ ${#f[@]} -gt 0 ] && cat "${f[@]}" | git hash-object --stdin || echo none; }
+        echo "pip=$(hash "$PIP_FILES")" >>"$GITHUB_OUTPUT"
+        echo "runtime=$(hash "$RUNTIME_FILES")" >>"$GITHUB_OUTPUT"
+        case "$RUNNER_OS" in
+          Linux) echo "pip-dir=$HOME/.cache/pip" ;;
+          macOS) echo "pip-dir=$HOME/Library/Caches/pip" ;;
+          Windows) echo "pip-dir=$LOCALAPPDATA\\pip\\Cache" ;;
+        esac >>"$GITHUB_OUTPUT"
+
+    - uses: actions/cache@v4
+      if: inputs.pip-cache-files != ''
+      with:
+        path: ${{ steps.keys.outputs.pip-dir }}
+        key: pip-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-suffix }}-${{ steps.keys.outputs.pip }}
+        restore-keys: pip-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-suffix }}-
+
+    - uses: actions/cache@v4
+      id: runtime
+      if: inputs.runtime-cache-path != ''
+      with:
+        path: ${{ inputs.runtime-cache-path }}
+        key: runtime-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-suffix }}-${{ steps.keys.outputs.runtime }}
+        restore-keys: runtime-${{ runner.os }}-${{ runner.arch }}-${{ inputs.cache-suffix }}-
+
+    - name: Rust, if this runner has none
+      if: inputs.rust-workspace != ''
+      shell: bash
+      run: |
+        if ! command -v cargo >/dev/null; then
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          echo "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+        fi
+
+    - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      if: inputs.rust-workspace != ''
+      with:
+        workspaces: ${{ inputs.rust-workspace }}
+        key: ${{ inputs.rust-key }}
+        save-if: ${{ github.ref == format('refs/heads/{0}', inputs.rust-save-branch) || startsWith(github.ref, 'refs/tags/') }}
+
+    - name: Linux packages
+      if: runner.os == 'Linux' && (inputs.apt-packages != '' || inputs.apt-fuse == 'true')
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.apt-packages }}
+        FUSE: ${{ inputs.apt-fuse }}
+      run: |
+        sudo apt-get update -qq
+        extra=()
+        if [ "$FUSE" = true ]; then
+          if apt-cache show libfuse2t64 >/dev/null 2>&1; then extra+=(libfuse2t64); else extra+=(libfuse2); fi
+        fi
+        # shellcheck disable=SC2086
+        sudo apt-get install -y -qq --no-install-recommends $PACKAGES "${extra[@]}"
