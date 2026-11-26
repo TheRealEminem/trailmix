@@ -103,18 +103,18 @@ def test_typing_the_right_word_fixes_it_and_no_teaches_the_spelling(fresh_db, ai
 def test_a_partial_workspace_fit_becomes_a_question(fresh_db, ai, monkeypatch):
     import workspaces
 
-    cesac = db.create_workspace("CESAC", about="city climate commission")
+    rvta = db.create_workspace("RVTA", about="city climate commission")
     db.create_workspace("Personal")
     mid = meeting("## Overview\nThe energy work group met.", has_system=False)
-    ai["terms"] = "Workspace: CESAC\nFit: partial"  # the sorter's answer
+    ai["terms"] = "Workspace: RVTA\nFit: partial"  # the sorter's answer
     monkeypatch.setattr(llm_engine, "model_for", lambda pid, cfg: "qwen2.5:7b")
-    monkeypatch.setattr(llm_engine, "generate", lambda *a, **k: "Workspace: CESAC\nFit: partial")
+    monkeypatch.setattr(llm_engine, "generate", lambda *a, **k: "Workspace: RVTA\nFit: partial")
     workspaces.after_notes(mid, {**CFG, "auto_workspace": True})
     assert db.get_meeting(mid)["workspace_id"] is None  # not moved on a partial fit
     q = by_kind(mid)["workspace"]
-    assert q["prompt"] == "Does this meeting belong in CESAC?"
-    questions.answer(q["id"], str(cesac))
-    assert db.get_meeting(mid)["workspace_id"] == cesac and db.get_meeting(mid)["workspace_auto"] == 0
+    assert q["prompt"] == "Does this meeting belong in RVTA?"
+    questions.answer(q["id"], str(rvta))
+    assert db.get_meeting(mid)["workspace_id"] == rvta and db.get_meeting(mid)["workspace_auto"] == 0
 
 
 def test_answering_over_the_api(fresh_db, ai):
@@ -131,16 +131,16 @@ def test_answering_over_the_api(fresh_db, ai):
 
 
 def test_spellings_are_seeded_from_your_name_workspaces_and_people(fresh_db, ai):
-    db.create_workspace("Bright Labs", about="Sales for CinderCap, our B2G cold-chain product, and the CESAC board.")
+    db.create_workspace("Bright Labs", about="Sales for MapleDesk, our B2G cold-chain product, and the RVTA board.")
     mid = meeting("## Overview\nWe met.")
     db.update_meeting(mid, speaker_names_json={"Them": "Priya Nair"})
-    assert questions.seeded() == ["Dale", "Bright Labs", "CinderCap", "B2G", "CESAC", "Priya Nair"]
-    assert "CinderCap" in questions.vocabulary_prompt() and "Dale" in questions.vocabulary_prompt()
+    assert questions.seeded() == ["Dale", "Bright Labs", "MapleDesk", "B2G", "RVTA", "Priya Nair"]
+    assert "MapleDesk" in questions.vocabulary_prompt() and "Dale" in questions.vocabulary_prompt()
 
 
 def test_a_known_spelling_is_never_questioned(fresh_db, ai):
-    db.create_workspace("Bright Labs", about="Sales for CinderCap.")
-    ai["terms"] = "CinderCap → CoolCap"
-    mid = meeting("## Overview\nThe CinderCap pitch went well.", "The CinderCap pitch went well.", has_system=False)
+    db.create_workspace("Bright Labs", about="Sales for MapleDesk.")
+    ai["terms"] = "MapleDesk → MapleDisk"
+    mid = meeting("## Overview\nThe MapleDesk pitch went well.", "The MapleDesk pitch went well.", has_system=False)
     questions.ask_about(mid, CFG)
     assert "term" not in by_kind(mid)

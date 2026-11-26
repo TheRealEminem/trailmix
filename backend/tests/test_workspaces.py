@@ -18,7 +18,7 @@ def fresh_db(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "data" / "t.db")
     db.init_db()
     for name, about in [("Bright Labs", "my startup: vaccine cold-chain hardware"),
-                        ("CESAC", "city climate & environment commission"), ("Personal", "")]:
+                        ("RVTA", "city climate & environment commission"), ("Personal", "")]:
         db.create_workspace(name, about=about)
     return tmp_path
 
@@ -60,10 +60,10 @@ def wait() -> dict:
 
 
 def test_a_workspace_named_in_the_title_wins_without_asking(fresh_db, ai):
-    mid = meeting("CESAC Study Session 1/28")
+    mid = meeting("RVTA Study Session 1/28")
     workspaces.after_notes(mid, CFG)
     m = db.get_meeting(mid)
-    assert m["workspace_id"] == space("CESAC") and m["workspace_model"] is None  # the title decided
+    assert m["workspace_id"] == space("RVTA") and m["workspace_model"] is None  # the title decided
     assert not any("WORKSPACES:" in p for p in ai["prompts"])
 
 
@@ -89,7 +89,7 @@ def test_none_or_a_made_up_answer_leaves_it_in_default(fresh_db, ai):
 
 
 def test_meetings_placed_by_hand_are_never_moved(fresh_db, ai):
-    mid = meeting("CESAC prep over coffee")
+    mid = meeting("RVTA prep over coffee")
     db.update_meeting(mid, workspace_id=space("Personal"))
     workspaces.after_notes(mid, CFG)
     for kind in ("sort", "resort"):
@@ -109,17 +109,17 @@ def test_the_ai_sees_meetings_already_in_each_workspace(fresh_db, ai):
 
 
 def test_sorting_and_resorting(fresh_db, ai):
-    ids = [meeting("CESAC Meeting - 5 pm"), meeting("Bright Labs weekly check-in"), meeting("Dinner plans")]
+    ids = [meeting("RVTA Meeting - 5 pm"), meeting("Bright Labs weekly check-in"), meeting("Dinner plans")]
     ai["answer"] = "Workspace: Personal\nFit: good"
     assert workspaces.start("sort", CFG)
     assert wait() | {"model": None} == {"active": False, "kind": "sort", "total": 3, "done": 3, "sorted": 3,
                                          "model": None, "suggestions": None}
-    assert [db.get_meeting(i)["workspace_id"] for i in ids] == [space("CESAC"), space("Bright Labs"), space("Personal")]
+    assert [db.get_meeting(i)["workspace_id"] for i in ids] == [space("RVTA"), space("Bright Labs"), space("Personal")]
     # A better model thinks dinner plans fit nowhere: re-sorting puts it back in Default.
     ai["answer"] = "Workspace: Personal\nFit: poor"
     assert workspaces.start("resort", {**CFG, "ollama_model": "claude-opus-5-5"})
     wait()
-    assert [db.get_meeting(i)["workspace_id"] for i in ids] == [space("CESAC"), space("Bright Labs"), None]
+    assert [db.get_meeting(i)["workspace_id"] for i in ids] == [space("RVTA"), space("Bright Labs"), None]
 
 
 def test_tags(fresh_db, ai):
@@ -136,7 +136,7 @@ def test_suggesting_workspaces_from_tags(fresh_db, ai):
     for title in ("Pitch practice", "Board prep", "Commission meeting"):
         meeting(title)
     ai["suggest"] = ("1. **Oregon AI Accelerator** | the accelerator cohort and its workshops\n"
-                     "CESAC | already have it\nSchool | Comm 485 class sessions\nAcme Robotics | the example\n"
+                     "RVTA | already have it\nSchool | Comm 485 class sessions\nAcme Robotics | the example\n"
                      "not a suggestion")
     assert workspaces.start("suggest", CFG)
     job = wait()
@@ -210,14 +210,14 @@ def test_moving_a_meeting_to_another_date(fresh_db, ai, monkeypatch):
     import settings
 
     monkeypatch.setattr(settings, "get_all", lambda: {**settings.DEFAULTS, **CFG})
-    mid = meeting("CESAC work plan", "## Overview\nWork plan for 2026.")
+    mid = meeting("RVTA work plan", "## Overview\nWork plan for 2026.")
     arrived = db.get_meeting(mid)["created_at"]
     db.update_meeting(mid, transcript="[0:42] a study session on December 15th\n[1:10] the work plan for 2026")
     client = TestClient(main.app)
 
     assert client.patch(f"/api/meetings/{mid}", json={"created_at": "2025-11-17T18:30:00-08:00"}).status_code == 200
     assert db.get_meeting(mid)["created_at"] == "2025-11-18T02:30:00.000Z"
-    assert db.get_meeting(mid)["title"] == "CESAC work plan"  # a date change leaves the title alone
+    assert db.get_meeting(mid)["title"] == "RVTA work plan"  # a date change leaves the title alone
     assert db.get_meeting(mid)["imported_at"] == arrived  # its audio's 30 days don't restart from the new date
     assert client.patch(f"/api/meetings/{mid}", json={"created_at": "2099-01-01"}).status_code == 422
     assert client.patch(f"/api/meetings/{mid}", json={"created_at": "last Tuesday"}).status_code == 422

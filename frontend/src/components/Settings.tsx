@@ -1710,7 +1710,7 @@ function Vocabulary({ s, save }: { s: SettingsT; save: (c: Partial<SettingsT>) =
       <div className="mt-2 flex gap-2">
         <input
           className="field h-8 w-full max-w-xs px-2.5 text-label"
-          placeholder="e.g. CinderCap, Priya Nair, B2G"
+          placeholder="e.g. MapleDesk, Priya Nair, B2G"
           value={draft}
           spellCheck={false}
           onChange={(e) => setDraft(e.target.value)}

@@ -98,7 +98,7 @@ def learn(*words: str) -> None:
     settings.update({"vocabulary": vocab[-200:]})
 
 
-# Words in a workspace's description that are surely names: CamelCase (CinderCap), acronyms (CESAC), mixed (iPhone)
+# Words in a workspace's description that are surely names: CamelCase (MapleDesk), acronyms (RVTA), mixed (iPhone)
 _DISTINCT = re.compile(r"\b(?:[A-Z][a-z]+(?:[A-Z][a-z0-9]+)+|[A-Z][A-Z0-9]*[A-Z][0-9]*s?|[a-z]+[A-Z][A-Za-z]*)\b")
 
 
